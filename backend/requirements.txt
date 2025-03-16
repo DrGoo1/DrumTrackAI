@@ -1,0 +1,11 @@
+flask==2.1.0
+flask-sqlalchemy==2.5.1
+flask-jwt-extended==4.4.0
+flask-cors==3.0.10
+psycopg2-binary==2.9.3
+werkzeug==2.1.1
+python-dotenv==0.20.0
+librosa==0.9.1
+numpy==1.22.3
+scipy==1.8.0
+scikit-learn==1.0.2
