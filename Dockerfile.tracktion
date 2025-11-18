@@ -1,0 +1,80 @@
+# Dockerfile for Tracktion Hybrid C++ Application
+FROM ubuntu:22.04 AS tracktion_builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libasound2-dev \
+    libjack-jackd2-dev \
+    ladspa-sdk \
+    libcurl4-openssl-dev \
+    libfreetype6-dev \
+    libx11-dev \
+    libxcomposite-dev \
+    libxcursor-dev \
+    libxext-dev \
+    libxinerama-dev \
+    libxrandr-dev \
+    libxrender-dev \
+    libwebkit2gtk-4.0-dev \
+    libglu1-mesa-dev \
+    mesa-common-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Tracktion Hybrid source
+COPY tracktion-hybrid/ /app/tracktion-hybrid/
+
+# Build the C++ application
+WORKDIR /app/tracktion-hybrid
+RUN mkdir -p build && cd build && \
+    cmake .. && \
+    make -j$(nproc)
+
+# Add Rust builder stage to build audio-core-ffi for runtime linking
+FROM rust:1.83 AS rust_ffi_builder
+WORKDIR /app
+COPY tracktion-hybrid/rust/audio-core-ffi/ /app/tracktion-hybrid/rust/audio-core-ffi/
+WORKDIR /app/tracktion-hybrid/rust/audio-core-ffi
+RUN cargo build --release
+
+# Runtime stage
+FROM ubuntu:22.04 AS tracktion_app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libasound2 \
+    libjack-jackd2-0 \
+    libcurl4 \
+    libfreetype6 \
+    libx11-6 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxext6 \
+    libxinerama1 \
+    libxrandr2 \
+    libxrender1 \
+    libwebkit2gtk-4.0-37 \
+    libglu1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built application
+COPY --from=tracktion_builder /app/tracktion-hybrid/build/DrumTracKAI_Hybrid /app/DrumTracKAI_Hybrid
+
+# Copy FFI library built in this image
+COPY --from=rust_ffi_builder /app/tracktion-hybrid/rust/audio-core-ffi/target/release/libaudio_core_ffi.so /usr/local/lib/audio_core_ffi.so
+
+# Set environment
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Expose any needed ports (if the app has a web interface)
+EXPOSE 8080
+
+# Run the Tracktion Hybrid application
+CMD ["./DrumTracKAI_Hybrid"]

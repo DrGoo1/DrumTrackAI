@@ -1,0 +1,46 @@
+services:
+  # DCSM Backend v1.1.16 with Rust Audio Core
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: drumtrackai-v1116-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - USE_RUST=1
+      - AUDIO_CORE_BIN=/usr/local/bin/audio-core
+    volumes:
+      - ./admin:/app/admin
+      - ./uploads:/app/uploads
+      - ./sessions:/app/sessions
+    networks:
+      - drumtrackai-network
+    restart: unless-stopped
+
+  # React Frontend v1.1.16
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - REACT_APP_API_BASE=http://localhost:8000
+    container_name: drumtrackai-v1116-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_BASE=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - drumtrackai-network
+    restart: unless-stopped
+
+networks:
+  drumtrackai-network:
+    driver: bridge
+
+volumes:
+  drumtrackai-data:
+    driver: local

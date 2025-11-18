@@ -1,0 +1,14 @@
+# Docker Compose override for Windows development
+# This file provides Windows-specific configurations
+
+services:
+  # Windows-specific overrides for Tracktion Hybrid
+  tracktion:
+    # Remove X11 forwarding on Windows (not applicable)
+    volumes: []
+    environment:
+      - LD_LIBRARY_PATH=/usr/local/lib
+      - TRACKTION_FFI_LIB=/usr/local/lib/audio_core_ffi.so
+    # On Windows, GUI apps in containers are more complex
+    # Consider using VNC or web-based interface instead
+    command: ["tail", "-f", "/dev/null"]  # Keep container running for debugging

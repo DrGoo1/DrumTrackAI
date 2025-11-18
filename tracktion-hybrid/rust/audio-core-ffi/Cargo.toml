@@ -1,0 +1,25 @@
+[package]
+name = "audio-core-ffi"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# If enabled, FFI will call out to the existing `audio-core` CLI where helpful
+with_cli = []
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+realfft = "3.3"
+rustfft = "6.2"
+symphonia = { version = "0.5", features = ["mp3","flac","wav","isomp4","aac"] }
+rayon = "1.10"
+base64 = "0.22"
+
+# Optional if you prefer to split code into a reusable lib and keep a CLI elsewhere
+# audio-core-lib = { path = "../audio-core-lib" }

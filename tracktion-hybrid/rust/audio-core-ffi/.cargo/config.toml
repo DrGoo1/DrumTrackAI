@@ -1,0 +1,6 @@
+[build]
+target-dir = "target"
+
+[env]
+# Ensure we build in isolation from workspace
+CARGO_WORKSPACE_DIR = ""

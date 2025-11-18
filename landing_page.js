@@ -1,0 +1,450 @@
+// DrumTracKAI v1.1.11 Complete Landing Page with DCSM Integration
+// Enhanced Drum Composer and Song Map System
+
+class DrumTracKAILanding {
+    constructor() {
+        this.version = "1.1.11";
+        this.apiBaseUrl = "http://localhost:8000";
+        this.frontendUrl = "http://localhost:3000";
+        this.adminUrl = "http://localhost:8001";
+        this.features = {
+            rubberBandSelection: true,
+            perLaneVelocities: true,
+            humanizeControls: true,
+            quantizeWithStrength: true,
+            realTimeAudio: true,
+            midiExport: true,
+            advancedPatternEditing: true
+        };
+        this.init();
+    }
+
+    init() {
+        this.createLandingPage();
+        this.setupEventListeners();
+        this.checkSystemStatus();
+    }
+
+    createLandingPage() {
+        document.body.innerHTML = `
+            <div class="landing-container">
+                <header class="hero-section">
+                    <div class="hero-content">
+                        <h1 class="hero-title">
+                            <span class="brand">DrumTracKAI</span>
+                            <span class="version">v${this.version}</span>
+                        </h1>
+                        <h2 class="hero-subtitle">Enhanced Drum Composer & Song Map</h2>
+                        <p class="hero-description">
+                            Professional AI-powered drum pattern analysis and composition with advanced editing features
+                        </p>
+                        <div class="feature-highlights">
+                            <div class="feature-badge">🎯 Rubber-band Selection</div>
+                            <div class="feature-badge">🎵 Per-lane Velocities</div>
+                            <div class="feature-badge">🎲 Humanize Controls</div>
+                            <div class="feature-badge">⚡ Real-time Audio</div>
+                        </div>
+                    </div>
+                </header>
+
+                <section class="system-status">
+                    <h3>System Status</h3>
+                    <div class="status-grid">
+                        <div class="status-card" id="frontend-status">
+                            <div class="status-icon">🎛️</div>
+                            <div class="status-info">
+                                <h4>DCSM Frontend</h4>
+                                <span class="status-indicator" id="frontend-indicator">Checking...</span>
+                            </div>
+                        </div>
+                        <div class="status-card" id="backend-status">
+                            <div class="status-icon">⚙️</div>
+                            <div class="status-info">
+                                <h4>Backend API</h4>
+                                <span class="status-indicator" id="backend-indicator">Checking...</span>
+                            </div>
+                        </div>
+                        <div class="status-card" id="admin-status">
+                            <div class="status-icon">👨‍💼</div>
+                            <div class="status-info">
+                                <h4>Admin Panel</h4>
+                                <span class="status-indicator" id="admin-indicator">Checking...</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="launch-section">
+                    <h3>Launch Applications</h3>
+                    <div class="launch-grid">
+                        <button class="launch-btn primary" id="launch-dcsm">
+                            <div class="btn-icon">🎼</div>
+                            <div class="btn-content">
+                                <h4>Launch DCSM</h4>
+                                <p>Enhanced Drum Composer & Song Map</p>
+                            </div>
+                        </button>
+                        <button class="launch-btn secondary" id="launch-admin">
+                            <div class="btn-icon">⚙️</div>
+                            <div class="btn-content">
+                                <h4>Admin Panel</h4>
+                                <p>System configuration & analysis</p>
+                            </div>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="features-section">
+                    <h3>Enhanced Features in v${this.version}</h3>
+                    <div class="features-grid">
+                        <div class="feature-card">
+                            <h4>🎯 Advanced Selection</h4>
+                            <p>Rubber-band selection with Shift+drag, select all, invert selection</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4>🎵 Smart Velocities</h4>
+                            <p>Per-lane default velocities: Kick 110, Snare 96, Hi-hats 75-80</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4>🎲 Humanize Engine</h4>
+                            <p>Global and per-lane timing/velocity variation with deterministic seeding</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4>⚡ Quantize Control</h4>
+                            <p>Adjustable snap-to-grid strength from 0-100%</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4>🔊 Real-time Audio</h4>
+                            <p>Tone.js synthesis for immediate drum pattern auditioning</p>
+                        </div>
+                        <div class="feature-card">
+                            <h4>📊 Professional Export</h4>
+                            <p>High-resolution MIDI export with 1/64th note precision</p>
+                        </div>
+                    </div>
+                </section>
+
+                <footer class="footer">
+                    <p>&copy; 2025 DrumTracKAI v${this.version} - Enhanced Drum Composer & Song Map</p>
+                    <div class="footer-links">
+                        <a href="#" id="view-logs">View Logs</a>
+                        <a href="#" id="system-info">System Info</a>
+                        <a href="#" id="help-docs">Help & Docs</a>
+                    </div>
+                </footer>
+            </div>
+
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+                    color: #ffffff;
+                    min-height: 100vh;
+                }
+
+                .landing-container {
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }
+
+                .hero-section {
+                    text-align: center;
+                    padding: 60px 0;
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 20px;
+                    margin-bottom: 40px;
+                    backdrop-filter: blur(10px);
+                }
+
+                .hero-title {
+                    font-size: 3.5rem;
+                    margin-bottom: 10px;
+                    background: linear-gradient(45deg, #4facfe, #00f2fe);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                }
+
+                .version {
+                    font-size: 1.5rem;
+                    color: #ffd700;
+                    font-weight: normal;
+                }
+
+                .hero-subtitle {
+                    font-size: 1.8rem;
+                    color: #e0e0e0;
+                    margin-bottom: 15px;
+                }
+
+                .hero-description {
+                    font-size: 1.1rem;
+                    color: #b0b0b0;
+                    margin-bottom: 30px;
+                    max-width: 600px;
+                    margin-left: auto;
+                    margin-right: auto;
+                }
+
+                .feature-highlights {
+                    display: flex;
+                    justify-content: center;
+                    gap: 15px;
+                    flex-wrap: wrap;
+                }
+
+                .feature-badge {
+                    background: rgba(79, 172, 254, 0.2);
+                    border: 1px solid #4facfe;
+                    padding: 8px 16px;
+                    border-radius: 25px;
+                    font-size: 0.9rem;
+                    color: #4facfe;
+                }
+
+                .system-status, .launch-section, .features-section {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 15px;
+                    padding: 30px;
+                    margin-bottom: 30px;
+                    backdrop-filter: blur(10px);
+                }
+
+                .system-status h3, .launch-section h3, .features-section h3 {
+                    font-size: 1.5rem;
+                    margin-bottom: 20px;
+                    color: #4facfe;
+                }
+
+                .status-grid, .features-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 20px;
+                }
+
+                .status-card, .feature-card {
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 10px;
+                    padding: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 15px;
+                }
+
+                .status-icon {
+                    font-size: 2rem;
+                }
+
+                .status-indicator {
+                    padding: 4px 12px;
+                    border-radius: 15px;
+                    font-size: 0.8rem;
+                    font-weight: bold;
+                }
+
+                .status-indicator.online {
+                    background: #4caf50;
+                    color: white;
+                }
+
+                .status-indicator.offline {
+                    background: #f44336;
+                    color: white;
+                }
+
+                .status-indicator.checking {
+                    background: #ff9800;
+                    color: white;
+                }
+
+                .launch-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                    gap: 20px;
+                }
+
+                .launch-btn {
+                    background: rgba(79, 172, 254, 0.2);
+                    border: 2px solid #4facfe;
+                    border-radius: 15px;
+                    padding: 25px;
+                    color: white;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    display: flex;
+                    align-items: center;
+                    gap: 20px;
+                    text-align: left;
+                }
+
+                .launch-btn:hover {
+                    background: rgba(79, 172, 254, 0.3);
+                    transform: translateY(-2px);
+                    box-shadow: 0 10px 25px rgba(79, 172, 254, 0.3);
+                }
+
+                .launch-btn.primary {
+                    border-color: #4facfe;
+                }
+
+                .launch-btn.secondary {
+                    border-color: #00f2fe;
+                }
+
+                .btn-icon {
+                    font-size: 2.5rem;
+                }
+
+                .btn-content h4 {
+                    font-size: 1.3rem;
+                    margin-bottom: 5px;
+                }
+
+                .btn-content p {
+                    color: #b0b0b0;
+                    font-size: 0.9rem;
+                }
+
+                .feature-card h4 {
+                    color: #4facfe;
+                    margin-bottom: 10px;
+                }
+
+                .footer {
+                    text-align: center;
+                    padding: 30px 0;
+                    border-top: 1px solid rgba(255, 255, 255, 0.1);
+                    color: #b0b0b0;
+                }
+
+                .footer-links {
+                    margin-top: 15px;
+                    display: flex;
+                    justify-content: center;
+                    gap: 30px;
+                }
+
+                .footer-links a {
+                    color: #4facfe;
+                    text-decoration: none;
+                    transition: color 0.3s ease;
+                }
+
+                .footer-links a:hover {
+                    color: #00f2fe;
+                }
+
+                @media (max-width: 768px) {
+                    .hero-title {
+                        font-size: 2.5rem;
+                    }
+                    
+                    .feature-highlights {
+                        flex-direction: column;
+                        align-items: center;
+                    }
+                    
+                    .launch-grid {
+                        grid-template-columns: 1fr;
+                    }
+                }
+            </style>
+        `;
+    }
+
+    setupEventListeners() {
+        document.getElementById('launch-dcsm').addEventListener('click', () => {
+            this.launchDCSM();
+        });
+
+        document.getElementById('launch-admin').addEventListener('click', () => {
+            this.launchAdmin();
+        });
+
+        document.getElementById('view-logs').addEventListener('click', () => {
+            this.viewLogs();
+        });
+
+        document.getElementById('system-info').addEventListener('click', () => {
+            this.showSystemInfo();
+        });
+    }
+
+    async checkSystemStatus() {
+        // Check Frontend
+        try {
+            const frontendResponse = await fetch(this.frontendUrl);
+            this.updateStatus('frontend', frontendResponse.ok ? 'online' : 'offline');
+        } catch {
+            this.updateStatus('frontend', 'offline');
+        }
+
+        // Check Backend
+        try {
+            const backendResponse = await fetch(`${this.apiBaseUrl}/health`);
+            this.updateStatus('backend', backendResponse.ok ? 'online' : 'offline');
+        } catch {
+            this.updateStatus('backend', 'offline');
+        }
+
+        // Check Admin (placeholder)
+        this.updateStatus('admin', 'online');
+    }
+
+    updateStatus(service, status) {
+        const indicator = document.getElementById(`${service}-indicator`);
+        indicator.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        indicator.className = `status-indicator ${status}`;
+    }
+
+    launchDCSM() {
+        console.log('Launching DCSM v1.1.11...');
+        window.open(this.frontendUrl, '_blank');
+    }
+
+    launchAdmin() {
+        console.log('Launching Admin Panel...');
+        // Launch admin app (placeholder)
+        alert('Admin panel integration coming soon in v1.1.11');
+    }
+
+    viewLogs() {
+        console.log('Opening system logs...');
+        alert('System logs viewer coming soon');
+    }
+
+    showSystemInfo() {
+        const info = `
+DrumTracKAI v${this.version} System Information
+
+Enhanced Features:
+✅ Rubber-band Selection
+✅ Per-lane Default Velocities  
+✅ Humanize Controls (Global + Per-lane)
+✅ Quantize with Strength Control
+✅ Real-time Tone.js Audio Synthesis
+✅ Professional MIDI Export
+✅ Advanced Pattern Editing
+✅ Keyboard Shortcuts
+✅ Visual Selection Feedback
+
+System Status:
+- Frontend: ${this.frontendUrl}
+- Backend API: ${this.apiBaseUrl}
+- Version: ${this.version}
+        `;
+        alert(info);
+    }
+}
+
+// Initialize the landing page when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    new DrumTracKAILanding();
+});

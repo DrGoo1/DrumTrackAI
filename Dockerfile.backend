@@ -1,0 +1,51 @@
+# Multi-stage Dockerfile for DrumTracKAI v1.1.16 backend with Rust audio-core
+
+# --- Rust builder stage ---
+FROM rust:1.83 as rust_builder
+WORKDIR /app
+
+# Build audio-core CLI
+COPY audio-core/Cargo.toml audio-core/Cargo.lock* /app/audio-core/
+RUN mkdir -p /app/audio-core/src && echo "fn main(){}" > /app/audio-core/src/main.rs && cd audio-core && cargo build --release || true
+COPY audio-core/ /app/audio-core/
+RUN cd audio-core && cargo build --release
+
+# --- Python runtime stage ---
+FROM python:3.11-slim AS app
+WORKDIR /app
+
+# Install system dependencies including ffmpeg for audio support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    python3-dev \
+    build-essential \
+    pkg-config \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Rust binaries from builder stage
+COPY --from=rust_builder /app/audio-core/target/release/audio-core /usr/local/bin/audio-core
+
+# Install numpy first to provide headers for other packages
+RUN pip install --no-cache-dir numpy==1.24.3
+
+# Copy requirements and install remaining Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PYTHONPATH=/app \
+    USE_RUST=1 \
+    AUDIO_CORE_BIN=/usr/local/bin/audio-core
+
+# Expose backend port
+EXPOSE 8000
+
+# Run DCSM backend server
+CMD ["python", "dcsm_backend.py"]

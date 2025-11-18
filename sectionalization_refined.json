@@ -1,0 +1,69 @@
+{
+  "method": "repetition_refined",
+  "sections": [
+    {
+      "start": 0.0,
+      "end": 49.89968253968254,
+      "method": "repetition",
+      "duration": 49.89968253968254,
+      "bars": 32,
+      "label": "Intro"
+    },
+    {
+      "start": 49.89968253968254,
+      "end": 61.08009070294784,
+      "duration": 11.180408163265305,
+      "bars": 7,
+      "method": "repetition",
+      "label": "Verse 1"
+    },
+    {
+      "start": 61.08009070294784,
+      "end": 122.91482993197279,
+      "method": "repetition",
+      "duration": 61.83473922902495,
+      "bars": 40,
+      "label": "Verse 2"
+    },
+    {
+      "start": 122.91482993197279,
+      "end": 148.12009070294783,
+      "method": "repetition",
+      "duration": 25.205260770975045,
+      "bars": 16,
+      "label": "Refrain"
+    },
+    {
+      "start": 148.12009070294783,
+      "end": 158.16272108843538,
+      "duration": 10.042630385487541,
+      "bars": 6,
+      "method": "repetition",
+      "label": "Instrumental"
+    },
+    {
+      "start": 158.16272108843538,
+      "end": 217.37360544217688,
+      "method": "repetition",
+      "duration": 59.210884353741505,
+      "bars": 38,
+      "label": "Verse 3"
+    },
+    {
+      "start": 217.37360544217688,
+      "end": 240.33333333333334,
+      "method": "repetition",
+      "duration": 22.95972789115646,
+      "bars": 15,
+      "label": "Outro"
+    }
+  ],
+  "summary": {
+    "total_sections": 7,
+    "method": "repetition + intelligent merging",
+    "parameters": {
+      "min_duration": 10.0,
+      "target_sections": 7
+    }
+  }
+}

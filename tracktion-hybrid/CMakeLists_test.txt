@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.22)
+project(DrumTracKAI_Hybrid_Test LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+
+# Paths
+set(TRACKTION_DIR "${CMAKE_SOURCE_DIR}/../deps/tracktion_engine")
+set(JUCE_DIR      "${TRACKTION_DIR}/modules/juce")
+
+# Test: Add JUCE first
+message(STATUS "Adding JUCE from: ${JUCE_DIR}")
+add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/juce" EXCLUDE_FROM_ALL)
+
+# Test: Check if juce_add_gui_app is available
+message(STATUS "Attempting to create GUI app...")
+
+# Simple JUCE app
+juce_add_gui_app(DrumTracKAI_Test
+    PRODUCT_NAME "DrumTracKAI Test"
+    VERSION "0.1.0"
+    COMPANY_NAME "DrumTracKAI"
+)
+
+# Minimal source
+target_sources(DrumTracKAI_Test PRIVATE
+    cpp/Main.cpp
+)
+
+target_link_libraries(DrumTracKAI_Test PRIVATE
+    juce::juce_gui_extra
+    juce::juce_audio_utils
+)
+
+message(STATUS "CMake configuration complete!")

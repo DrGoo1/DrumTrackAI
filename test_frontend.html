@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DrumTracKAI v1.1.16 DCSM Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        h1 { color: #4CAF50; }
+        h2 { color: #2196F3; }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #45a049; }
+        input[type="file"] {
+            background: #333;
+            color: white;
+            padding: 10px;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+        #waveform {
+            width: 100%;
+            height: 200px;
+            background: #333;
+            border: 1px solid #555;
+            margin: 10px 0;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background: #4CAF50; }
+        .error { background: #f44336; }
+        .info { background: #2196F3; }
+        pre {
+            background: #333;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎵 DrumTracKAI v1.1.16 DCSM Test Interface</h1>
+    
+    <div class="container">
+        <h2>Backend Status</h2>
+        <button onclick="testBackend()">Test Backend Connection</button>
+        <div id="backend-status"></div>
+    </div>
+
+    <div class="container">
+        <h2>Audio Upload & Waveform Display</h2>
+        <input type="file" id="audioFile" accept="audio/*">
+        <button onclick="uploadAudio()">Upload Audio</button>
+        <canvas id="waveform"></canvas>
+        <div id="upload-status"></div>
+    </div>
+
+    <div class="container">
+        <h2>Smart Sectionization</h2>
+        <button onclick="autoSectionize()" id="sectionizeBtn" disabled>Auto-Detect Sections</button>
+        <div id="sections-display"></div>
+    </div>
+
+    <div class="container">
+        <h2>DCSM Endpoints</h2>
+        <button onclick="testEndpoint('/dcsm/sectionize?key=test&bpm=120')">Test Sectionize</button>
+        <button onclick="testEndpoint('/analyze/tempo?key=test')">Test Tempo Analysis</button>
+        <button onclick="testEndpoint('/analyze/onsets?key=test')">Test Onset Detection</button>
+        <div id="endpoint-results"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentAudioKey = null;
+
+        async function testBackend() {
+            const statusDiv = document.getElementById('backend-status');
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                if (response.ok) {
+                    statusDiv.innerHTML = '<div class="status success">✅ Backend server is running!</div>';
+                } else {
+                    statusDiv.innerHTML = '<div class="status error">❌ Backend responded with error</div>';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Backend connection failed: ${error.message}</div>`;
+            }
+        }
+
+        async function uploadAudio() {
+            const fileInput = document.getElementById('audioFile');
+            const statusDiv = document.getElementById('upload-status');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                statusDiv.innerHTML = '<div class="status error">Please select an audio file</div>';
+                return;
+            }
+
+            statusDiv.innerHTML = '<div class="status info">Uploading audio...</div>';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    currentAudioKey = result.key;
+                    statusDiv.innerHTML = `<div class="status success">✅ Audio uploaded: ${result.key}</div>`;
+                    
+                    // Enable sectionize button
+                    document.getElementById('sectionizeBtn').disabled = false;
+                    
+                    // Draw waveform
+                    drawWaveform(result.waveform || result.peaks);
+                } else {
+                    const error = await response.text();
+                    statusDiv.innerHTML = `<div class="status error">❌ Upload failed: ${error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Upload error: ${error.message}</div>`;
+            }
+        }
+
+        function drawWaveform(peaks) {
+            if (!peaks) return;
+            
+            const canvas = document.getElementById('waveform');
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth;
+            canvas.height = 200;
+
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#4CAF50';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            const step = canvas.width / peaks.length;
+            for (let i = 0; i < peaks.length; i++) {
+                const x = i * step;
+                const y = canvas.height / 2 - (peaks[i] * canvas.height / 2);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        async function autoSectionize() {
+            if (!currentAudioKey) {
+                alert('Please upload audio first');
+                return;
+            }
+
+            const sectionsDiv = document.getElementById('sections-display');
+            sectionsDiv.innerHTML = '<div class="status info">Analyzing musical arrangement...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/dcsm/sectionize?key=${currentAudioKey}&bpm=120`);
+                if (response.ok) {
+                    const result = await response.json();
+                    displaySections(result.sections);
+                } else {
+                    const error = await response.text();
+                    sectionsDiv.innerHTML = `<div class="status error">❌ Sectionization failed: ${error}</div>`;
+                }
+            } catch (error) {
+                sectionsDiv.innerHTML = `<div class="status error">❌ Sectionization error: ${error.message}</div>`;
+            }
+        }
+
+        function displaySections(sections) {
+            const sectionsDiv = document.getElementById('sections-display');
+            if (!sections || sections.length === 0) {
+                sectionsDiv.innerHTML = '<div class="status info">No sections detected</div>';
+                return;
+            }
+
+            let html = '<div class="status success">✅ Sections detected:</div>';
+            sections.forEach((section, i) => {
+                const label = section.label || 'section';
+                const confidence = section.confidence ? (section.confidence * 100).toFixed(1) : 'N/A';
+                html += `<div style="margin: 10px 0; padding: 10px; background: #333; border-radius: 4px;">
+                    <strong>Section ${i + 1}:</strong> ${label} 
+                    (${section.start.toFixed(2)}s - ${section.end.toFixed(2)}s)
+                    <span style="color: #4CAF50;">Confidence: ${confidence}%</span>
+                </div>`;
+            });
+            sectionsDiv.innerHTML = html;
+        }
+
+        async function testEndpoint(endpoint) {
+            const resultsDiv = document.getElementById('endpoint-results');
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`);
+                const result = await response.text();
+                resultsDiv.innerHTML = `<h3>Endpoint: ${endpoint}</h3><pre>${result}</pre>`;
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="status error">❌ Endpoint test failed: ${error.message}</div>`;
+            }
+        }
+
+        // Test backend on load
+        window.onload = () => {
+            testBackend();
+        };
+    </script>
+</body>
+</html>

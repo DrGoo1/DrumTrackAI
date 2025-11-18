@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.22)
+project(DrumTracKAI_Hybrid LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+
+# Add Tracktion Engine directly (it includes JUCE)
+set(TRACKTION_DIR "${CMAKE_SOURCE_DIR}/../deps/tracktion_engine")
+add_subdirectory("${TRACKTION_DIR}" "${CMAKE_BINARY_DIR}/tracktion_engine")
+
+# Create executable using standard CMake (not juce_add_gui_app)
+add_executable(DrumTracKAI_Hybrid
+    cpp/Main.cpp
+    cpp/MainComponent.cpp
+    cpp/DCSMAdapter.cpp
+    cpp/DCSMWaveformComponent.cpp
+    cpp/RustCoreBridge.cpp
+    cpp/DCSMOrchestrator.cpp
+)
+
+# Link with Tracktion Engine (which includes JUCE)
+target_link_libraries(DrumTracKAI_Hybrid PRIVATE
+    tracktion_engine
+)
+
+# Set as Windows app
+set_target_properties(DrumTracKAI_Hybrid PROPERTIES
+    WIN32_EXECUTABLE TRUE
+)

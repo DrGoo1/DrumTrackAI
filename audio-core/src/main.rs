@@ -1,0 +1,201 @@
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use serde::Serialize;
+use std::path::PathBuf;
+use generator::Style;
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+mod decoder;
+mod dsp;
+mod generator;
+mod midi;
+mod sectionize;
+mod sectionize_smart;
+
+#[derive(Parser)]
+#[command(name="audio-core", version, about="DrumTracKAI DSP core (CLI)")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+#[derive(Subcommand)]
+enum Cmd {
+    /// Downsampled amplitude peaks for fast waveforms
+    Peaks {
+        file: PathBuf,
+        #[arg(long, default_value_t = 3000)]
+        max_points: usize,
+    },
+    /// Tempo/beat/onset analysis
+    Analyze {
+        file: PathBuf,
+        #[arg(long, default_value_t = 50.0)]
+        min_bpm: f32,
+        #[arg(long, default_value_t = 200.0)]
+        max_bpm: f32,
+    },
+    /// Audio section detection
+    Sectionize {
+        file: PathBuf,
+        #[arg(long, default_value_t = 2.0)]
+        min_section_sec: f32,
+    },
+    /// Smart audio section detection with beat alignment
+    SectionizeSmart {
+        file: PathBuf,
+        #[arg(long, default_value_t = 120.0)]
+        bpm: f32,
+        #[arg(long, default_value_t = 4)]
+        min_bars: u32,
+        #[arg(long, default_value_t = 16)]
+        max_bars: u32,
+    },
+    /// Analyze tempo for multiple sections
+    AnalyzeSections {
+        file: PathBuf,
+        #[arg(long, value_delimiter = ',')]
+        starts: Vec<f32>,
+        #[arg(long, value_delimiter = ',')]
+        ends: Vec<f32>,
+        #[arg(long, default_value_t = 50.0)]
+        min_bpm: f32,
+        #[arg(long, default_value_t = 200.0)]
+        max_bpm: f32,
+    },
+    /// Generate drum pattern with style and MIDI export
+    Generate {
+        #[arg(long)] style: String,
+        #[arg(long)] label: String,
+        #[arg(long)] bars: usize,
+        #[arg(long)] bpm: f32,
+        #[arg(long, default_value_t = 42)] seed: u64,
+        #[arg(long, default_value_t = 0.6)] density: f32,
+        #[arg(long, default_value_t = 0.10)] swing: f32,
+        #[arg(long, default_value_t = 0.15)] humanize: f32,
+        #[arg(long, default_value = "off")] swing_preset: String,
+        #[arg(long, default_value = "flat")] vel_preset: String,
+        #[arg(long, default_value = "random")] fill_preset: String,
+    },
+}
+
+#[derive(Serialize)]
+struct PeaksOut {
+    sr: u32,
+    duration: f32,
+    peaks: Vec<f32>,
+}
+#[derive(Serialize)]
+struct AnalyzeOut {
+    tempo: f32,
+    beats: Vec<f32>,
+    onsets: Vec<f32>,
+}
+#[derive(Serialize)]
+struct SectionTempoResult {
+    start: f32,
+    end: f32,
+    tempo: f32,
+    confidence: f32,
+    candidates: Vec<f32>,
+}
+#[derive(Serialize)]
+struct AnalyzeSectionsOut {
+    results: Vec<SectionTempoResult>,
+}
+
+#[derive(Serialize)]
+struct SectionizeOut {
+    sections: Vec<sectionize::Section>,
+}
+
+#[derive(Serialize)]
+struct SmartOut { 
+    sections: Vec<sectionize_smart::SmartSection> 
+}
+
+#[derive(Serialize)]
+struct GenerateOut {
+    notes: Vec<generator::Note>,
+    midi_base64: String,
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    match cli.cmd {
+        Cmd::Peaks { file, max_points } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            let duration = pcm.len() as f32 / sr as f32;
+            let peaks = dsp::downsample_peaks(&pcm, max_points);
+            serde_json::to_writer(std::io::stdout(), &PeaksOut { sr, duration, peaks })?;
+        }
+        Cmd::Analyze { file, min_bpm, max_bpm } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            let cfg = dsp::AnalysisConfig { win: 1024, hop: 512, min_bpm, max_bpm };
+            let (tempo, beats, onsets) = dsp::analyze(&pcm, sr, cfg);
+            serde_json::to_writer(std::io::stdout(), &AnalyzeOut { tempo, beats, onsets })?;
+        }
+        Cmd::Sectionize { file, min_section_sec } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            let sections = sectionize::sectionize_audio(&pcm, sr, min_section_sec);
+            serde_json::to_writer(std::io::stdout(), &SectionizeOut { sections })?;
+        }
+        Cmd::SectionizeSmart { file, bpm, min_bars, max_bars } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            let sections = sectionize_smart::sectionize_smart(&pcm, sr, bpm, min_bars, max_bars);
+            let output = SmartOut { sections };
+            serde_json::to_writer(std::io::stdout(), &output)?;
+        }
+        Cmd::AnalyzeSections { file, starts, ends, min_bpm, max_bpm } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            
+            if starts.len() != ends.len() {
+                anyhow::bail!("starts and ends must have the same length");
+            }
+            
+            let cfg = dsp::AnalysisConfig {
+                win: 1024,
+                hop: 512,
+                min_bpm,
+                max_bpm,
+            };
+            
+            let results: Vec<SectionTempoResult> = starts
+                .iter()
+                .zip(ends.iter())
+                .map(|(&start, &end)| {
+                    let (tempo, confidence, candidates) = dsp::analyze_segment(&pcm, sr, start, end, cfg);
+                    SectionTempoResult {
+                        start,
+                        end,
+                        tempo,
+                        confidence,
+                        candidates,
+                    }
+                })
+                .collect();
+            
+            let output = AnalyzeSectionsOut { results };
+            serde_json::to_writer(std::io::stdout(), &output)?;
+        }
+        Cmd::Generate { style, label, bars, bpm, seed, density, swing, humanize, swing_preset, vel_preset, fill_preset } => {
+            let grid_sec = (60.0 / bpm) / 16.0; // 1/64 note grid
+            let duration = bars as f32 * (60.0 / bpm) * 4.0; // bars to seconds
+            let params = generator::GenParams {
+                bpm, density, swing, humanize, grid_sec, seed,
+                style: generator::Style::from_str(&style),
+                label: generator::SectionLabel::from_str(&label),
+                swing_preset: generator::SwingPreset::from_str(&swing_preset),
+                vel_preset: generator::VelPreset::from_str(&vel_preset),
+                fill_preset: generator::FillPreset::from_str(&fill_preset),
+            };
+            let notes = generator::generate_section(0.0, duration, true, true, params);
+            let midi = midi::notes_to_midi(&notes, bpm, grid_sec);
+            let b64 = B64.encode(midi);
+            serde_json::to_writer(std::io::stdout(), &serde_json::json!({
+                "notes": notes, 
+                "midi": b64
+            }))?;
+        }
+    }
+    Ok(())
+}

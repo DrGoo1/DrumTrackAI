@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-11-17T17:43:53.261490",
+  "model": "GrooVAE",
+  "architecture": {
+    "latent_dim": 64,
+    "hidden_dim": 512,
+    "parameters": 3779712
+  },
+  "tests": {
+    "reconstruction_error": 0.008019117638468742
+  }
+}
