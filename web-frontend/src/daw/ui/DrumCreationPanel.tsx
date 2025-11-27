@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { SectionRow } from "./SectionsPanel";
-import type { DrumGenerationConfigDTO } from "../../types/drumGenerationConfig";
+import type { DrumGenerationConfigDTO, BarDefaultsDTO, SlotMetaDTO } from "../../types/drumGenerationConfig";
 import { generateDrums } from "../../services/api";
 import type { EuclideanLaneConfig } from "../../euclidean/euclidean";
 import { EUCLIDEAN_PRESETS } from "../../euclidean/presets";
@@ -9,12 +9,20 @@ interface DrumCreationPanelProps {
   sourceSong: { key: string; durationSec: number } | null;
   sections: SectionRow[];
   onApplyDrums?: (payload: { drum_track: any; midi_notes: any[] }) => void;
+  onConfigBuilt?: (cfg: DrumGenerationConfigDTO) => void;
+
+  // Optional meta from Limb Bar Editor (per-bar and per-slot controls)
+  barMetaDefaults?: BarDefaultsDTO[];
+  barMetaSlots?: SlotMetaDTO[];
 }
 
 export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
   sourceSong,
   sections,
   onApplyDrums,
+  onConfigBuilt,
+  barMetaDefaults,
+  barMetaSlots,
 }) => {
   const [style, setStyle] = useState("Studio Rock");
 
@@ -44,11 +52,16 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
   const [buildScope, setBuildScope] = useState<"full_song" | "selected_section">("selected_section");
   const [generationMode, setGenerationMode] = useState<"template" | "ai_variation" | "full_ai" | "euclidean">("template");
   const [articulationProfile, setArticulationProfile] = useState<"balanced" | "ghosty" | "tight_hats" | "crashy">("balanced");
+  const [intensityCurve, setIntensityCurve] = useState<"flat" | "build" | "breakdown">("flat");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const [euclidPresetId, setEuclidPresetId] = useState<string>(EUCLIDEAN_PRESETS[0]?.id ?? "in_fives");
   const [euclidLanes, setEuclidLanes] = useState<EuclideanLaneConfig[]>(EUCLIDEAN_PRESETS[0]?.lanes ?? []);
+
+  const [openGroove, setOpenGroove] = useState(true);
+  const [openFills, setOpenFills] = useState(true);
+  const [openGuide, setOpenGuide] = useState(false);
 
   const hasSource = !!sourceSong;
   const hasSections = sections.length > 0;
@@ -88,8 +101,16 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
       const avgSectionDensity = sections.length
         ? sections.reduce((sum, s) => sum + (s.density || 0), 0) / sections.length
         : 1.0;
-      const effectiveIntensity = Math.min(1, Math.max(0, intensity * (0.5 + avgSectionDensity / 2)));
-      const effectiveFillDensity = Math.min(1, Math.max(0, fillDensity * (0.5 + avgSectionDensity / 2)));
+      let effectiveIntensity = Math.min(1, Math.max(0, intensity * (0.5 + avgSectionDensity / 2)));
+      let effectiveFillDensity = Math.min(1, Math.max(0, fillDensity * (0.5 + avgSectionDensity / 2)));
+
+      if (intensityCurve === "build") {
+        effectiveIntensity = Math.min(1, effectiveIntensity * 1.1);
+        effectiveFillDensity = Math.min(1, effectiveFillDensity * 1.1);
+      } else if (intensityCurve === "breakdown") {
+        effectiveIntensity = Math.max(0, effectiveIntensity * 0.85);
+        effectiveFillDensity = Math.max(0, effectiveFillDensity * 0.9);
+      }
 
       const cfg: DrumGenerationConfigDTO = {
         sectionId: "main_section",
@@ -125,7 +146,13 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
                 accentVelocity: lane.accentVelocity,
               }))
             : undefined,
+
+        // Limb Bar Editor meta, if provided
+        bars: barMetaDefaults,
+        slots: barMetaSlots,
       };
+
+      onConfigBuilt?.(cfg);
 
       const resp = await generateDrums(cfg);
       onApplyDrums?.({ drum_track: resp.drum_track, midi_notes: resp.midi_notes });
@@ -137,15 +164,16 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
   }
 
   return (
-    <div className="space-y-2 p-2 bg-neutral-900 rounded border border-neutral-800 text-xs">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold text-neutral-200">Drum Creation</span>
+    <div className="space-y-2 p-3 bg-neutral-900 rounded border border-neutral-800 text-[13px] leading-snug">
+      <div className="flex items-center justify-between mb-1">
+        <span className="font-semibold text-cyan-300 text-sm tracking-wide">Drum Creation</span>
         {!hasSource && <span className="text-[10px] text-amber-400">Upload a source song first</span>}
       </div>
 
+      {/* Top-level selectors */}
       <div className="grid grid-cols-2 gap-2">
         <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Style</span>
+          <span className="text-neutral-300 text-[12px] font-medium">Style</span>
           <select
             className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
             value={style}
@@ -159,7 +187,7 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Drummer Category</span>
+          <span className="text-neutral-300 text-[12px] font-medium">Drummer Category</span>
           <select
             className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
             value={drummerCategoryId}
@@ -181,6 +209,7 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
             step={0.01}
             value={intensity}
             onChange={(e) => setIntensity(parseFloat(e.target.value))}
+            className="w-full h-1 accent-emerald-500"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -192,174 +221,234 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
             step={0.01}
             value={variation}
             onChange={(e) => setVariation(parseFloat(e.target.value))}
+            className="w-full h-0.5 accent-emerald-500"
           />
         </label>
       </div>
-
-      <div className="grid grid-cols-3 gap-2">
-        <label className="flex items-center gap-1">
-          <input
-            type="checkbox"
-            checked={humanizeOn}
-            onChange={(e) => setHumanizeOn(e.target.checked)}
-          />
-          <span>Humanize</span>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Humanize Amt</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={humanizeAmount}
-            onChange={(e) => setHumanizeAmount(parseFloat(e.target.value))}
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Ghost Notes</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={ghostAmount}
-            onChange={(e) => setGhostAmount(parseFloat(e.target.value))}
-          />
-        </label>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Swing</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={swingAmount}
-            onChange={(e) => setSwingAmount(parseFloat(e.target.value))}
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Scope</span>
-          <select
-            className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
-            value={buildScope}
-            onChange={(e) => setBuildScope(e.target.value as any)}
-          >
-            <option value="selected_section">Selected section</option>
-            <option value="full_song">Full song</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mt-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Drum Density</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={drumDensity}
-            onChange={(e) => setDrumDensity(parseFloat(e.target.value))}
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Cymbal Density</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={cymbalDensity}
-            onChange={(e) => setCymbalDensity(parseFloat(e.target.value))}
-          />
-        </label>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mt-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Fill Type</span>
-          <select
-            className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
-            value={fillType}
-            onChange={(e) => setFillType(e.target.value)}
-          >
-            <option value="auto">Auto</option>
-            <option value="tom_run">Tom Run</option>
-            <option value="crash_buildup">Crash Buildup</option>
-            <option value="snare_fill">Snare Fill</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Fill Density</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={fillDensity}
-            onChange={(e) => setFillDensity(parseFloat(e.target.value))}
-          />
-          <span className="text-[10px] text-neutral-500">
-            Locations follow Arrangement "Fill In/Out" flags ({sections.filter(s => s.fillIn).length} in, {sections.filter(s => s.fillOut).length} out)
-          </span>
-        </label>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mt-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Guide Track</span>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={guideEnabled}
-              onChange={(e) => setGuideEnabled(e.target.checked)}
-            />
-            <select
-              className="flex-1 bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
-              value={guideInstrument}
-              onChange={(e) => setGuideInstrument(e.target.value as any)}
-              disabled={!guideEnabled}
-            >
-              <option value="mix">Full Mix</option>
-              <option value="bass">Bass</option>
-              <option value="guitar">Guitar</option>
-              <option value="keys">Keys</option>
-              <option value="vocal">Vocal</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Jamstix / Articulation</span>
-          <select
-            className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
-            value={articulationProfile}
-            onChange={(e) => setArticulationProfile(e.target.value as any)}
-          >
-            <option value="balanced">Balanced Groove</option>
-            <option value="ghosty">Ghost-Note Heavy</option>
-            <option value="tight_hats">Tight Hats / Minimal Cymbals</option>
-            <option value="crashy">Crash-Forward</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className="text-neutral-400">Mode</span>
-        <select
-          className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
-          value={generationMode}
-          onChange={(e) => setGenerationMode(e.target.value as any)}
+      {/* Groove & Performance */}
+      <div className="mt-1 border border-neutral-800 rounded bg-neutral-950/60">
+        <button
+          className="w-full flex items-center justify-between px-2 py-1 text-[14px] font-medium text-neutral-200 hover:bg-neutral-900"
+          onClick={() => setOpenGroove(v => !v)}
         >
-          <option value="template">Template</option>
-          <option value="ai_variation">AI Variation</option>
-          <option value="full_ai">Full AI</option>
-          <option value="euclidean">Euclidean</option>
-        </select>
+          <span>Groove & Performance</span>
+          <span className="text-neutral-500">{openGroove ? "Hide" : "Show"}</span>
+        </button>
+        {openGroove && (
+          <div className="p-2 space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={humanizeOn}
+                  onChange={(e) => setHumanizeOn(e.target.checked)}
+                />
+                <span>Humanize</span>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Humanize Amt</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={humanizeAmount}
+                  onChange={(e) => setHumanizeAmount(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Ghost Notes</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={ghostAmount}
+                  onChange={(e) => setGhostAmount(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Swing</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={swingAmount}
+                  onChange={(e) => setSwingAmount(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Scope</span>
+                <select
+                  className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+                  value={buildScope}
+                  onChange={(e) => setBuildScope(e.target.value as any)}
+                >
+                  <option value="selected_section">Selected section</option>
+                  <option value="full_song">Full song</option>
+                </select>
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Drum Density</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={drumDensity}
+                  onChange={(e) => setDrumDensity(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Cymbal Density</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={cymbalDensity}
+                  onChange={(e) => setCymbalDensity(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Fills & Structure */}
+      <div className="mt-1 border border-neutral-800 rounded bg-neutral-950/60">
+        <button
+          className="w-full flex items-center justify-between px-2 py-1 text-[12px] font-medium text-neutral-200 hover:bg-neutral-900"
+          onClick={() => setOpenFills(v => !v)}
+        >
+          <span>Fills & Structure</span>
+          <span className="text-neutral-500">{openFills ? "Hide" : "Show"}</span>
+        </button>
+        {openFills && (
+          <div className="p-2 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Fill Type</span>
+                <select
+                  className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+                  value={fillType}
+                  onChange={(e) => setFillType(e.target.value)}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="tom_run">Tom Run</option>
+                  <option value="crash_buildup">Crash Buildup</option>
+                  <option value="snare_fill">Snare Fill</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Fill Density</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={fillDensity}
+                  onChange={(e) => setFillDensity(parseFloat(e.target.value))}
+                  className="w-full h-1 accent-emerald-500"
+                />
+                <span className="text-[10px] text-neutral-500">
+                  Locations follow Arrangement "Fill In/Out" flags ({sections.filter(s => s.fillIn).length} in, {sections.filter(s => s.fillOut).length} out)
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Guide & Articulation */}
+      <div className="mt-1 border border-neutral-800 rounded bg-neutral-950/60">
+        <button
+          className="w-full flex items-center justify-between px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-900"
+          onClick={() => setOpenGuide(v => !v)}
+        >
+          <span>Guide & Articulation</span>
+          <span className="text-neutral-500">{openGuide ? "Hide" : "Show"}</span>
+        </button>
+        {openGuide && (
+          <div className="p-2 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Guide Track</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={guideEnabled}
+                    onChange={(e) => setGuideEnabled(e.target.checked)}
+                  />
+                  <select
+                    className="flex-1 bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+                    value={guideInstrument}
+                    onChange={(e) => setGuideInstrument(e.target.value as any)}
+                    disabled={!guideEnabled}
+                  >
+                    <option value="mix">Full Mix</option>
+                    <option value="bass">Bass</option>
+                    <option value="guitar">Guitar</option>
+                    <option value="keys">Keys</option>
+                    <option value="vocal">Vocal</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-neutral-400 text-[11px]">Jamstix / Articulation</span>
+                <select
+                  className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+                  value={articulationProfile}
+                  onChange={(e) => setArticulationProfile(e.target.value as any)}
+                >
+                  <option value="balanced">Balanced Groove</option>
+                  <option value="ghosty">Ghost-Note Heavy</option>
+                  <option value="tight_hats">Tight Hats / Minimal Cymbals</option>
+                  <option value="crashy">Crash-Forward</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 text-[11px]">
+        <div className="flex items-center gap-1">
+          <span className="text-neutral-400">Mode</span>
+          <select
+            className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+            value={generationMode}
+            onChange={(e) => setGenerationMode(e.target.value as any)}
+          >
+            <option value="template">Template</option>
+            <option value="ai_variation">AI Variation</option>
+            <option value="full_ai">Full AI</option>
+            <option value="euclidean">Euclidean</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-neutral-400">Intensity Curve</span>
+          <select
+            className="bg-neutral-950 border border-neutral-700 rounded px-2 py-1"
+            value={intensityCurve}
+            onChange={(e) => setIntensityCurve(e.target.value as any)}
+          >
+            <option value="flat">Flat</option>
+            <option value="build">Build</option>
+            <option value="breakdown">Breakdown</option>
+          </select>
+        </div>
       </div>
 
       {generationMode === "euclidean" && (

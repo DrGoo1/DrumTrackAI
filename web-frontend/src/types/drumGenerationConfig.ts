@@ -10,6 +10,26 @@ export interface EuclideanLaneConfigDTO {
   accentVelocity: number;
 }
 
+export interface BarDefaultsDTO {
+  barIndex: number;   // 0-based within generated range
+  open: number;       // 0..1, 0.5 = neutral
+  power: number;      // 0..1, 0.5 = neutral
+  timing: number;     // 0..1, 0.5 = neutral
+  priority: number;   // 0..1, 0.5 = neutral
+}
+
+export type LimbIdDTO = "LH" | "RH" | "LF" | "RF";
+
+export interface SlotMetaDTO {
+  barIndex: number;
+  limb: LimbIdDTO;
+  step: number;       // 0..(resolution-1) for that bar
+  open?: number;
+  power?: number;
+  timing?: number;
+  priority?: number;
+}
+
 export interface DrumGenerationConfigDTO {
   style: string;
   drummer: string;
@@ -38,4 +58,8 @@ export interface DrumGenerationConfigDTO {
   articulationProfile?: "balanced" | "ghosty" | "tight_hats" | "crashy";
 
   euclideanLanes?: EuclideanLaneConfigDTO[];
+
+  // Limb Bar Editor meta (optional)
+  bars?: BarDefaultsDTO[];
+  slots?: SlotMetaDTO[];
 }

@@ -1,8 +1,29 @@
-# DrumTracKAI v1.1.16 - Complete Advanced Features
+# DrumTracKAI v1.1.17 - DCSM DAW & Euclidean Integration
 
 ## 🎯 Overview
 
-DrumTracKAI v1.1.16 represents the most advanced iteration of the drum composition and analysis system, featuring:
+DrumTracKAI v1.1.17 builds on v1.1.16 by introducing a **new AppDAW-based DCSM page** that unifies all drum-creation workflows (classic, AI, Euclidean) in a single React DAW, fully wired to the Drum Builder v2.0 backend.
+
+Key additions in v1.1.17:
+
+- **New DCSM DAW page at `/`** powered by `AppDAW.tsx`
+- **Source Song workflow**: upload drumless audio, backend analysis, arrangement sections
+- **Integrated Drum Creation panel** under the piano roll with:
+  - Style + drummer **categories** (DrumTracKAI-style groupings)
+  - Intensity, variation, humanize, ghost notes, swing, build scope
+  - Fill controls (Fill In/Out from sections, fill type, **fill density**)
+  - Guide track toggle + instrument (mix, bass, guitar, keys, vocal, other)
+  - **Jamstix / Articulation profiles** (balanced, ghosty, tight hats, crashy)
+  - **Euclidean mode** with per-lane hits/rotate and presets
+- **Drum Builder v2.0 integration** via `/api/generate-drums` including:
+  - `generationMode` (template, ai_variation, full_ai, euclidean)
+  - `euclideanLanes` for Euclidean mode
+  - Performance-layer controls (humanizeAmount, ghostNoteAmount, swingAmount)
+- **Waveform strip aligned with the ruler** so arrangement sections, fills and drum hits line up visually with the audio
+- **Tempo sync** for injected drums using analyzed BPM from `/analyze/tempo`
+- **One-click Export Drums MIDI** using `dcsmExportMidi` (Jamstix/DCSM ready)
+
+The legacy WebDAW/DCSM interface is still available under its own route, but the new DCSM DAW at `/` is the primary landing page in v1.1.17.
 
 - **Professional DAW Plugin** (VST3/AU) for seamless DAW integration
 - **Guide Track Feature** for instrument-aware drum generation
@@ -36,26 +57,102 @@ BUILD_PLUGIN.bat
 # macOS: ~/Library/Audio/Plug-Ins/VST3/ or Components/
 ```
 
-### Option 2: Web Interface
+### Option 2: Web Interface (Docker)
 ```bash
-# Build Rust audio-core
-cd audio-core && cargo build --release
+# From project root (Windows)
+DOCKER_LAUNCH.bat
 
-# Start backend with Rust enabled
-set USE_RUST=1
-set AUDIO_CORE_BIN=%CD%\audio-core\target\release\audio-core.exe
-set AUDIO_CORE_MODE=auto
-drumtrackai_env\Scripts\python.exe drumtrackai_api_server_clean.py
+# This will:
+# - Build and start backend (port 8000) and web-frontend (port 3000)
+# - Open http://localhost:3000 in your browser
 
-# Start frontend
-cd web-frontend && npm start
-
-# Access application
-# Main interface: http://localhost:3000
-# Benchmarks: http://localhost:3000/bench
+# Main DCSM DAW (v1.1.17):
+#   http://localhost:3000/
+# Legacy WebDAW/DCSM:
+#   http://localhost:3000/webdaw-legacy
 ```
 
-## 🎵 Advanced Features
+### Option 3: Web Interface (manual dev mode)
+
+```bash
+# Backend (from project root, with audio-core built)
+set USE_RUST=1
+set AUDIO_CORE_MODE=auto
+python dcsm_backend.py
+
+# Frontend
+cd web-frontend
+npm install
+npm run dev
+
+# Visit http://localhost:3000
+```
+
+### v1.1.17 DCSM DAW – Drum Creation Flow
+
+1. **Open the new DCSM DAW**
+   - Go to `http://localhost:3000/`
+
+2. **Upload a source song (no drums)**
+   - Use the **Source Song** panel on the left to upload audio.
+   - Backend performs upload + analysis; you’ll see file name + status.
+
+3. **View waveform and sections**
+   - A green **waveform strip** appears under the Bars/Beats ruler.
+   - Use **Arrangement Sections** to auto-sectionize and tweak:
+     - `start` / `end` (seconds)
+     - `density` (0–1)
+     - `Fill In` / `Fill Out` flags per section
+
+4. **Configure drum creation** (panel under the Drum Editor)
+   - **Style**: musical style (e.g., Studio Rock, Funk Pocket)
+   - **Drummer Category**: high-level drummer profiles (e.g., studio_rock, funk_pocket)
+   - **Intensity / Variation**: groove energy and movement
+   - **Humanize / Ghost / Swing**: performance layer controls
+   - **Scope**: build full song vs selected section
+   - **Drum & Cymbal Density**: additional density controls
+   - **Fill Type & Fill Density**:
+     - Fill locations come from section `Fill In` / `Fill Out` flags
+     - Fill density scales how strong fills are in those bars
+   - **Guide Track**: enable + choose instrument to steer power curve
+   - **Jamstix / Articulation profile**: balanced, ghosty, tight hats, crashy (affects Jamstix enrichment)
+   - **Mode**:
+     - `template`, `ai_variation`, `full_ai` use pattern generator
+     - `euclidean` enables Euclidean lanes
+
+5. **Euclidean mode inside the DCSM DAW**
+   - Set **Mode = Euclidean** in the Drum Creation panel.
+   - A **Euclidean Lanes** section appears:
+     - Choose a preset (e.g., *In Fives*, *Techno Pulses*) from `EUCLIDEAN_PRESETS`.
+     - Adjust per-lane **Hits** and **Rotate** for kick, snare, hats, ride, crash, etc.
+   - On generate, the frontend sends:
+     - `generationMode: "euclidean"`
+     - `euclideanLanes: [...]` (instrumentId, steps, hits, accents, rotate, velocities)
+   - The backend’s Drum Builder v2.0 uses these lanes to construct internal events.
+
+6. **Generate drums and inspect in the editor**
+   - Click **Generate Drum Track**.
+   - The frontend calls `/api/generate-drums` with the full `DrumGenerationConfig`.
+   - On success:
+     - `midi_notes` are converted from seconds to ticks using the DAW tempo map.
+     - Notes are written into the default **Drums** track/clip via `midiStore.updateNotes`.
+   - You can zoom/scroll/play in the **DrumEditorPanel** to inspect the pattern.
+
+7. **Tempo sync**
+   - After a source song is loaded, the frontend calls `/analyze/tempo` with the file key.
+   - The analyzed BPM is written into the MIDI tempo map (`useMidi.setTempoMap`).
+   - Seconds→ticks mapping for injected drums uses this BPM, keeping drum MIDI aligned with source audio.
+
+8. **Export to DCSM / Jamstix**
+   - Use the top toolbar **Export Drums MIDI** button in the new DCSM DAW.
+   - This calls `dcsmExportMidi` with the current drum notes:
+     - `plugin: "jamstix"`
+     - `ppq: song.ppq`
+     - notes `{ t0, t1, pitch, vel, chan, articulationId? }`
+   - The response returns a base64-encoded MIDI file and filename.
+   - The frontend triggers a download of a `.mid` file ready for Jamstix or any DAW.
+
+## 🎵 Advanced Features (v1.1.16)
 
 ### 1. YouTube LLM Learning System (NEW in v1.1.16.3)
 

@@ -74,10 +74,26 @@ async function fullWorkflow(file: File) {
 
   // Get results (in real backend, you'd poll for completion)
   const results = await getResults(analysisResult.job_id);
-  
+
+  // Try to fetch waveform peaks from legacy files API; fall back to empty peaks
+  let waveform: { sr: number; peaks: number[]; key: string; duration?: number } = {
+    sr: 44100,
+    peaks: [],
+    key: uploadResult.file_id,
+  };
+
+  try {
+    const wfUrl = new URL(`/files/waveform`, API_BASE);
+    wfUrl.searchParams.set('key', uploadResult.file_id);
+    const wfResp = await fetchJSON<{ sr:number; peaks:number[]; duration?:number }>(wfUrl.toString());
+    waveform = { sr: wfResp.sr, peaks: wfResp.peaks || [], key: uploadResult.file_id, duration: wfResp.duration };
+  } catch {
+    // safe fallback: keep empty peaks
+  }
+
   return { 
     key: uploadResult.file_id, 
-    waveform: { sr: 44100, peaks: [], key: uploadResult.file_id },
+    waveform,
     analysis: results
   };
 }

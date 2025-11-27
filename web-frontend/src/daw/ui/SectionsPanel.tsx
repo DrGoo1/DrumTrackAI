@@ -23,8 +23,8 @@ export const SectionsPanel: React.FC<SectionsPanelProps> = ({ sections, onChange
   }
 
   return (
-    <div className="space-y-2 p-2 bg-neutral-900 rounded border border-neutral-800">
-      <div className="flex items-center justify-between text-xs font-semibold text-neutral-200">
+    <div className="space-y-2 p-3 bg-neutral-900 rounded border border-neutral-800">
+      <div className="flex items-center justify-between text-sm font-semibold text-cyan-300 tracking-wide">
         <span>Arrangement Sections</span>
         {onAutoSectionize && (
           <button

@@ -42,8 +42,8 @@ export const SourceSongPanel: React.FC<SourceSongPanelProps> = ({ onSongLoaded }
   }
 
   return (
-    <div className="space-y-2 p-2 bg-neutral-900 rounded border border-neutral-800">
-      <div className="text-xs font-semibold text-neutral-200">Source Song</div>
+    <div className="space-y-2 p-3 bg-neutral-900 rounded border border-neutral-800">
+      <div className="text-sm font-semibold text-cyan-300 tracking-wide">Source Song</div>
       <div
         className="flex flex-col items-center justify-center border border-dashed border-neutral-700 rounded bg-neutral-950/60 py-6 text-xs text-neutral-400 cursor-pointer hover:border-emerald-500 hover:text-neutral-200 transition-colors"
         onClick={() => fileRef.current?.click()}

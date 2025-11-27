@@ -89,6 +89,9 @@ class DrumGenerationConfig:
         self.fill_density = data.get('fillDensity', 0.7)
         self.articulation_profile = data.get('articulationProfile', 'balanced')
         self.euclidean_lanes = data.get('euclideanLanes')
+        # Limb Bar Editor meta (optional)
+        self.bars = data.get('bars')
+        self.slots = data.get('slots')
         
         # Additional metadata
         self.audio_key = data.get('audioKey')  # File key for analysis
@@ -126,6 +129,8 @@ class DrumGenerationConfig:
             fillDensity=self.fill_density,
             articulationProfile=self.articulation_profile,
             euclideanLanes=self.euclidean_lanes,
+            bars=self.bars,
+            slots=self.slots,
         )
 
 
@@ -251,6 +256,7 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
                 internal_events,
                 laid_back_amount=laid_back_amount,
                 global_hat_openness=global_hat_openness,
+                drum_config=v2_config,
             )
             logger.info(f"Enriched {len(internal_events)} events with Jamstix attributes (profile={profile})")
         except Exception as e:
