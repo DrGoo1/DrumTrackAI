@@ -11,6 +11,8 @@ mod generator;
 mod midi;
 mod sectionize;
 mod sectionize_smart;
+mod bar;
+mod meter;
 
 #[derive(Parser)]
 #[command(name="audio-core", version, about="DrumTracKAI DSP core (CLI)")]
@@ -75,6 +77,10 @@ enum Cmd {
         #[arg(long, default_value = "off")] swing_preset: String,
         #[arg(long, default_value = "flat")] vel_preset: String,
         #[arg(long, default_value = "random")] fill_preset: String,
+    },
+    /// Full analysis: beats, bars, meter, tempo, sections (SongMap)
+    AnalyzeFull {
+        file: PathBuf,
     },
 }
 
@@ -187,6 +193,51 @@ fn main() -> Result<()> {
                 swing_preset: generator::SwingPreset::from_str(&swing_preset),
                 vel_preset: generator::VelPreset::from_str(&vel_preset),
                 fill_preset: generator::FillPreset::from_str(&fill_preset),
+                
+                // Velocity controls - reasonable defaults
+                drum_velocity: 0.8,
+                cymbal_velocity: 0.7,
+                kick_velocity: 0.9,
+                snare_velocity: 0.85,
+                tom_velocity: 0.8,
+                hihat_velocity: 0.7,
+                crash_velocity: 0.8,
+                ride_velocity: 0.7,
+                
+                // Density controls
+                drum_density: 0.5,
+                cymbal_density: 0.5,
+                hihat_density: 0.7,
+                ride_density: 0.3,
+                crash_density: 0.2,
+                
+                // Fill controls
+                fill_density: 0.6,
+                fill_location: generator::FillLocation::Auto,
+                fill_frequency: 4,
+                
+                // Hi-hat complexity
+                hihat_complexity: 0.5,
+                hihat_pattern: generator::HiHatPattern::Standard,
+                hihat_open_ratio: 0.2,
+                hihat_ghost_notes: 0.3,
+                
+                // Ride cymbal
+                ride_complexity: 0.5,
+                ride_pattern: generator::RidePattern::Rock,
+                ride_vs_hihat_ratio: 0.3,
+                ride_bell_ratio: 0.1,
+                
+                // Bass line reference
+                bass_line_mode: generator::BassLineMode::Ignore,
+                bass_kick_sync: 0.5,
+                bass_lock_downbeats: true,
+                
+                // Additional controls
+                tom_usage: 0.3,
+                crash_frequency: 0.2,
+                ghost_note_density: 0.2,
+                dynamic_range: 0.5,
             };
             let notes = generator::generate_section(0.0, duration, true, true, params);
             let midi = midi::notes_to_midi(&notes, bpm, grid_sec);
@@ -195,6 +246,59 @@ fn main() -> Result<()> {
                 "notes": notes, 
                 "midi": b64
             }))?;
+        }
+        Cmd::AnalyzeFull { file } => {
+            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
+            
+            // Use the new analyze_full function from lib
+            use bar::{Bar, group_beats_into_bars};
+            use meter::detect_meter;
+            use sectionize_smart::SmartSection;
+            
+            let duration_sec = pcm.len() as f32 / sr as f32;
+            
+            // 1) Basic beat/tempo/onset analysis
+            let cfg = dsp::AnalysisConfig {
+                win: 1024,
+                hop: 512,
+                min_bpm: 60.0,
+                max_bpm: 200.0,
+            };
+            let (tempo_global, beats, _onsets) = dsp::analyze(&pcm, sr, cfg);
+            
+            // 2) Compute per-beat energy for meter detection
+            let beat_energy = dsp::estimate_beat_energy(&pcm, sr, &beats);
+            
+            let meter_segments = detect_meter(&beat_energy, beats.len());
+            let meter = meter_segments.first().map(|m| m.meter).unwrap_or((4, 4));
+            
+            // 3) Group beats into bars
+            let bars = group_beats_into_bars(&beats, &meter_segments);
+            
+            // 4) Sectionize using existing enhanced sectionization
+            let sections = sectionize_smart::sectionize_smart(&pcm, sr, tempo_global, 4, 16);
+            
+            // Build SongMap
+            #[derive(Serialize)]
+            struct SongMapOutput {
+                duration: f32,
+                global_bpm_estimate: f32,
+                meter: (u32, u32),
+                bars: Vec<Bar>,
+                sections: Vec<SmartSection>,
+                beat_times: Vec<f32>,
+            }
+            
+            let song_map = SongMapOutput {
+                duration: duration_sec,
+                global_bpm_estimate: tempo_global,
+                meter,
+                bars,
+                sections,
+                beat_times: beats,
+            };
+            
+            serde_json::to_writer(std::io::stdout(), &song_map)?;
         }
     }
     Ok(())

@@ -1,0 +1,32 @@
+{
+  "models": [
+    {
+      "name": "drumtrackai",
+      "version": "1.0.0",
+      "path": "models\\production\\drumtrackai_1.0.0\\drumtrackai_model_v1.pt",
+      "deployed_at": "2025-11-20T12:58:10.431885",
+      "active": true
+    },
+    {
+      "name": "drumtrackai_admin",
+      "version": "2.0.0",
+      "path": "models\\production\\drumtrackai_admin_2.0.0\\drumtrackai_model_admin_db.pt",
+      "deployed_at": "2025-11-20T13:17:24.262514",
+      "active": true
+    },
+    {
+      "name": "drumtrackai_full",
+      "version": "3.0.0",
+      "path": "models\\production\\drumtrackai_full_3.0.0\\drumtrackai_model_FULL_91k.pt",
+      "deployed_at": "2025-11-20T13:19:15.809160",
+      "active": true
+    },
+    {
+      "name": "drumtrackai_comprehensive",
+      "version": "4.0.0",
+      "path": "models\\production\\drumtrackai_comprehensive_4.0.0\\drumtrackai_COMPREHENSIVE.pt",
+      "deployed_at": "2025-11-20T13:34:58.878896",
+      "active": true
+    }
+  ]
+}

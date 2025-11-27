@@ -58,22 +58,49 @@ export default function Mixer({ tracks }: { tracks: MixerTrack[] }) {
             </div>
           </div>
           <div className="flex gap-3 items-end">
-            <div className="h-40 w-6 bg-slate-800 rounded overflow-hidden relative border border-slate-700">
-              <div 
-                className="absolute bottom-0 left-0 right-0 transition-all duration-75" 
-                style={{ 
-                  height: `${Math.round(((meters[t.key] || 0)) * 100)}%`, 
-                  background: `linear-gradient(to top, ${t.color || "#60a5fa"}, ${t.color || "#60a5fa"}80)` 
-                }} 
-              />
-              <div className="absolute inset-0 pointer-events-none">
-                {[0.25, 0.5, 0.75].map(level => (
+            {/* Stereo Meter - L/R channels */}
+            <div className="flex gap-1 items-end">
+              <div className="flex flex-col items-center">
+                <div className="text-[10px] text-slate-500 mb-1">L</div>
+                <div className="h-40 w-3 bg-slate-800 rounded overflow-hidden relative border border-slate-700">
                   <div 
-                    key={level}
-                    className="absolute left-0 right-0 h-px bg-slate-600"
-                    style={{ bottom: `${level * 100}%` }}
+                    className="absolute bottom-0 left-0 right-0 transition-all duration-75" 
+                    style={{ 
+                      height: `${Math.round(((meters[t.key] || 0)) * 100)}%`, 
+                      background: `linear-gradient(to top, ${t.color || "#60a5fa"}, ${t.color || "#60a5fa"}80)` 
+                    }} 
                   />
-                ))}
+                  <div className="absolute inset-0 pointer-events-none">
+                    {[0.25, 0.5, 0.75].map(level => (
+                      <div 
+                        key={level}
+                        className="absolute left-0 right-0 h-px bg-slate-600"
+                        style={{ bottom: `${level * 100}%` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-center">
+                <div className="text-[10px] text-slate-500 mb-1">R</div>
+                <div className="h-40 w-3 bg-slate-800 rounded overflow-hidden relative border border-slate-700">
+                  <div 
+                    className="absolute bottom-0 left-0 right-0 transition-all duration-75" 
+                    style={{ 
+                      height: `${Math.round(((meters[t.key] || 0)) * 100)}%`, 
+                      background: `linear-gradient(to top, ${t.color || "#60a5fa"}, ${t.color || "#60a5fa"}80)` 
+                    }} 
+                  />
+                  <div className="absolute inset-0 pointer-events-none">
+                    {[0.25, 0.5, 0.75].map(level => (
+                      <div 
+                        key={level}
+                        className="absolute left-0 right-0 h-px bg-slate-600"
+                        style={{ bottom: `${level * 100}%` }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
             <div className="flex-1">

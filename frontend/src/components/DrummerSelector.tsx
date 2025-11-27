@@ -30,7 +30,8 @@ export const DrummerSelector: React.FC<DrummerSelectorProps> = ({ onSelect, sele
 
   const fetchDrummers = async () => {
     try {
-      const response = await fetch('/api/drummers');
+      const API_BASE = (window as any).__API_BASE__ || process.env.REACT_APP_API_BASE || "http://localhost:8000";
+      const response = await fetch(`${API_BASE}/api/drummers`);
       if (!response.ok) {
         throw new Error('Failed to fetch drummers');
       }

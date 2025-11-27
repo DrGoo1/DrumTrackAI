@@ -22,7 +22,7 @@ services:
   # React Frontend v1.1.16
   frontend:
     build:
-      context: ./frontend
+      context: ./web-frontend
       dockerfile: Dockerfile
       args:
         - REACT_APP_API_BASE=http://localhost:8000

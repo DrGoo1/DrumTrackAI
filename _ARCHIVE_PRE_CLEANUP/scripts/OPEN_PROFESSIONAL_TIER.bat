@@ -1,0 +1,3 @@
+@echo off
+echo Opening Professional Tier Page...
+start http://localhost:3004/?page=professional

@@ -1,0 +1,3 @@
+@echo off
+echo Opening Landing Page...
+start http://localhost:3004

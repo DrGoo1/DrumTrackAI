@@ -1,0 +1,19 @@
+{
+  "style": "rock",
+  "drummer": "jeff_porcaro",
+  "intensity": 0.7,
+  "variation": 0.8,
+  "humanize": true,
+  "humanizeAmount": 0.7,
+  "ghostNoteAmount": 0.6,
+  "swingAmount": 0.2,
+  "generationMode": "template",
+  "sectionId": "test_section",
+  "startMeasure": 0,
+  "endMeasure": 4,
+  "tempos": [120, 120, 120, 120],
+  "timeSignature": [4, 4],
+  "fillLocations": [3],
+  "fillType": "auto",
+  "buildScope": "selected_section"
+}

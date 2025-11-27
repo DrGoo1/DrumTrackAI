@@ -7,7 +7,7 @@ const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
 root.render(
-  <React.StrictMode>
+  // <React.StrictMode>  // DISABLED: Causes double-mounting which creates duplicate audio elements
     <App />
-  </React.StrictMode>
+  // </React.StrictMode>
 );

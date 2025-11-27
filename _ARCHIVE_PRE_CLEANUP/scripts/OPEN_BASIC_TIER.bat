@@ -1,0 +1,3 @@
+@echo off
+echo Opening Basic Tier Page...
+start http://localhost:3004/?page=basic

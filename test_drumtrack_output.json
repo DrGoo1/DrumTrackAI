@@ -1,0 +1,210 @@
+{
+  "tempo": 120.0,
+  "timeSignature": "4/4",
+  "bars": [
+    {
+      "barIndex": 0,
+      "startTime": 0.0,
+      "endTime": 2.0,
+      "notes": [
+        {
+          "tickInBar": 0,
+          "tickLength": 240,
+          "instrument": "kick",
+          "velocity": 100,
+          "limbId": "RF",
+          "priority": 1.0,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.0,
+          "locked": false
+        },
+        {
+          "tickInBar": 0,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 70,
+          "limbId": "LH",
+          "priority": 0.7667692913385825,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 960,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 65,
+          "limbId": "LH",
+          "priority": 0.6615590551181102,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 1920,
+          "tickLength": 240,
+          "instrument": "snare_center",
+          "velocity": 90,
+          "limbId": "RH",
+          "priority": 1.0,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.0,
+          "locked": false
+        },
+        {
+          "tickInBar": 1920,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 70,
+          "limbId": "LH",
+          "priority": 0.666755905511811,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 2880,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 65,
+          "limbId": "LH",
+          "priority": 0.6615590551181102,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        }
+      ]
+    },
+    {
+      "barIndex": 1,
+      "startTime": 2.0,
+      "endTime": 4.0,
+      "notes": [
+        {
+          "tickInBar": 0,
+          "tickLength": 240,
+          "instrument": "kick",
+          "velocity": 110,
+          "limbId": "RF",
+          "priority": 1.0,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.0,
+          "locked": false
+        },
+        {
+          "tickInBar": 0,
+          "tickLength": 240,
+          "instrument": "crash_1",
+          "velocity": 100,
+          "limbId": "RH",
+          "priority": 1.0,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.0,
+          "locked": false
+        },
+        {
+          "tickInBar": 0,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 75,
+          "limbId": "LH",
+          "priority": 0.7727456692913386,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 960,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 70,
+          "limbId": "LH",
+          "priority": 0.666755905511811,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 1920,
+          "tickLength": 240,
+          "instrument": "snare_center",
+          "velocity": 95,
+          "limbId": "RH",
+          "priority": 1.0,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.0,
+          "locked": false
+        },
+        {
+          "tickInBar": 1920,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 75,
+          "limbId": "LH",
+          "priority": 0.6719527559055118,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        },
+        {
+          "tickInBar": 2880,
+          "tickLength": 240,
+          "instrument": "hihat_closed",
+          "velocity": 70,
+          "limbId": "LH",
+          "priority": 0.666755905511811,
+          "microTimingMs": 0.0,
+          "aspect": "fill",
+          "hitStyle": "single",
+          "hatOpenLevel": 0.2,
+          "locked": false
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "type": "verse",
+      "startBar": 0,
+      "endBar": 1
+    },
+    {
+      "type": "chorus",
+      "startBar": 1,
+      "endBar": 2
+    }
+  ],
+  "performanceSpec": {
+    "feel": "on_the_beat",
+    "swing": 0.0,
+    "intensity": 0.96,
+    "hatOpenness": 0.2,
+    "fillStyle": "tom_run",
+    "accentPattern": "2_and_4",
+    "ghostNoteAmount": 0.3
+  }
+}

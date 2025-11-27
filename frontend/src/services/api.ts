@@ -5,7 +5,7 @@
  */
 
 const API_BASE = (
-  (window as any).__API_BASE = process.env.REACT_APP_API_BASE || ''
+  (window as any).__API_BASE || process.env.REACT_APP_API_BASE || 'http://localhost:8000'
 ).replace(/\/$/, "");
 
 // small fetch helper with timeout

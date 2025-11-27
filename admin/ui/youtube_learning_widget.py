@@ -1,0 +1,441 @@
+"""
+YouTube Learning Widget for DrumTracKAI Admin
+============================================
+UI for YouTube-to-LLM learning pipeline.
+Provides user-friendly interface for sourcing and learning from YouTube.
+"""
+
+import logging
+import threading
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QComboBox, QSpinBox, QTextEdit, QProgressBar, QGroupBox,
+    QListWidget, QSplitter, QCheckBox, QDoubleSpinBox
+)
+
+logger = logging.getLogger(__name__)
+
+# Import the learning pipeline
+try:
+    from ..services.youtube_llm_learning_service import (
+        YouTubeLLMLearningPipeline, 
+        FAMOUS_DRUMMER_SEARCHES
+    )
+    PIPELINE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"YouTube LLM Learning Pipeline not available: {e}")
+    PIPELINE_AVAILABLE = False
+
+
+class YouTubeLearningWidget(QWidget):
+    """Widget for YouTube-to-LLM learning pipeline."""
+    
+    # Signals
+    pipeline_started = Signal(str)  # drummer_name
+    pipeline_progress = Signal(str)  # status message
+    pipeline_completed = Signal(bool, dict)  # success, results
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pipeline = None
+        self.current_thread = None
+        self._setup_ui()
+        logger.info("YouTube Learning Widget initialized")
+    
+    def _setup_ui(self):
+        """Setup user interface."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        # Header
+        header_label = QLabel("🎥 YouTube LLM Learning Pipeline")
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(14)
+        header_label.setFont(font)
+        main_layout.addWidget(header_label)
+        
+        description = QLabel(
+            "Automatically source, analyze, and learn from YouTube drum performances. "
+            "The pipeline will download videos, extract features, and build training datasets."
+        )
+        description.setWordWrap(True)
+        main_layout.addWidget(description)
+        
+        # Create splitter for left/right panels
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # ============================================================
+        # LEFT PANEL: Configuration
+        # ============================================================
+        config_widget = QWidget()
+        config_layout = QVBoxLayout(config_widget)
+        
+        # Drummer Selection
+        drummer_group = QGroupBox("Drummer Selection")
+        drummer_layout = QVBoxLayout(drummer_group)
+        
+        # Pre-defined drummers
+        preset_layout = QHBoxLayout()
+        preset_label = QLabel("Preset:")
+        self.drummer_combo = QComboBox()
+        self.drummer_combo.addItem("Select Drummer...", "")
+        
+        if PIPELINE_AVAILABLE and FAMOUS_DRUMMER_SEARCHES:
+            for drummer in sorted(FAMOUS_DRUMMER_SEARCHES.keys()):
+                self.drummer_combo.addItem(drummer, drummer)
+        else:
+            self.drummer_combo.addItem("Jeff Porcaro", "Jeff Porcaro")
+            self.drummer_combo.addItem("John Bonham", "John Bonham")
+            self.drummer_combo.addItem("Neil Peart", "Neil Peart")
+        
+        self.drummer_combo.currentIndexChanged.connect(self._on_drummer_selected)
+        
+        preset_layout.addWidget(preset_label)
+        preset_layout.addWidget(self.drummer_combo, 1)
+        drummer_layout.addLayout(preset_layout)
+        
+        config_layout.addWidget(drummer_group)
+        
+        # Pipeline Parameters
+        params_group = QGroupBox("Pipeline Parameters")
+        params_layout = QVBoxLayout(params_group)
+        
+        # Style selection
+        style_layout = QHBoxLayout()
+        style_label = QLabel("Style:")
+        self.style_combo = QComboBox()
+        self.style_combo.addItem("Rock", "rock")
+        self.style_combo.addItem("Jazz", "jazz")
+        self.style_combo.addItem("Funk", "funk")
+        self.style_combo.addItem("Metal", "metal")
+        self.style_combo.addItem("Electronic", "electronic")
+        
+        style_layout.addWidget(style_label)
+        style_layout.addWidget(self.style_combo, 1)
+        params_layout.addLayout(style_layout)
+        
+        # Max videos
+        videos_layout = QHBoxLayout()
+        videos_label = QLabel("Max Videos:")
+        self.max_videos_spin = QSpinBox()
+        self.max_videos_spin.setMinimum(1)
+        self.max_videos_spin.setMaximum(20)
+        self.max_videos_spin.setValue(5)
+        
+        videos_layout.addWidget(videos_label)
+        videos_layout.addWidget(self.max_videos_spin)
+        videos_layout.addStretch(1)
+        params_layout.addLayout(videos_layout)
+        
+        # Quality threshold
+        quality_layout = QHBoxLayout()
+        quality_label = QLabel("Quality Threshold:")
+        self.quality_spin = QDoubleSpinBox()
+        self.quality_spin.setMinimum(0.0)
+        self.quality_spin.setMaximum(1.0)
+        self.quality_spin.setSingleStep(0.1)
+        self.quality_spin.setValue(0.7)
+        self.quality_spin.setToolTip("Minimum quality score (0-1). Higher = stricter filtering.")
+        
+        quality_layout.addWidget(quality_label)
+        quality_layout.addWidget(self.quality_spin)
+        quality_layout.addStretch(1)
+        params_layout.addLayout(quality_layout)
+        
+        # Auto-train checkbox
+        self.auto_train_check = QCheckBox("Start LLM Training After Pipeline")
+        self.auto_train_check.setChecked(False)
+        params_layout.addWidget(self.auto_train_check)
+        
+        config_layout.addWidget(params_group)
+        
+        # Action Buttons
+        buttons_layout = QHBoxLayout()
+        
+        self.start_button = QPushButton("🚀 Start Pipeline")
+        self.start_button.clicked.connect(self._on_start_pipeline)
+        self.start_button.setStyleSheet("QPushButton { padding: 10px; font-weight: bold; }")
+        
+        self.stop_button = QPushButton("⏹ Stop")
+        self.stop_button.clicked.connect(self._on_stop_pipeline)
+        self.stop_button.setEnabled(False)
+        
+        buttons_layout.addWidget(self.start_button)
+        buttons_layout.addWidget(self.stop_button)
+        
+        config_layout.addLayout(buttons_layout)
+        
+        # Batch Operations
+        batch_group = QGroupBox("Batch Operations")
+        batch_layout = QVBoxLayout(batch_group)
+        
+        batch_desc = QLabel("Run pipeline for multiple drummers automatically.")
+        batch_desc.setWordWrap(True)
+        batch_layout.addWidget(batch_desc)
+        
+        self.batch_button = QPushButton("🎯 Learn from All Famous Drummers")
+        self.batch_button.clicked.connect(self._on_batch_pipeline)
+        batch_layout.addWidget(self.batch_button)
+        
+        config_layout.addWidget(batch_group)
+        config_layout.addStretch(1)
+        
+        splitter.addWidget(config_widget)
+        
+        # ============================================================
+        # RIGHT PANEL: Progress & Results
+        # ============================================================
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        progress_layout.addWidget(self.progress_bar)
+        
+        # Status Label
+        self.status_label = QLabel("Ready to start pipeline")
+        self.status_label.setStyleSheet("QLabel { padding: 5px; background-color: #f0f0f0; }")
+        progress_layout.addWidget(self.status_label)
+        
+        # Log Output
+        log_label = QLabel("Pipeline Log:")
+        progress_layout.addWidget(log_label)
+        
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
+        self.log_output.setStyleSheet("QTextEdit { font-family: 'Courier New'; font-size: 10px; }")
+        progress_layout.addWidget(self.log_output)
+        
+        # Results Summary
+        results_label = QLabel("Results Summary:")
+        progress_layout.addWidget(results_label)
+        
+        self.results_list = QListWidget()
+        progress_layout.addWidget(self.results_list)
+        
+        splitter.addWidget(progress_widget)
+        
+        # Set splitter sizes (40% config, 60% progress)
+        splitter.setSizes([400, 600])
+        
+        main_layout.addWidget(splitter)
+        
+        # Check if pipeline is available
+        if not PIPELINE_AVAILABLE:
+            self.start_button.setEnabled(False)
+            self.batch_button.setEnabled(False)
+            self._log("❌ YouTube LLM Learning Pipeline not available")
+            self._log("   Check that youtube_llm_learning_service.py is installed")
+    
+    def _on_drummer_selected(self, index):
+        """Handle drummer selection."""
+        drummer = self.drummer_combo.currentData()
+        if drummer:
+            self._log(f"Selected drummer: {drummer}")
+    
+    def _on_start_pipeline(self):
+        """Start the learning pipeline."""
+        drummer = self.drummer_combo.currentData()
+        
+        if not drummer:
+            self._log("❌ Please select a drummer first")
+            return
+        
+        style = self.style_combo.currentData()
+        max_videos = self.max_videos_spin.value()
+        quality_threshold = self.quality_spin.value()
+        auto_train = self.auto_train_check.isChecked()
+        
+        # Clear previous results
+        self.log_output.clear()
+        self.results_list.clear()
+        self.progress_bar.setValue(0)
+        
+        self._log(f"🚀 Starting pipeline for {drummer}")
+        self._log(f"   Style: {style}")
+        self._log(f"   Max Videos: {max_videos}")
+        self._log(f"   Quality Threshold: {quality_threshold}")
+        self._log(f"   Auto-train: {auto_train}")
+        self._log("")
+        
+        # Disable start button
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        
+        # Start pipeline in background thread
+        self.current_thread = threading.Thread(
+            target=self._run_pipeline_thread,
+            args=(drummer, style, max_videos, quality_threshold, auto_train),
+            daemon=True
+        )
+        self.current_thread.start()
+        
+        # Start progress updater
+        self._start_progress_updater()
+        
+        self.pipeline_started.emit(drummer)
+    
+    def _run_pipeline_thread(self, drummer, style, max_videos, quality_threshold, auto_train):
+        """Run pipeline in background thread."""
+        try:
+            # Initialize pipeline
+            self.pipeline = YouTubeLLMLearningPipeline()
+            
+            # Run complete pipeline
+            self._log("📥 Step 1/4: Sourcing from YouTube...")
+            self.status_label.setText("Sourcing from YouTube...")
+            self.progress_bar.setValue(10)
+            
+            session = self.pipeline.search_and_source_drummer(
+                drummer, style, max_videos, quality_threshold
+            )
+            
+            self._log(f"✅ Sourced {session['files_downloaded']} quality performances")
+            self.progress_bar.setValue(40)
+            
+            # Build dataset
+            self._log("\n📦 Step 2/4: Building training dataset...")
+            self.status_label.setText("Building training dataset...")
+            self.progress_bar.setValue(50)
+            
+            dataset_file = self.pipeline.build_llm_training_dataset(session['session_id'])
+            
+            self._log(f"✅ Dataset created: {dataset_file.name}")
+            self.progress_bar.setValue(80)
+            
+            # Trigger training if requested
+            training_status = None
+            if auto_train:
+                self._log("\n🤖 Step 3/4: Starting LLM training...")
+                self.status_label.setText("Starting LLM training...")
+                training_status = self.pipeline._trigger_llm_training(dataset_file)
+                self._log(f"✅ {training_status['message']}")
+            
+            self.progress_bar.setValue(100)
+            
+            # Success results
+            results = {
+                'success': True,
+                'drummer': drummer,
+                'style': style,
+                'files_sourced': session['files_downloaded'],
+                'dataset_file': str(dataset_file),
+                'training_started': training_status is not None
+            }
+            
+            self._log("\n" + "="*50)
+            self._log("✅ PIPELINE COMPLETE!")
+            self._log(f"   Drummer: {drummer}")
+            self._log(f"   Files: {results['files_sourced']}")
+            self._log(f"   Dataset: {dataset_file.name}")
+            self._log("="*50)
+            
+            # Update results list
+            self.results_list.addItem(f"✅ {drummer} - {results['files_sourced']} files")
+            self.results_list.addItem(f"   Dataset: {dataset_file.name}")
+            
+            self.status_label.setText("Pipeline completed successfully!")
+            self.pipeline_completed.emit(True, results)
+            
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}", exc_info=True)
+            self._log(f"\n❌ Pipeline failed: {e}")
+            self.status_label.setText("Pipeline failed!")
+            self.results_list.addItem(f"❌ {drummer} - FAILED: {e}")
+            self.pipeline_completed.emit(False, {'error': str(e)})
+        
+        finally:
+            # Re-enable start button
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+    
+    def _on_stop_pipeline(self):
+        """Stop the pipeline."""
+        self._log("\n⏹ Stopping pipeline...")
+        self.status_label.setText("Stopping...")
+        
+        # In a real implementation, would terminate the thread gracefully
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+    
+    def _on_batch_pipeline(self):
+        """Run batch pipeline for multiple drummers."""
+        self._log("🎯 Starting batch pipeline for famous drummers...")
+        self._log("   This will take several minutes...")
+        
+        # Disable buttons
+        self.start_button.setEnabled(False)
+        self.batch_button.setEnabled(False)
+        
+        # Run in thread
+        self.current_thread = threading.Thread(
+            target=self._run_batch_pipeline_thread,
+            daemon=True
+        )
+        self.current_thread.start()
+    
+    def _run_batch_pipeline_thread(self):
+        """Run batch pipeline in background thread."""
+        try:
+            self.pipeline = YouTubeLLMLearningPipeline()
+            
+            famous_drummers = [
+                ("Jeff Porcaro", "rock"),
+                ("John Bonham", "rock"),
+                ("Neil Peart", "rock"),
+                ("Dave Grohl", "rock"),
+                ("Steve Gadd", "jazz"),
+            ]
+            
+            results = self.pipeline.run_batch_pipeline(famous_drummers, max_videos_each=3)
+            
+            # Summary
+            successful = len([r for r in results if r['success']])
+            self._log(f"\n✅ Batch complete: {successful}/{len(results)} successful")
+            
+            for result in results:
+                if result['success']:
+                    self.results_list.addItem(f"✅ {result['drummer']} - {result['files_sourced']} files")
+                else:
+                    self.results_list.addItem(f"❌ {result['drummer']} - FAILED")
+            
+        except Exception as e:
+            self._log(f"\n❌ Batch pipeline failed: {e}")
+        
+        finally:
+            self.start_button.setEnabled(True)
+            self.batch_button.setEnabled(True)
+    
+    def _start_progress_updater(self):
+        """Start progress bar animation."""
+        # Could implement more sophisticated progress tracking
+        pass
+    
+    def _log(self, message: str):
+        """Add message to log output."""
+        self.log_output.append(message)
+        # Auto-scroll to bottom
+        scrollbar = self.log_output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        logger.info(message)
+
+
+if __name__ == "__main__":
+    import sys
+    from PySide6.QtWidgets import QApplication
+    
+    app = QApplication(sys.argv)
+    widget = YouTubeLearningWidget()
+    widget.setWindowTitle("YouTube LLM Learning Pipeline")
+    widget.resize(1000, 700)
+    widget.show()
+    sys.exit(app.exec())

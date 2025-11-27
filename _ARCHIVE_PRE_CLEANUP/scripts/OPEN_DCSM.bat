@@ -1,0 +1,3 @@
+@echo off
+echo Opening DCSM Studio...
+start http://localhost:3000

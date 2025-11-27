@@ -1,0 +1,84 @@
+{
+  "pluginName": "YourPluginName",
+  "version": "1.0",
+
+  "articulations": {
+    "hh_closed_tight": {
+      "note": 42,
+      "cc": [
+        { "controller": 4, "value": 0 }
+      ]
+    },
+    "hh_closed": {
+      "note": 42,
+      "cc": [
+        { "controller": 4, "value": 30 }
+      ]
+    },
+    "hh_slightly_open": {
+      "note": 46,
+      "cc": [
+        { "controller": 4, "value": 60 }
+      ]
+    },
+    "hh_half_open": {
+      "note": 46,
+      "cc": [
+        { "controller": 4, "value": 90 }
+      ]
+    },
+    "hh_fully_open": {
+      "note": 46,
+      "cc": [
+        { "controller": 4, "value": 127 }
+      ]
+    },
+
+    "ride_bow_tip": {
+      "note": 51
+    },
+    "ride_bow_shoulder": {
+      "note": 59
+    },
+    "ride_bell": {
+      "note": 53
+    },
+    "ride_edge": {
+      "note": 52
+    },
+
+    "snare_center": {
+      "note": 38
+    },
+    "snare_rimshot": {
+      "note": 40
+    },
+    "snare_sidestick": {
+      "note": 37
+    },
+    "snare_ghost": {
+      "note": 38
+    },
+
+    "tom_high": {
+      "note": 48
+    },
+    "tom_mid": {
+      "note": 45
+    },
+    "tom_floor": {
+      "note": 43
+    },
+
+    "crash_normal": {
+      "note": 49
+    },
+    "crash_bell": {
+      "note": 55
+    },
+    "crash_choke": {
+      "note": 49,
+      "aftertouch": 127
+    }
+  }
+}

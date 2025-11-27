@@ -70,5 +70,6 @@
     "stem-separation"
   ],
   "author": "DrumTracKAI Team",
-  "license": "MIT"
+  "license": "MIT",
+  "proxy": "http://localhost:8000"
 }

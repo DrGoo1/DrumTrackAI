@@ -18,6 +18,9 @@ export type Section = {
   fillOut: boolean;
   label?: string;
   confidence?: number;
+  tempo?: number;                  // Per-section micro tempo
+  energy?: number;                 // Section energy/loudness
+  spectral_centroid?: number;      // Section brightness
 };
 
 interface TimelineProps {
@@ -34,6 +37,8 @@ interface TimelineProps {
   setLoop: (loop: { enabled: boolean; start: number; end: number }) => void;
   gridSec: number;
   onAutoSectionize?: (trackKey: string) => void;
+  selectedSectionIds?: Set<string>;
+  onSelectSection?: (sectionId: string, multi: boolean) => void;
 }
 
 const Timeline: React.FC<TimelineProps> = ({
@@ -49,7 +54,9 @@ const Timeline: React.FC<TimelineProps> = ({
   loop,
   setLoop,
   gridSec,
-  onAutoSectionize
+  onAutoSectionize,
+  selectedSectionIds = new Set(),
+  onSelectSection
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -63,6 +70,11 @@ const Timeline: React.FC<TimelineProps> = ({
 
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
+    
+    // Debug: Log section count when rendering
+    if (sections.length > 0) {
+      console.log(`🎨 Timeline rendering ${sections.length} sections`);
+    }
 
     // Reserve header area for sections
     const headerHeight = 50;
@@ -77,28 +89,71 @@ const Timeline: React.FC<TimelineProps> = ({
       ctx.fillStyle = track.color + '20';
       ctx.fillRect(0, y, width, trackHeight - 2);
       
-      // Draw waveform peaks
-      ctx.fillStyle = track.color;
-      const samplesPerPixel = Math.max(1, Math.floor(track.peaks.length / width));
+      // Check if stereo waveform data exists
+      const peaksL = (track as any).peaksL;
+      const peaksR = (track as any).peaksR;
+      const hasStereoPeaks = !!(peaksL && peaksR && Array.isArray(peaksL) && Array.isArray(peaksR));
       
-      for (let x = 0; x < width; x++) {
-        const startSample = x * samplesPerPixel;
-        const endSample = Math.min(startSample + samplesPerPixel, track.peaks.length);
+      if (hasStereoPeaks) {
+        // Draw STEREO waveform (L on top half, R on bottom half)
+        const halfHeight = (trackHeight - 2) / 2;
+        const centerY = y + halfHeight;
         
-        let max = 0;
-        for (let s = startSample; s < endSample; s++) {
-          max = Math.max(max, Math.abs(track.peaks[s] || 0));
+        ctx.fillStyle = track.color;
+        const samplesPerPixel = Math.max(1, Math.floor(peaksL.length / width));
+        
+        for (let x = 0; x < width; x++) {
+          const startSample = x * samplesPerPixel;
+          const endSample = Math.min(startSample + samplesPerPixel, peaksL.length);
+          
+          // L channel (top half)
+          let maxL = 0;
+          for (let s = startSample; s < endSample; s++) {
+            maxL = Math.max(maxL, Math.abs(peaksL[s] || 0));
+          }
+          const barHeightL = maxL * (halfHeight - 5);
+          ctx.fillRect(x, centerY - barHeightL, 1, barHeightL);
+          
+          // R channel (bottom half)
+          let maxR = 0;
+          for (let s = startSample; s < endSample; s++) {
+            maxR = Math.max(maxR, Math.abs(peaksR[s] || 0));
+          }
+          const barHeightR = maxR * (halfHeight - 5);
+          ctx.fillRect(x, centerY, 1, barHeightR);
         }
         
-        const barHeight = max * (trackHeight - 10);
-        const barY = y + (trackHeight - barHeight) / 2;
-        ctx.fillRect(x, barY, 1, barHeight);
+        // Draw center line to separate L/R channels
+        ctx.strokeStyle = '#ffffff40'; // Semi-transparent white
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        ctx.lineTo(width, centerY);
+        ctx.stroke();
+      } else {
+        // Draw MONO waveform (centered)
+        ctx.fillStyle = track.color;
+        const samplesPerPixel = Math.max(1, Math.floor(track.peaks.length / width));
+        
+        for (let x = 0; x < width; x++) {
+          const startSample = x * samplesPerPixel;
+          const endSample = Math.min(startSample + samplesPerPixel, track.peaks.length);
+          
+          let max = 0;
+          for (let s = startSample; s < endSample; s++) {
+            max = Math.max(max, Math.abs(track.peaks[s] || 0));
+          }
+          
+          const barHeight = max * (trackHeight - 10);
+          const barY = y + (trackHeight - barHeight) / 2;
+          ctx.fillRect(x, barY, 1, barHeight);
+        }
       }
       
       // Draw track label
       ctx.fillStyle = '#ffffff';
       ctx.font = '12px sans-serif';
-      ctx.fillText(track.name, 8, y + 20);
+      ctx.fillText(track.name + (hasStereoPeaks ? ' (Stereo)' : ''), 8, y + 20);
     });
 
     // Draw section header area background
@@ -107,9 +162,18 @@ const Timeline: React.FC<TimelineProps> = ({
 
     // Draw sections in header
     const maxDuration = Math.max(...tracks.map(t => t.seconds), 10);
-    sections.forEach(section => {
+    
+    if (sections.length > 0) {
+      console.log(`📐 Canvas dimensions: ${width}x${height}, maxDuration: ${maxDuration}s`);
+    }
+    
+    sections.forEach((section, idx) => {
       const startX = (section.start / maxDuration) * width;
       const endX = (section.end / maxDuration) * width;
+      
+      if (idx === 0) {
+        console.log(`🎯 First section: "${section.label}" at ${startX.toFixed(1)}px to ${endX.toFixed(1)}px (width: ${(endX-startX).toFixed(1)}px), tempo: ${section.tempo}`);
+      }
       
       // Color-code sections by type
       const sectionColors = {
@@ -131,10 +195,20 @@ const Timeline: React.FC<TimelineProps> = ({
       };
       
       const sectionType = section.label?.toLowerCase() || 'default';
+      const isSelected = selectedSectionIds.has(section.id);
       
       // Draw section background in header
       ctx.fillStyle = sectionColors[sectionType] || sectionColors.default;
       ctx.fillRect(startX, 0, endX - startX, headerHeight);
+      
+      // Highlight selected sections
+      if (isSelected) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(startX, 0, endX - startX, headerHeight);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(startX, 0, endX - startX, headerHeight);
+      }
       
       // Draw vertical lines at section boundaries through entire timeline
       ctx.strokeStyle = strokeColors[sectionType] || strokeColors.default;
@@ -151,25 +225,35 @@ const Timeline: React.FC<TimelineProps> = ({
       ctx.lineWidth = 2;
       ctx.strokeRect(startX, 0, endX - startX, headerHeight);
       
-      // Draw section label in header
+      // Draw section label and tempo in header
       if (section.label && (endX - startX) > 60) {
+        // Section name
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px sans-serif';
         const textWidth = ctx.measureText(section.label.toUpperCase()).width;
         const textX = startX + (endX - startX - textWidth) / 2; // Center text
-        ctx.fillText(section.label.toUpperCase(), textX, 18);
+        ctx.fillText(section.label.toUpperCase(), textX, 15);
+        
+        // Micro tempo (per-section tempo)
+        const microTempo = section.tempo || bpm;
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = '#fbbf24'; // Yellow/amber for tempo
+        const tempoText = `♩=${Math.round(microTempo)}`;
+        const tempoTextWidth = ctx.measureText(tempoText).width;
+        const tempoTextX = startX + (endX - startX - tempoTextWidth) / 2;
+        ctx.fillText(tempoText, tempoTextX, 28);
         
         // Show duration in bars
         const durationSec = section.end - section.start;
         const beatsPerBar = 4;
-        const secPerBeat = 60 / bpm;
+        const secPerBeat = 60 / microTempo; // Use section tempo
         const bars = Math.round(durationSec / (secPerBeat * beatsPerBar));
-        ctx.font = '10px sans-serif';
+        ctx.font = '9px sans-serif';
         ctx.fillStyle = '#cbd5e1';
         const barText = `${bars} bars`;
         const barTextWidth = ctx.measureText(barText).width;
         const barTextX = startX + (endX - startX - barTextWidth) / 2;
-        ctx.fillText(barText, barTextX, 34);
+        ctx.fillText(barText, barTextX, 42);
       }
     });
 
@@ -190,10 +274,34 @@ const Timeline: React.FC<TimelineProps> = ({
 
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
     const maxDuration = Math.max(...tracks.map(t => t.seconds), 10);
     const clickTime = (x / canvas.width) * maxDuration;
     
-    setPlayhead(clickTime);
+    const headerHeight = 50;
+    
+    // Check if click was in section header area
+    if (y <= headerHeight && onSelectSection) {
+      // Find which section was clicked
+      for (const section of sections) {
+        const startX = (section.start / maxDuration) * canvas.width;
+        const endX = (section.end / maxDuration) * canvas.width;
+        
+        if (x >= startX && x <= endX) {
+          // Multi-select with Ctrl/Cmd key
+          const isMulti = event.ctrlKey || event.metaKey;
+          onSelectSection(section.id, isMulti);
+          return;
+        }
+      }
+      // Clicked in header but not on a section - clear selection
+      if (onSelectSection) {
+        onSelectSection('', false);
+      }
+    } else {
+      // Click in waveform area - set playhead
+      setPlayhead(clickTime);
+    }
   };
 
   const handleDrop = (event: React.DragEvent) => {
@@ -256,66 +364,7 @@ const Timeline: React.FC<TimelineProps> = ({
         />
       </div>
 
-      {/* Sections list */}
-      {sections.length > 0 && (
-        <div className="mt-4">
-          <h4 className="text-sm font-medium text-slate-300 mb-2">Sections</h4>
-          <div className="space-y-2">
-            {sections.map((section) => (
-              <div
-                key={section.id}
-                className="flex items-center justify-between bg-slate-700 rounded p-2"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="text-sm text-slate-200">
-                    {section.start.toFixed(1)}s - {section.end.toFixed(1)}s
-                  </div>
-                  {section.label && (
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      section.label.toLowerCase() === 'verse' ? 'bg-blue-600 text-white' :
-                      section.label.toLowerCase() === 'chorus' ? 'bg-green-600 text-white' :
-                      section.label.toLowerCase() === 'bridge' ? 'bg-purple-600 text-white' :
-                      section.label.toLowerCase() === 'intro' ? 'bg-orange-600 text-white' :
-                      section.label.toLowerCase() === 'outro' ? 'bg-red-600 text-white' :
-                      'bg-slate-600 text-white'
-                    }`}>
-                      {section.label.toUpperCase()}
-                    </span>
-                  )}
-                  {section.confidence && (
-                    <span className="text-xs text-slate-400">
-                      {(section.confidence * 100).toFixed(0)}% confidence
-                    </span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => onGenerate(section)}
-                    className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700"
-                  >
-                    Generate
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newSection = { ...section, id: `section-${Date.now()}` };
-                      onSectionsChange([...sections, newSection]);
-                    }}
-                    className="px-2 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-700"
-                  >
-                    Duplicate
-                  </button>
-                  <button
-                    onClick={() => onSectionsChange(sections.filter(s => s.id !== section.id))}
-                    className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Sections list removed - now shown in collapsible "Musical Arrangement" below */}
     </div>
   );
 };

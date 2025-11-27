@@ -1,0 +1,9 @@
+{
+  "name": "drumtrackai_comprehensive",
+  "version": "4.0.0",
+  "model_file": "drumtrackai_COMPREHENSIVE.pt",
+  "deployed_at": "2025-11-20T13:34:58.878896",
+  "metadata": {
+    "score": 50.0
+  }
+}

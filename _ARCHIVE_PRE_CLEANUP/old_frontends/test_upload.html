@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Upload</title>
+</head>
+<body>
+    <h1>Direct Upload Test</h1>
+    <input type="file" id="fileInput" />
+    <button onclick="testUpload()">Upload Test</button>
+    <div id="result"></div>
+
+    <script>
+        async function testUpload() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Uploading...';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                console.log('Sending request to http://localhost:8000/api/upload');
+                
+                const response = await fetch('http://localhost:8000/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('Response status:', response.status);
+                const result = await response.json();
+                console.log('Response:', result);
+                
+                resultDiv.innerHTML = '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = '<span style="color: red;">Error: ' + error.message + '</span>';
+            }
+        }
+    </script>
+</body>
+</html>

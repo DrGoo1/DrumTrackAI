@@ -23,9 +23,8 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
 }) => {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editLabel, setEditLabel] = useState('');
-
-  const selectedSection = sections.find(s => s.id === selectedSectionId);
+  const [editLabel, setEditLabel] = useState<string>('');
+  const [isExpanded, setIsExpanded] = useState(false); // Default collapsed
 
   const formatTime = (seconds: number) => {
     const min = Math.floor(seconds / 60);
@@ -151,18 +150,34 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
   };
 
   return (
-    <div className="bg-slate-800 rounded-lg p-4 space-y-3">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold text-slate-100">Section Manager</h3>
-        <button
-          onClick={addSection}
-          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
-        >
-          + Add Section
-        </button>
+    <div className="bg-slate-800 rounded-lg p-3">
+      {/* Collapsible Header */}
+      <div 
+        className="flex items-center justify-between cursor-pointer hover:bg-slate-700/50 p-2 rounded transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400">{isExpanded ? '▼' : '▶'}</span>
+          <h3 className="text-sm font-semibold text-slate-100">
+            Musical Arrangement
+          </h3>
+          <span className="text-xs text-slate-500">({sections.length})</span>
+        </div>
       </div>
 
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      {/* Expanded Content */}
+      {isExpanded && (
+        <div className="mt-2 space-y-2">
+          {/* Add Section Button */}
+          <button
+            onClick={addSection}
+            className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors flex items-center justify-center gap-2"
+          >
+            <span>+</span> Add Section
+          </button>
+
+          {/* Section List */}
+          <div className="space-y-1 max-h-64 overflow-y-auto pr-1 text-xs">
         {sections.map((section, idx) => {
           const isSelected = section.id === selectedSectionId;
           const isEditing = section.id === editingId;
@@ -172,13 +187,13 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
             <div
               key={section.id}
               onClick={() => setSelectedSectionId(section.id)}
-              className={`p-3 rounded border-2 cursor-pointer transition-all ${
+              className={`p-1.5 rounded border cursor-pointer transition-all ${
                 isSelected 
                   ? 'border-blue-500 bg-slate-700' 
                   : 'border-slate-600 bg-slate-750 hover:border-slate-500'
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-1">
                 {isEditing ? (
                   <input
                     type="text"
@@ -187,18 +202,31 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                     onBlur={finishRename}
                     onKeyPress={(e) => e.key === 'Enter' && finishRename()}
                     autoFocus
-                    className="px-2 py-1 bg-slate-900 text-white rounded border border-blue-500 text-sm"
+                    className="px-1 py-0.5 bg-slate-900 text-white rounded border border-blue-500 text-xs w-full"
                   />
                 ) : (
-                  <span className="font-semibold text-slate-100">
-                    {idx + 1}. {section.label?.toUpperCase() || 'SECTION'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-xs">{idx + 1}.</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                      section.label === 'intro' ? 'bg-green-900/40 text-green-300' :
+                      section.label === 'verse' ? 'bg-blue-900/40 text-blue-300' :
+                      section.label === 'pre-chorus' ? 'bg-purple-900/40 text-purple-300' :
+                      section.label === 'chorus' ? 'bg-red-900/40 text-red-300' :
+                      section.label === 'bridge' ? 'bg-yellow-900/40 text-yellow-300' :
+                      section.label === 'outro' ? 'bg-orange-900/40 text-orange-300' :
+                      section.label === 'interlude' ? 'bg-cyan-900/40 text-cyan-300' :
+                      'bg-slate-700 text-slate-300'
+                    }`}>
+                      {section.label?.toUpperCase() || 'SECTION'}
+                    </span>
+                    <span className="text-slate-500 text-xs">({bars}b)</span>
+                  </div>
                 )}
-                <div className="flex gap-1">
+                <div className="flex gap-0.5">
                   {!isEditing && (
                     <button
                       onClick={(e) => { e.stopPropagation(); startRename(section); }}
-                      className="px-2 py-0.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
+                      className="px-1 py-0 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
                       title="Rename"
                     >
                       ✏️
@@ -206,7 +234,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); deleteSection(section.id); }}
-                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                    className="px-1 py-0 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
                     title="Delete"
                   >
                     🗑️
@@ -214,50 +242,13 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
-                <div>
-                  <span className="text-slate-400">Start:</span> {formatTime(section.start)}
-                </div>
-                <div>
-                  <span className="text-slate-400">End:</span> {formatTime(section.end)}
-                </div>
-                <div>
-                  <span className="text-slate-400">Duration:</span> {bars} bars
-                </div>
-                <div>
-                  <span className="text-slate-400">Density:</span> {(section.density * 100).toFixed(0)}%
-                </div>
+              <div className="text-xs text-slate-400">
+                {formatTime(section.start)} - {formatTime(section.end)}
+                {section.tempo && ` • ${section.tempo.toFixed(0)} BPM`}
               </div>
 
-              {/* Tempo Display */}
-              {section.tempo && (
-                <div className="mt-2 pt-2 border-t border-slate-700">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">Tempo:</span>
-                      <span className={`font-bold ${
-                        (section.tempoConfidence || 0) > 0.85 ? 'text-green-400' :
-                        (section.tempoConfidence || 0) > 0.6 ? 'text-yellow-400' :
-                        'text-red-400'
-                      }`}>
-                        {section.tempo.toFixed(1)} BPM
-                      </span>
-                      {section.tempoConfidence && (
-                        <span className="text-slate-500">
-                          ({(section.tempoConfidence * 100).toFixed(0)}%)
-                        </span>
-                      )}
-                      {section.tempoLocked && (
-                        <span className="text-blue-400" title="Tempo locked">
-                          🔒
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {isSelected && (
+              {/* Hide expanded controls to save space - only show for selected */}
+              {false && isSelected && (
                 <div className="mt-3 pt-3 border-t border-slate-600 space-y-2">
                   {/* Density slider */}
                   <div>
@@ -319,29 +310,28 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
             </div>
           );
         })}
-      </div>
+          </div>
 
-      {sections.length === 0 && (
-        <div className="text-center py-8 text-slate-400">
-          <p className="mb-2">No sections defined</p>
-          <button
-            onClick={addSection}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded"
-          >
-            Create First Section
-          </button>
+          {/* Empty State */}
+          {sections.length === 0 && (
+            <div className="text-center py-6 text-slate-400">
+              <p className="text-sm mb-2">No sections defined</p>
+              <p className="text-xs">Click "+ Add Section" above to get started</p>
+            </div>
+          )}
+
+          {/* Tips */}
+          <div className="pt-3 border-t border-slate-700 text-xs text-slate-400">
+            <p>💡 <strong>Tips:</strong></p>
+            <ul className="list-disc list-inside space-y-1 mt-1">
+              <li>Click section to select and edit</li>
+              <li>Split sections at playhead position</li>
+              <li>Merge adjacent sections</li>
+              <li>Adjust density for each section</li>
+            </ul>
+          </div>
         </div>
       )}
-
-      <div className="pt-3 border-t border-slate-700 text-xs text-slate-400">
-        <p>💡 <strong>Tips:</strong></p>
-        <ul className="list-disc list-inside space-y-1 mt-1">
-          <li>Click section to select and edit</li>
-          <li>Split sections at playhead position</li>
-          <li>Merge adjacent sections</li>
-          <li>Adjust density for each section</li>
-        </ul>
-      </div>
     </div>
   );
 };

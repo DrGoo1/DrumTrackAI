@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
             other_tabs = [
                 ("mvsep", "MVSepWidget", "AUDIO MVSep Processing", "admin.ui.mvsep_widget"),
                 ("batch_processing", "BatchProcessorWidget", " Batch Processing", "admin.ui.batch_processor_widget"),
-                ("comprehensive_training", "ComprehensiveTrainingWidget", "TARGET Comprehensive Training", "admin.ui.comprehensive_training_widget"),
+                ("comprehensive_training", "WorkingComprehensiveTrainingWidget", "TARGET Comprehensive Training", "admin.ui.working_comprehensive_training_widget"),
                 ("analysis_tracking", "SimpleMonitor", "🔄 Real-Time Monitor", "admin.widgets.simple_monitor")
             ]
             
@@ -842,7 +842,7 @@ class MainWindow(QMainWindow):
     def _create_training_tab(self):
         """Create the Comprehensive Training tab"""
         try:
-            from admin.ui.comprehensive_training_widget import ComprehensiveTrainingWidget
+            from admin.ui.working_comprehensive_training_widget import WorkingComprehensiveTrainingWidget as ComprehensiveTrainingWidget
             from admin.ui.training_sophistication_widget import TrainingSophisticationWidget
             
             # Add Comprehensive Training tab

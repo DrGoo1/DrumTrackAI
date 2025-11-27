@@ -1,0 +1,12 @@
+{
+  "name": "drumtrackai_full",
+  "version": "3.0.0",
+  "model_file": "drumtrackai_model_FULL_91k.pt",
+  "deployed_at": "2025-11-20T13:19:15.809160",
+  "metadata": {
+    "validation_score": 66.66666666666666,
+    "r2_score": 0.3679380416870117,
+    "train_samples": 63751,
+    "total_patterns": 91074
+  }
+}

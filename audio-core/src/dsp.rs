@@ -137,7 +137,29 @@ fn estimate_tempo(flux: &[f32], sr: u32, hop: usize, min_bpm: f32, max_bpm: f32)
         if acc > best.0 { best = (acc, lag); }
     }
     let sec_per_beat = best.1 as f32 * hop_sec;
-    (60.0 / sec_per_beat).clamp(min_bpm, max_bpm)
+    let raw_tempo = 60.0 / sec_per_beat;
+    
+    // Apply octave correction to bring tempo into reasonable range
+    correct_tempo_octave(raw_tempo)
+}
+
+/// Correct tempo by octaves to bring into reasonable musical range (60-180 BPM)
+/// This fixes issues where the algorithm detects subdivisions (8th/16th notes) as the beat
+fn correct_tempo_octave(tempo: f32) -> f32 {
+    let mut corrected = tempo;
+    
+    // If tempo too high (likely detecting subdivisions), halve it
+    while corrected > 180.0 {
+        corrected /= 2.0;
+    }
+    
+    // If tempo too low (unlikely but possible), double it
+    while corrected < 60.0 && corrected > 0.0 {
+        corrected *= 2.0;
+    }
+    
+    // Final safety clamp
+    corrected.clamp(60.0, 200.0)
 }
 
 fn render_beats(bpm: f32, duration: f32, seed_start: f32) -> Vec<f32> {
@@ -186,10 +208,13 @@ fn estimate_tempo_candidates(flux: &[f32], sr: u32, hop: usize, min_bpm: f32, ma
     // Sort by strength
     peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     
-    // Convert to BPM
+    // Convert to BPM and apply octave correction
     let mut candidates: Vec<f32> = peaks.iter()
         .take(count)
-        .map(|(lag, _)| 60.0 / (*lag as f32 * hop_sec))
+        .map(|(lag, _)| {
+            let raw_bpm = 60.0 / (*lag as f32 * hop_sec);
+            correct_tempo_octave(raw_bpm)
+        })
         .collect();
     
     if candidates.is_empty() {
@@ -225,4 +250,49 @@ fn calculate_tempo_confidence(flux: &[f32], sr: u32, hop: usize, tempo: f32) -> 
     } else {
         0.0
     }
+}
+
+/// Estimate energy for each beat (for meter detection)
+pub fn estimate_beat_energy(pcm: &[f32], sr: u32, beat_times: &[f32]) -> Vec<f32> {
+    if beat_times.is_empty() {
+        return Vec::new();
+    }
+
+    let win = (0.08 * sr as f32) as usize; // 80 ms window around each beat
+    let half_win = win / 2;
+    let mut energies = Vec::with_capacity(beat_times.len());
+
+    for &bt in beat_times {
+        let center = (bt * sr as f32) as isize;
+        let start = (center - half_win as isize).max(0) as usize;
+        let end = (center + half_win as isize).min(pcm.len() as isize - 1) as usize;
+
+        let mut sum_sq = 0.0;
+        let mut count = 0;
+        for i in start..end {
+            let v = pcm[i];
+            sum_sq += v * v;
+            count += 1;
+        }
+
+        let rms = if count > 0 {
+            (sum_sq / count as f32).sqrt()
+        } else {
+            0.0
+        };
+
+        energies.push(rms);
+    }
+
+    // Normalize to 0–1
+    let max_val = energies
+        .iter()
+        .copied()
+        .fold(0.0_f32, |a, b| a.max(b))
+        .max(1e-6);
+    for e in &mut energies {
+        *e /= max_val;
+    }
+
+    energies
 }

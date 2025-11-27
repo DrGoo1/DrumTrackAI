@@ -1,10 +1,11 @@
-import * as Tone from "tone";
+// import * as Tone from "tone"; // DISABLED - using plain HTML5 Audio only
 
 export type TrackHandle = {
   key: string;
   url: string;
-  player: Tone.Player;
-  gain: Tone.Gain;
+  audioElement: HTMLAudioElement;
+  source: MediaElementAudioSourceNode | null;
+  gain: any; // Plain object, not Tone.Gain - prevents hidden Tone.js routing
   meter: any; // Tone.Meter typings vary across versions
   muted: boolean;
   solo: boolean;
@@ -15,77 +16,209 @@ let players: Map<string, TrackHandle> = new Map();
 let loopEnabled = false;
 let loopStart = 0;
 let loopEnd = 0;
+let monitoringInterval: NodeJS.Timeout | null = null;
+
+// CRITICAL: Global lock to prevent React StrictMode double-mounting from creating duplicates
+let globalAudioCreationLock = new Set<string>();
 
 export const Engine = {
   async ensureStarted() {
     if (started) return;
-    await Tone.start();
-    // @ts-ignore - latencyHint may not exist in all Tone.js versions
-    if (Tone.Transport.latencyHint) Tone.Transport.latencyHint = "playback";
+    
+    // CRITICAL: Clean up any ghost audio elements from StrictMode double-mounting
+    const ghostAudios = document.querySelectorAll('audio');
+    if (ghostAudios.length > 0) {
+      console.warn(`🧹 Cleaning up ${ghostAudios.length} ghost audio elements`);
+      ghostAudios.forEach(a => {
+        a.pause();
+        a.src = '';
+        a.remove();
+      });
+    }
+    
+    // SKIP Tone.start() - we're not using Web Audio API
+    // await Tone.start();
+    console.log('⏭️ Skipping Tone.start() - using plain HTML5 Audio');
     started = true;
   },
   async setBpm(bpm: number) {
     await this.ensureStarted();
-    Tone.Transport.bpm.value = bpm;
+    // BPM not used without Tone.Transport
   },
   async loadOrGet(key: string, url: string): Promise<TrackHandle> {
     await this.ensureStarted();
+    
+    // CRITICAL: Global lock prevents StrictMode double-mounting duplicates
+    if (globalAudioCreationLock.has(key)) {
+      console.warn(`🚫 BLOCKED duplicate creation (StrictMode): ${key}`);
+      const ex = players.get(key);
+      if (ex) return ex;
+      // If no player exists yet, wait briefly for it to be created
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return players.get(key) || await this.loadOrGet(key, url);
+    }
+    
+    // CRITICAL: Check if player already exists - STOP DUPLICATES
     const ex = players.get(key);
-    if (ex) return ex;
+    if (ex) {
+      console.log(`♻️ Reusing existing player for: ${key}`);
+      return ex;
+    }
+    
+    // Acquire lock BEFORE creating
+    globalAudioCreationLock.add(key);
+    console.log(`🆕 Creating NEW audio element for: ${key}`);
 
-    const player = new Tone.Player({ url, autostart: false });
-    const gain = new Tone.Gain(1);
-    // @ts-ignore Tone.Meter may not have types in your version
-    const meter = new (Tone as any).Meter({ normalRange: true, smoothing: 0.8 });
+    // CRITICAL: Use EXACT same method as MinimalAudioTest (which works!)
+    const audioElement = new Audio(url);
+    audioElement.volume = 0.5;
+    audioElement.preload = "auto";
+    
+    console.log('🎵 Loading audio from:', url);
+    console.log('Audio element settings:', {
+      volume: audioElement.volume,
+      playbackRate: audioElement.playbackRate,
+      muted: audioElement.muted
+    });
+    
+    // Wait for audio to be ready
+    await new Promise<void>((resolve, reject) => {
+      const onLoad = () => {
+        console.log('✅ Audio element loaded successfully');
+        audioElement.removeEventListener('loadeddata', onLoad);
+        audioElement.removeEventListener('error', onError);
+        resolve();
+      };
+      const onError = (e: any) => {
+        console.error('❌ Audio element error:', e);
+        audioElement.removeEventListener('loadeddata', onLoad);
+        audioElement.removeEventListener('error', onError);
+        reject(new Error(`Audio load failed`));
+      };
+      
+      audioElement.addEventListener('loadeddata', onLoad);
+      audioElement.addEventListener('error', onError);
+    });
+    
+    // Create dummy objects for compatibility
+    // @ts-ignore
+    const gain = { gain: { value: 0.5 } };
+    // @ts-ignore
+    const meter = { getValue: () => -60 };
+    const source = null;
+    
+    console.log(`✅ Audio element ready for: ${key} (volume: ${audioElement.volume})`);
 
-    player.chain(gain, meter, Tone.getContext().destination);
-    player.sync();
-    player.start(0);
-
-    const h: TrackHandle = { key, url, player, gain, meter, muted: false, solo: false };
+    const h: TrackHandle = { key, url, audioElement, source, gain, meter, muted: false, solo: false };
     players.set(key, h);
+    console.log(`📊 Total players in memory: ${players.size}`);
     return h;
   },
   async refreshTracks(tracks: { key: string; url: string }[]) {
     await this.ensureStarted();
-    for (const t of tracks) await this.loadOrGet(t.key, t.url);
-    for (const k of Array.from(players.keys())) {
-      if (!tracks.find((t) => t.key === k)) {
-        const h = players.get(k)!;
-        h.player.dispose(); h.gain.dispose();
-        // @ts-ignore
-        h.meter.dispose?.();
-        players.delete(k);
+    
+    console.log('🔄 refreshTracks called with:', tracks.map(t => t.key));
+    console.log('📊 Current players:', Array.from(players.keys()));
+    
+    // Find tracks to remove (exist in players but not in new tracks list)
+    const tracksToRemove = Array.from(players.keys()).filter(
+      key => !tracks.find(t => t.key === key)
+    );
+    
+    console.log('🗑️ Removing players:', tracksToRemove);
+    
+    // CRITICAL: Stop and dispose removed tracks properly
+    for (const key of tracksToRemove) {
+      const h = players.get(key);
+      if (h) {
+        console.log(`🛑 Stopping and removing: ${key}`);
+        h.audioElement.pause();
+        h.audioElement.currentTime = 0;
+        h.audioElement.src = ''; // Clear source
+        h.audioElement.load(); // Reset element
+        h.audioElement.remove(); // Remove from DOM if attached
+        players.delete(key);
       }
+    }
+    
+    // Load new tracks (loadOrGet will skip if already exists)
+    for (const t of tracks) {
+      await this.loadOrGet(t.key, t.url);
     }
   },
   async play(atSeconds?: number) {
     await this.ensureStarted();
-    if (typeof atSeconds === "number") Tone.Transport.seconds = atSeconds;
-    Tone.Transport.start();
+    // Transport not used
+    
+    // CRITICAL: First STOP all audio to prevent overlaps
+    console.log('⏹️ Stopping all audio before play');
+    for (const h of Array.from(players.values())) {
+      h.audioElement.pause();
+    }
+    
+    // Small delay to ensure stop is processed
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Manually start all audio elements
+    const currentTime = typeof atSeconds === "number" ? atSeconds : 0;
+    console.log(`▶️ Starting ${players.size} audio tracks at ${currentTime.toFixed(2)}s`);
+    
+    for (const h of Array.from(players.values())) {
+      h.audioElement.currentTime = currentTime;
+      h.audioElement.volume = 0.5; // Ensure volume is correct (50%)
+      const playPromise = h.audioElement.play();
+      if (playPromise) {
+        playPromise
+          .then(() => console.log(`✅ Playing: ${h.key} at volume ${h.audioElement.volume}`))
+          .catch(e => console.error('❌ Play failed:', h.key, e));
+      }
+    }
+    
+    // DON'T start Transport - not needed for plain HTML5 audio
+    // Tone.Transport.start();
   },
   async pause() {
     await this.ensureStarted();
-    Tone.Transport.pause();
+    
+    // Pause all audio elements
+    for (const h of Array.from(players.values())) {
+      h.audioElement.pause();
+    }
+    
+    // Tone.Transport.pause();
   },
   async stop() {
     await this.ensureStarted();
-    Tone.Transport.stop();
+    
+    // Stop all audio elements
+    for (const h of Array.from(players.values())) {
+      h.audioElement.pause();
+      h.audioElement.currentTime = 0;
+    }
+    
+    // Tone.Transport.stop();
   },
   async seek(seconds: number) {
     await this.ensureStarted();
-    Tone.Transport.seconds = seconds;
+    
+    // Seek all audio elements
+    for (const h of Array.from(players.values())) {
+      h.audioElement.currentTime = seconds;
+    }
+    
+    // Transport.seconds not used
   },
   async setLoop(start: number, end: number, enabled: boolean) {
     await this.ensureStarted();
     loopStart = Math.max(0, Math.min(start, end));
     loopEnd = Math.max(loopStart + 0.001, Math.max(start, end));
     loopEnabled = enabled;
-    Tone.Transport.setLoopPoints(loopStart, loopEnd);
-    Tone.Transport.loop = loopEnabled;
+    // Transport loop not used with plain HTML5 audio
   },
   setGain(key: string, value: number) {
-    const h = players.get(key); if (!h) return; h.gain.gain.value = value;
+    const h = players.get(key); if (!h) return; 
+    h.audioElement.volume = value; // Use audio element directly
+    h.gain.gain.value = value; // Update dummy for compatibility
   },
   setMute(key: string, m: boolean) {
     const h = players.get(key); if (!h) return; 
@@ -104,8 +237,9 @@ export const Engine = {
       let shouldMute = h.muted;
       if (hasSolo && !h.solo) shouldMute = true;
       
-      // Use gain value for muting since mute property doesn't exist
-      h.gain.gain.value = shouldMute ? 0 : 1;
+      // CRITICAL: Set volume on audio element directly, not Tone.Gain
+      h.audioElement.volume = shouldMute ? 0 : 0.5;
+      h.gain.gain.value = shouldMute ? 0 : 0.5; // Update dummy for compatibility
     }
   },
   getMeter(key: string) {
@@ -114,6 +248,6 @@ export const Engine = {
     const v = h.meter.getValue ? h.meter.getValue() : 0; return typeof v === "number" ? (isFinite(v) ? Math.max(0, Math.min(1, v)) : 0) : 0;
   },
   state() {
-    return { started, loopEnabled, loopStart, loopEnd, bpm: Tone.Transport.bpm.value };
+    return { started, loopEnabled, loopStart, loopEnd, bpm: 120 };
   },
 };
