@@ -14,12 +14,12 @@ import { PocketTransferModal } from './ui/PocketTransferModal'
 import { ReviewPanel } from './ui/ReviewPanel'
 import { DrumCreationPanel } from './ui/DrumCreationPanel'
 import { LimbBarEditor } from './ui/LimbBarEditor'
-import { KitLimbsPanel } from './ui/KitLimbsPanel'
 import { useMidi } from '../midi/midiStore'
 import { DrumEditorPanel } from './ui/DrumEditorPanel'
 import { SourceSongPanel } from './ui/SourceSongPanel'
 import { SectionsPanel, SectionRow } from './ui/SectionsPanel'
 import { sectionizeAudio, dcsmExportMidi, analyzeTempo, dcsmSectionizeSmart } from '../services/api'
+import type { BarDefaultsDTO, SlotMetaDTO } from '../types/drumGenerationConfig'
 
 export const AppDAW: React.FC = () => {
   const { kitMap, setCursor, project, pxPerSecond } = useDawStore()
@@ -44,6 +44,13 @@ export const AppDAW: React.FC = () => {
   const [lastConfig, setLastConfig] = useState<any | null>(null)
   const [exportScope, setExportScope] = useState<'clip' | 'first_section'>('clip')
   const [editorMode, setEditorMode] = useState<'limb' | 'piano'>('limb')
+
+  // Collected Limb Bar Editor meta per bar index, to be forwarded into
+  // DrumCreationPanel as bars/slots for the backend.
+  const [limbBarMetaByBar, setLimbBarMetaByBar] = useState<Record<number, {
+    defaults: { open: number; priority: number; timing: number; power: number }
+    slots: { limb: 'LH' | 'RH' | 'LF' | 'RF'; step: number; meta: { open: number; priority: number; timing: number; power: number } }[]
+  }>>({})
 
   useEffect(()=>{ setEngine(new DrumEngine(kitMap)) }, [kitMap])
   
@@ -286,7 +293,16 @@ export const AppDAW: React.FC = () => {
                     </div>
                   </div>
                   {editorMode === 'limb' ? (
-                    <LimbBarEditor trackId={drumTrackId} clipId={drumClipId} />
+                    <LimbBarEditor
+                      trackId={drumTrackId}
+                      clipId={drumClipId}
+                      onBarMetaChange={(barIndex, defaults, slots) => {
+                        setLimbBarMetaByBar(prev => ({
+                          ...prev,
+                          [barIndex]: { defaults, slots },
+                        }))
+                      }}
+                    />
                   ) : (
                     <DrumEditorPanel trackId={drumTrackId} clipId={drumClipId} />
                   )}
@@ -294,11 +310,28 @@ export const AppDAW: React.FC = () => {
               )}
             </div>
             <div className="col-span-4 space-y-3">
-              <KitLimbsPanel />
               <DrumCreationPanel
                 sourceSong={sourceSong}
                 sections={sections}
                 onConfigBuilt={setLastConfig}
+                barMetaDefaults={Object.entries(limbBarMetaByBar).map(([barIndexStr, value]) => ({
+                  barIndex: Number(barIndexStr),
+                  open: value.defaults.open,
+                  power: value.defaults.power,
+                  timing: value.defaults.timing,
+                  priority: value.defaults.priority,
+                }))}
+                barMetaSlots={Object.entries(limbBarMetaByBar).flatMap(([barIndexStr, value]) =>
+                  value.slots.map(slot => ({
+                    barIndex: Number(barIndexStr),
+                    limb: slot.limb as SlotMetaDTO['limb'],
+                    step: slot.step,
+                    open: slot.meta.open,
+                    power: slot.meta.power,
+                    timing: slot.meta.timing,
+                    priority: slot.meta.priority,
+                  }))
+                )}
                 onApplyDrums={(payload) => {
                   if (!drumTrackId || !drumClipId) return
 

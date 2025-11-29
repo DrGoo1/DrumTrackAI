@@ -65,11 +65,18 @@ class CentralDatabaseService(QObject):
                 
             # Set default path if not provided
             if db_path is None:
-                # Use user's home directory
-                home = Path.home()
-                db_dir = home / "DrumTracKAI" / "database"
-                db_dir.mkdir(parents=True, exist_ok=True)
-                db_path = str(db_dir / "drum_tracks.db")
+                # First, honor an explicit environment override so backend
+                # services and the admin GUI can share the same canonical DB
+                # (e.g. the rich admin/analysis DB at admin/drumtrackai.db).
+                env_path = os.getenv("DRUMTRACKAI_DB_PATH")
+                if env_path:
+                    db_path = env_path
+                else:
+                    # Fallback to the original per-user location.
+                    home = Path.home()
+                    db_dir = home / "DrumTracKAI" / "database"
+                    db_dir.mkdir(parents=True, exist_ok=True)
+                    db_path = str(db_dir / "drum_tracks.db")
                 
             logger.info(f"Initializing database at: {db_path}")
             self._db_path = db_path

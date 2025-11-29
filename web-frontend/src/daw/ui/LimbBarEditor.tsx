@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import { useMidi } from "../../midi/midiStore"
 import type { MidiNote } from "../../midi/types"
 import { KnobCircle } from "./KnobCircle"
@@ -13,11 +13,6 @@ type LimbRow = "LH" | "RH" | "LF" | "RF"
 
 const LIMB_ORDER: LimbRow[] = ["LH", "RH", "LF", "RF"]
 
-interface LimbBarEditorProps {
-  trackId: string
-  clipId: string
-}
-
 type SlotKey = string // `${limb}:${step}`
 
 interface SlotMeta {
@@ -25,6 +20,19 @@ interface SlotMeta {
   priority: number
   timing: number
   power: number
+}
+
+interface LimbBarEditorProps {
+  trackId: string
+  clipId: string
+
+  // Optional callback so the parent (AppDAW) can collect per-bar defaults and
+  // per-slot overrides and forward them into the drum generation DTO.
+  onBarMetaChange?: (
+    barIndex: number,
+    defaults: SlotMeta,
+    slots: { limb: LimbRow; step: number; meta: SlotMeta }[],
+  ) => void
 }
 
 function limbFromPitch(n: MidiNote): LimbRow {
@@ -35,7 +43,7 @@ function limbFromPitch(n: MidiNote): LimbRow {
   return "LH"
 }
 
-export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId }) => {
+export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId, onBarMetaChange }) => {
   const { song, getClip } = useMidi()
   const clip = getClip(trackId, clipId)
 
@@ -55,16 +63,14 @@ export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId })
   const [slotMeta, setSlotMeta] = useState<Record<SlotKey, SlotMeta>>({})
   const [selectedSlot, setSelectedSlot] = useState<{ limb: LimbRow; step: number } | null>(null)
 
-  if (!clip) {
-    return <div className="text-[11px] text-neutral-500">No clip selected.</div>
-  }
-
   const ppq = song.ppq || 480
   const barTicks = ppq * 4
-  const totalTicks = clip.endTick - clip.startTick
-  const barCount = Math.max(1, Math.ceil(totalTicks / barTicks))
-  const safeBar = Math.min(currentBar, barCount - 1)
-  const barStartTick = clip.startTick + safeBar * barTicks
+
+  // Derive bar metrics safely even when there is no clip yet.
+  const totalTicks = clip ? clip.endTick - clip.startTick : 0
+  const barCount = clip ? Math.max(1, Math.ceil(totalTicks / barTicks)) : 1
+  const safeBar = clip ? Math.min(currentBar, barCount - 1) : 0
+  const barStartTick = clip ? clip.startTick + safeBar * barTicks : 0
 
   const spanFactor =
     timeSpan === "1"
@@ -88,6 +94,9 @@ export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId })
       LF: {},
       RF: {},
     }
+
+    if (!clip) return out
+
     for (const n of clip.notes || []) {
       if (n.t1 <= barStartTick || n.t0 >= barEndTick) continue
       const limb = limbFromPitch(n)
@@ -106,6 +115,24 @@ export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId })
   const activeMeta: SlotMeta = selectedKey && slotMeta[selectedKey]
     ? slotMeta[selectedKey]
     : barDefaults
+
+  // Notify parent of the current bar's defaults + per-slot overrides whenever
+  // they change. The parent is responsible for storing this per bar index.
+  useEffect(() => {
+    if (!clip || !onBarMetaChange) return
+    const slots: { limb: LimbRow; step: number; meta: SlotMeta }[] = []
+    for (const [key, meta] of Object.entries(slotMeta)) {
+      const [limbStr, stepStr] = key.split(":")
+      const limb = limbStr as LimbRow
+      const step = Number(stepStr) || 0
+      slots.push({ limb, step, meta })
+    }
+    onBarMetaChange(safeBar, barDefaults, slots)
+  }, [clip, onBarMetaChange, safeBar, barDefaults, slotMeta])
+
+  if (!clip) {
+    return <div className="text-[11px] text-neutral-500">No clip selected.</div>
+  }
 
   return (
     <div className="w-full bg-neutral-950 border border-neutral-800 rounded p-3 text-[12px] space-y-3">
@@ -292,7 +319,7 @@ export const LimbBarEditor: React.FC<LimbBarEditorProps> = ({ trackId, clipId })
                 return (
                   <div
                     key={stepIdx}
-                    className={`${cellBg} relative border-l border-neutral-800/60 h-10 ${
+                    className={`${cellBg} relative border-l border-neutral-800/60 h-12 ${
                       isSelected ? "ring-1 ring-cyan-400" : ""
                     }`}
                     onClick={() => setSelectedSlot({ limb, step: stepIdx })}

@@ -483,19 +483,54 @@ def get_hit_type_integration_service(sample_rate: int = 44100, use_gpu: bool = T
     
     return _hit_type_integration_service
 
+
+def list_analyzed_drummers() -> List[Dict[str, Any]]:
+    """Return a summary of all drummers with enhanced analysis in the admin DB.
+
+    Uses the same CentralDatabaseService / enhanced_analyses table as the
+    hit-type integration service. This is intended as an admin/helper utility
+    so we can see which real drummer names are available for mapping to
+    public personas like "studio_rock".
+    """
+
+    service = CentralDatabaseService()
+    try:
+        rows = service.fetch_all(
+            """
+            SELECT drummer_name,
+                   COUNT(*) as analysis_count,
+                   MIN(created_at) as first_analysis,
+                   MAX(created_at) as latest_analysis
+            FROM enhanced_analyses
+            GROUP BY drummer_name
+            ORDER BY drummer_name
+            """
+        )
+    except Exception as e:
+        logger.error(f"Error listing analyzed drummers: {e}")
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for drummer_name, count, first_ts, latest_ts in rows:
+        out.append(
+            {
+                "drummer_name": drummer_name,
+                "analysis_count": count,
+                "first_analysis": first_ts,
+                "latest_analysis": latest_ts,
+            }
+        )
+    return out
+
 if __name__ == "__main__":
-    # Test the integration service
-    service = HitTypeIntegrationService()
-    
-    # Test with dummy audio
-    duration = 5.0
-    sample_rate = 44100
-    t = np.linspace(0, duration, int(duration * sample_rate))
-    audio = np.random.randn(len(t)) * 0.1  # Simple noise for testing
-    
-    # Run analysis
-    results = service.analyze_with_hit_types(audio, "test_drummer")
-    
-    print("Hit-Type Integration Service test completed!")
-    print(f"Analysis ID: {results['analysis_id']}")
-    print(f"Hit-type summary: {results['hit_type_summary']}")
+    # Simple CLI helper: list all analyzed drummers in the admin DB
+    drummers = list_analyzed_drummers()
+    if not drummers:
+        print("No analyzed drummers found in enhanced_analyses.")
+    else:
+        print("Analyzed drummers:\n")
+        for d in drummers:
+            print(
+                f"- {d['drummer_name']} (analyses={d['analysis_count']}, "
+                f"first={d['first_analysis']}, latest={d['latest_analysis']})"
+            )

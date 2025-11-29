@@ -33,6 +33,9 @@ export interface SlotMetaDTO {
 export interface DrumGenerationConfigDTO {
   style: string;
   drummer: string;
+  // Public drummer/profile identifier (e.g. "studio_rock"), decoupled from
+  // any internal real-drummer analysis names used on the admin side.
+  publicDrummerId?: string;
   tempos: number[];
   timeSignature: [number, number];
   startMeasure: number;

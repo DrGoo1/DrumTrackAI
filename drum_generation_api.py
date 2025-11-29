@@ -70,6 +70,9 @@ class DrumGenerationConfig:
         self.time_signature = tuple(data['timeSignature'])
         self.style = data['style']
         self.drummer = data['drummer']
+        # Public, app-facing drummer/profile identifier (e.g. "studio_rock").
+        # This is decoupled from any real drummer names used internally.
+        self.public_drummer_id = data.get('publicDrummerId')
         self.intensity = data['intensity']  # 0.0-1.0
         self.variation = data['variation']  # 0.0-1.0
         self.generation_mode = data['generationMode']  # 'template', 'ai_variation', 'full_ai'
@@ -114,6 +117,7 @@ class DrumGenerationConfig:
             timeSignature=self.time_signature,
             style=self.style,
             drummer=self.drummer,
+            publicDrummerId=self.public_drummer_id,
             intensity=self.intensity,
             variation=self.variation,
             generationMode=self.generation_mode,

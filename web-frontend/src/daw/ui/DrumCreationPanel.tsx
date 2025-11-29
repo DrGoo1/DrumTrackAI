@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { KnobCircle } from "./KnobCircle";
 import type { SectionRow } from "./SectionsPanel";
 import type { DrumGenerationConfigDTO, BarDefaultsDTO, SlotMetaDTO } from "../../types/drumGenerationConfig";
 import { generateDrums } from "../../services/api";
@@ -120,6 +121,7 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
         timeSignature: [4, 4],
         style,
         drummer: drummerCategoryId,
+        publicDrummerId: drummerCategoryId,
         intensity: effectiveIntensity,
         variation,
         generationMode,
@@ -200,30 +202,6 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Intensity</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={intensity}
-            onChange={(e) => setIntensity(parseFloat(e.target.value))}
-            className="w-full h-1 accent-emerald-500"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-neutral-400 text-[11px]">Variation</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={variation}
-            onChange={(e) => setVariation(parseFloat(e.target.value))}
-            className="w-full h-0.5 accent-emerald-500"
-          />
-        </label>
       </div>
       {/* Groove & Performance */}
       <div className="mt-1 border border-neutral-800 rounded bg-neutral-950/60">
@@ -235,42 +213,49 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
           <span className="text-neutral-500">{openGroove ? "Hide" : "Show"}</span>
         </button>
         {openGroove && (
-          <div className="p-2 space-y-2">
-            <div className="grid grid-cols-3 gap-2">
-              <label className="flex items-center gap-1">
+          <div className="p-2 space-y-3">
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <div className="flex items-center gap-1">
                 <input
                   type="checkbox"
                   checked={humanizeOn}
                   onChange={(e) => setHumanizeOn(e.target.checked)}
                 />
-                <span>Humanize</span>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-neutral-400 text-[11px]">Humanize Amt</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={humanizeAmount}
-                  onChange={(e) => setHumanizeAmount(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-emerald-500"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-neutral-400 text-[11px]">Ghost Notes</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={ghostAmount}
-                  onChange={(e) => setGhostAmount(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-emerald-500"
-                />
-              </label>
+                <span className="text-[11px]">Humanize Enabled</span>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-wrap gap-4 justify-between">
+              <div className="flex gap-4">
+                <KnobCircle
+                  label="Intensity"
+                  value={intensity}
+                  onChange={setIntensity}
+                />
+                <KnobCircle
+                  label="Variation"
+                  value={variation}
+                  onChange={setVariation}
+                />
+              </div>
+              <div className="flex gap-4">
+                <KnobCircle
+                  label="Humanize"
+                  value={humanizeAmount}
+                  onChange={setHumanizeAmount}
+                />
+                <KnobCircle
+                  label="Ghosts"
+                  value={ghostAmount}
+                  onChange={setGhostAmount}
+                />
+                <KnobCircle
+                  label="Swing"
+                  value={swingAmount}
+                  onChange={setSwingAmount}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-2">
               <label className="flex flex-col gap-1">
                 <span className="text-neutral-400 text-[11px]">Swing</span>
                 <input
@@ -295,31 +280,17 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
                 </select>
               </label>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-1">
-                <span className="text-neutral-400 text-[11px]">Drum Density</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={drumDensity}
-                  onChange={(e) => setDrumDensity(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-emerald-500"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-neutral-400 text-[11px]">Cymbal Density</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={cymbalDensity}
-                  onChange={(e) => setCymbalDensity(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-emerald-500"
-                />
-              </label>
+            <div className="flex gap-4 mt-2">
+              <KnobCircle
+                label="Drum Dens."
+                value={drumDensity}
+                onChange={setDrumDensity}
+              />
+              <KnobCircle
+                label="Cymbal Dens."
+                value={cymbalDensity}
+                onChange={setCymbalDensity}
+              />
             </div>
           </div>
         )}
@@ -350,21 +321,19 @@ export const DrumCreationPanel: React.FC<DrumCreationPanelProps> = ({
                   <option value="snare_fill">Snare Fill</option>
                 </select>
               </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-neutral-400 text-[11px]">Fill Density</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 flex flex-col gap-1">
+                  <span className="text-neutral-400 text-[11px]">Fill Density</span>
+                  <span className="text-[10px] text-neutral-500">
+                    Locations follow Arrangement "Fill In/Out" flags ({sections.filter(s => s.fillIn).length} in, {sections.filter(s => s.fillOut).length} out)
+                  </span>
+                </div>
+                <KnobCircle
+                  label="Density"
                   value={fillDensity}
-                  onChange={(e) => setFillDensity(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-emerald-500"
+                  onChange={setFillDensity}
                 />
-                <span className="text-[10px] text-neutral-500">
-                  Locations follow Arrangement "Fill In/Out" flags ({sections.filter(s => s.fillIn).length} in, {sections.filter(s => s.fillOut).length} out)
-                </span>
-              </label>
+              </div>
             </div>
           </div>
         )}

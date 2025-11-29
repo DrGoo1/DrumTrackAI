@@ -152,6 +152,152 @@ npm run dev
    - The response returns a base64-encoded MIDI file and filename.
    - The frontend triggers a download of a `.mid` file ready for Jamstix or any DAW.
 
+## 🥁 Jamstix Limb Editor & Limb Meta (v1.1.17)
+
+v1.1.17 introduces a Jamstix-style **Limb Bar Editor** and a new limb-based drum editing workflow. This becomes the primary editing surface for drums in the DCSM DAW.
+
+### Frontend Components
+
+- **`web-frontend/src/daw/ui/LimbBarEditor.tsx`**
+  - Jamstix Bar Editor–style UI with:
+    - 4 limb lanes: `LH`, `RH`, `LF`, `RF`
+    - Bar grid with `RES` (16/32/64) and `SPAN` (1/1, 1/2, 1/4, 1/8 bar)
+    - Mode toggles: `FULL`, `AUTO`, `BAR`, `RECOMPOSE`
+    - Stroke modes: `SINGLE`, `DOUBLE`, `BOUNCED`, `LOCKED`
+    - Circular knobs for **OPEN / PRIORITY / TIMING / POWER**
+  - Stores per-bar defaults and per-slot overrides:
+    - `barDefaults`: `{ open, power, timing, priority }` per bar
+    - `slotMeta`: keyed by `(limb, step)` within the bar
+- **`web-frontend/src/daw/ui/KitLimbsPanel.tsx`**
+  - Configures which kit instruments are mapped to each limb (handedness, double-kick awareness).
+- **`web-frontend/src/daw/state/limbStore.ts`**
+  - Zustand store for limb configuration and mappings.
+- **UI helpers**
+  - `DrumIcon.tsx` + `drumKinds.ts` + `drumKindFromNote.ts` for simple SVG drum icons.
+  - `KnobCircle.tsx` for the Jamstix-style circular knobs.
+
+### DTO Extensions (Frontend → Backend)
+
+`web-frontend/src/types/drumGenerationConfig.ts` now includes limb meta:
+
+- `BarDefaultsDTO`
+  - `barIndex: number` (0-based within generated range)
+  - `open: number` (0..1, 0.5 ≈ neutral)
+  - `power: number` (0..1)
+  - `timing: number` (0..1)
+  - `priority: number` (0..1)
+- `LimbIdDTO`: union of `"LH" | "RH" | "LF" | "RF"`
+- `SlotMetaDTO`
+  - `barIndex: number`
+  - `limb: LimbIdDTO`
+  - `step: number` (0..resolution-1 in that bar)
+  - Optional `open`, `power`, `timing`, `priority`
+- `DrumGenerationConfigDTO`
+  - Extended with optional:
+    - `bars?: BarDefaultsDTO[]`
+    - `slots?: SlotMetaDTO[]`
+
+`DrumCreationPanel.tsx` accepts optional `barMetaDefaults` / `barMetaSlots` props and forwards them into the `DrumGenerationConfigDTO` sent to `/api/generate-drums`.
+
+### Backend Config: DrumGenerationConfig (v2)
+
+`backend/drum_generation/drum_generation_config.py` now defines:
+
+- `BarDefaults`
+  - `barIndex: int`
+  - `open: float = 0.5`
+  - `power: float = 0.5`
+  - `timing: float = 0.5`
+  - `priority: float = 0.5`
+- `SlotMeta`
+  - `barIndex: int`
+  - `limb: Literal["LH", "RH", "LF", "RF"]`
+  - `step: int`
+  - Optional `open`, `power`, `timing`, `priority`
+- `DrumGenerationConfig`
+  - Extended with:
+    - `bars: Optional[List[BarDefaults]] = None`
+    - `slots: Optional[List[SlotMeta]] = None`
+  - `to_dict` / `from_dict` serialize/deserialize these fields for API calls and caching.
+
+### API Bridge: Legacy Config → v2 Config
+
+`drum_generation_api.py` contains a legacy `DrumGenerationConfig` wrapper that converts the frontend JSON into the v2 `NewConfig`:
+
+- Reads limb meta from request JSON:
+  - `self.bars = data.get('bars')`
+  - `self.slots = data.get('slots')`
+- Passes them to v2 config:
+  - `NewConfig(..., bars=self.bars, slots=self.slots)`
+- These ultimately land in `backend/drum_generation/drum_generation_config.py` as `config.bars` / `config.slots`.
+
+### Jamstix Enrichment: Applying global × bar × slot
+
+`backend/drum_generation/jamstix_attributes.py` now applies limb meta when enriching internal events:
+
+- New helper `_bias(x)` maps 0..1 → ~0.5..1.5 multipliers.
+- `enrich_internal_events_with_jamstix_attrs` accepts `drum_config` (v2 `DrumGenerationConfig`).
+- Builds:
+  - `bars_by_idx[barIndex]` from `config.bars`
+  - `slots_by_key[(barIndex, step, limb)]` from `config.slots`
+- For each internal event:
+  - Computes `bar_pos_frac` from `barStartTime` / `barEndTime` and `time_sec`.
+  - Assigns `limbId` (LH/RH/LF/RF) based on `instrument_id`.
+  - Approximates a 16-step `step_idx` from `bar_pos_frac`.
+  - Looks up bar + slot meta for `(barIndex, step_idx, limbId)`.
+  - Computes `open_mul`, `power_mul`, `timing_mul`, `prio_mul` via `_bias` on bar × slot values.
+  - Applies multipliers:
+    - **POWER** → scales `velocity` (0.5×–1.5× range capped at 1..127).
+    - **TIMING** → scales `timingOffsetMs`.
+    - **OPEN** → scales `hatOpenLevel` for hihat/ride instruments.
+    - **PRIORITY** → scales the computed `priority` of the hit.
+
+This realizes the `final = global × bar × slot` model:
+- Global controls in `DrumCreationPanel` set the baseline.
+- Limb Bar Editor bar defaults modulate entire bars.
+- Per-slot overrides modulate individual limb+step hits.
+
+### Docker Workflow for Backend Edits
+
+Backend Python files live inside the backend container’s `/app` tree. For safe edits without touching images directly, use this workflow:
+
+1. **Open a shell in the backend container (optional)**
+   ```bash
+docker exec -it drumtrackai-v1116-backend /bin/bash
+# Inside container:
+cd /app
+ls
+```
+
+2. **Copy target file(s) out to host for editing**
+   ```bash
+# Example: drum_generation_config
+docker cp drumtrackai-v1116-backend:/app/backend/drum_generation/drum_generation_config.py \
+  F:\DrumTracKAI_v1.1.17\drum_generation_config.py
+```
+
+3. **Edit locally in IDE**
+   - Apply changes to the copied file on Windows.
+
+4. **Copy edited file back into the container**
+   ```bash
+docker cp F:\DrumTracKAI_v1.1.17\drum_generation_config.py \
+  drumtrackai-v1116-backend:/app/backend/drum_generation/drum_generation_config.py
+```
+
+5. **Restart backend container**
+   ```bash
+docker restart drumtrackai-v1116-backend
+```
+
+6. **Sync container file back into repo structure (optional)**
+   ```bash
+docker cp drumtrackai-v1116-backend:/app/backend/drum_generation/drum_generation_config.py \
+  F:\DrumTracKAI_v1.1.17\backend\drum_generation\drum_generation_config.py
+```
+
+This keeps the Dockerized backend and the Git repository in sync while allowing iterative backend development from your IDE.
+
 ## 🎵 Advanced Features (v1.1.16)
 
 ### 1. YouTube LLM Learning System (NEW in v1.1.16.3)

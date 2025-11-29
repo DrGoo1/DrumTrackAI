@@ -68,6 +68,9 @@ class DrumGenerationConfig:
     # ================================================================
     style: str                             # "rock", "funk", "jazz", etc.
     drummer: str                           # "jeff_porcaro", "john_bonham", etc.
+    publicDrummerId: Optional[str] = None  # Public, app-facing drummer/profile identifier (e.g. "studio_rock").
+                                            # This is decoupled from any real drummer names used internally in the
+                                            # admin/analysis tooling.
     intensity: float                       # 0.0 (soft) - 1.0 (aggressive)
     variation: float                       # 0.0 (static) - 1.0 (changey)
     generationMode: GenerationMode         # "template" | "ai_variation" | "full_ai"
@@ -108,6 +111,7 @@ class DrumGenerationConfig:
             "timeSignature": self.timeSignature,
             "style": self.style,
             "drummer": self.drummer,
+            "publicDrummerId": self.publicDrummerId,
             "intensity": self.intensity,
             "variation": self.variation,
             "generationMode": self.generationMode,
@@ -221,6 +225,7 @@ class DrumGenerationConfig:
             timeSignature=tuple(data["timeSignature"]),
             style=data["style"],
             drummer=data["drummer"],
+            publicDrummerId=data.get("publicDrummerId"),
             intensity=data["intensity"],
             variation=data["variation"],
             generationMode=data["generationMode"],
@@ -265,3 +270,78 @@ class EuclideanLaneConfig:
     rotate: int
     velocity: int
     accentVelocity: int
+
+
+@dataclass
+class DrummerGenerationBrain:
+    """Runtime "brain" derived from analysis for a public drummer persona.
+
+    This object is built from admin-side analysis artifacts (style vectors,
+    hit-type statistics, etc.) and used internally by the generation pipeline
+    and Jamstix enrichment. It is intentionally compact and aligned with the
+    controls exposed in DrumGenerationConfig.
+    """
+
+    # Global defaults for core knobs (0.0-1.0)
+    defaultIntensity: float
+    defaultHumanize: float
+    defaultGhosts: float
+    defaultSwing: float
+    defaultDrumDensity: float
+    defaultCymbalDensity: float
+    defaultFillDensity: float
+
+    # Timing feel: -1 = lay back, 0 = neutral, +1 = push
+    globalTimingFeel: float
+    sectionTimingFeel: Dict[str, float]
+
+    # Energy / crescendo per section (0.0-1.0 target energy) and how aggressive
+    # fills should be as energy rises.
+    sectionEnergy: Dict[str, float]
+    fillAggression: float
+
+    # Per-instrument / articulation biases (typically -1.0..+1.0 or 0.0..1.0)
+    hatOpenBias: float
+    ghostSnareBias: float
+    rimshotBias: float
+    crashBias: float
+    rideBellBias: float
+
+
+@dataclass
+class DrummerProfileVisualSection:
+    """Public view of section-level timing feel and energy for visualization."""
+
+    id: str
+    label: str
+    timingFeel: float  # -1 = lay back, 0 = neutral, +1 = push
+    energy: float      # 0.0-1.0
+
+
+@dataclass
+class DrummerProfileVisual:
+    """Lightweight DTO for the Drummer Profile page in the DAW UI.
+
+    This structure is safe to expose publicly: it uses only abstract traits and
+    the publicDrummerId, never any internal real-drummer names.
+    """
+
+    publicDrummerId: str
+    label: str
+
+    # Global feel / groove traits (0.0-1.0)
+    grooveScore: float
+    ghostNoteTendency: float
+    syncopationTendency: float
+    fillFrequency: float
+    pocketScore: float
+
+    # Kit preference summaries (0.0-1.0)
+    hatOpenness: float
+    snareGhostBias: float
+    snareRimshotBias: float
+    rideBellUsage: float
+    crashUsage: float
+
+    # Section-wise timing feel and energy curve
+    sections: List[DrummerProfileVisualSection]
