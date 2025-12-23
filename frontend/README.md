@@ -197,7 +197,7 @@ npm run eject      # Eject from Create React App
 
 #### **Environment Variables:**
 ```bash
-REACT_APP_API_URL=http://localhost:8000/api
+REACT_APP_API_BASE=http://localhost:8000
 REACT_APP_UPLOAD_MAX_SIZE=52428800  # 50MB for basic tier
 REACT_APP_ENABLE_DEMO_MODE=true     # Enable demo features
 ```

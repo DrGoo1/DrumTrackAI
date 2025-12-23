@@ -10,6 +10,6 @@ test("app loads and uploader appears", async ({ page }) => {
   await debug.first().waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
 
   // Uploader flag path
-  const hasUploader = await page.locator("text=Import Audio").first().isVisible().catch(() => false);
+  const hasUploader = await page.locator("text=Upload Audio").first().isVisible().catch(() => false);
   expect(typeof hasUploader).toBe("boolean");
 });

@@ -1,7 +1,20 @@
 import React, { useMemo, useRef, useState } from "react";
+import type { LimbId } from "../constants/limbs";
 
-export type MidiNote = { time: number; lane: string; vel: number };
+export type MidiNote = {
+  id: string;
+  time: number;
+  duration: number;
+  lane: string;
+  vel: number;
+  aspect?: "groove" | "accent" | "fill";
+  phraseMarker?: string;
+  rudimentId?: string;
+  limbId?: LimbId | null;
+};
 const LANES = ["kick","snare","hihat","tom","ride","crash","openhat","clap"] as const;
+
+const makeNoteId = () => `note-${Math.random().toString(36).slice(2, 9)}`;
 
 export default function PianoRoll({
   bpm,
@@ -20,7 +33,7 @@ export default function PianoRoll({
   const laneHeight = 24;
   const headerHeight = 40;
   const height = laneHeight * LANES.length + headerHeight;
-  const seconds = Math.max(8, ...notes.map(n => n.time)) + 4;
+  const seconds = Math.max(8, ...notes.map(n => n.time + (n.duration || gridSec))) + 4;
   const width = Math.ceil(seconds * pxPerSec);
   const ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -105,20 +118,30 @@ export default function PianoRoll({
       if(i < 0) continue; 
       const y = headerHeight + i * laneHeight + 2;
       const laneColor = laneColors[n.lane as keyof typeof laneColors] || "#60a5fa";
-      const noteWidth = Math.max(8, pxPerSec * grid.sec * 0.8);
+      const noteWidth = Math.max(8, pxPerSec * (n.duration || grid.sec));
       
       // Note shadow
       g.fillStyle = "rgba(0,0,0,0.3)";
       g.fillRect(x+1, y+1, noteWidth, laneHeight-5);
       
       // Note body
-      g.fillStyle = laneColor;
+      const highlightFill = n.rudimentId || n.aspect === "fill";
+      g.fillStyle = highlightFill ? "#d946ef" : laneColor;
       g.fillRect(x, y, noteWidth, laneHeight-4);
       
       // Velocity indicator
       const velHeight = Math.round((laneHeight-4) * n.vel);
       g.fillStyle = "rgba(255,255,255,0.3)";
       g.fillRect(x, y + (laneHeight-4) - velHeight, noteWidth, velHeight);
+
+      if (n.rudimentId || n.phraseMarker) {
+        const label = n.rudimentId ?? n.phraseMarker ?? "";
+        g.fillStyle = "rgba(15,23,42,0.8)";
+        g.fillRect(x, y - 10, Math.max(24, Math.min(noteWidth, 80)), 10);
+        g.fillStyle = "#fce7f3";
+        g.font = "9px 'JetBrains Mono', monospace";
+        g.fillText(label.slice(0, 10), x + 2, y - 2);
+      }
     }
   }
 
@@ -143,7 +166,7 @@ export default function PianoRoll({
       onChange(next);
     } else {
       const velocity = 0.7 + Math.random() * 0.3; // Humanize velocity
-      onChange([...notes, { time, lane, vel: velocity }]);
+      onChange([...notes, { id: makeNoteId(), time, lane, vel: velocity, duration: grid.sec }]);
     }
   }
 

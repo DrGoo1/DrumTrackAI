@@ -1,6 +1,8 @@
 // MIDI Types for DrumTracKAI Open Source WebDAW
 // PPQ-based timing with variable tempo support
 
+import type { DrumTrackForDCSM } from '../types/drumTrack'
+
 export type PPQ = 480
 export type Tick = number
 
@@ -19,6 +21,7 @@ export type MidiClip = {
   startTick: Tick
   endTick: Tick
   notes: MidiNote[]
+  dcsmTrack?: DrumTrackForDCSM
 }
 
 export type MidiTrackKind = 'drums' | 'bass' | 'melodic'

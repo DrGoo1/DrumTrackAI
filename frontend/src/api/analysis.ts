@@ -1,7 +1,8 @@
 import axios from 'axios'
+import { resolveApiBase } from '../utils/apiBase'
 
 const api = axios.create({ 
-  baseURL: process.env.REACT_APP_API_BASE || 'http://localhost:8000' 
+  baseURL: resolveApiBase() 
 })
 
 export async function fetchSongAnalytics(key: string) { 

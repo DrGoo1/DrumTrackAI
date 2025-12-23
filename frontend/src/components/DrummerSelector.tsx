@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { resolveApiBaseNormalized } from '../utils/apiBase';
 
 export interface Drummer {
   id: string;
   display_name: string;
   tagline: string;
   genre_tags: string[];
+  style?: string;
   difficulty: string;
   icon: string;
   color: string;
@@ -30,7 +32,7 @@ export const DrummerSelector: React.FC<DrummerSelectorProps> = ({ onSelect, sele
 
   const fetchDrummers = async () => {
     try {
-      const API_BASE = (window as any).__API_BASE__ || process.env.REACT_APP_API_BASE || "http://localhost:8000";
+      const API_BASE = resolveApiBaseNormalized();
       const response = await fetch(`${API_BASE}/api/drummers`);
       if (!response.ok) {
         throw new Error('Failed to fetch drummers');

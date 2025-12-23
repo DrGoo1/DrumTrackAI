@@ -27,6 +27,8 @@ dist/
 target/
 Cargo.lock
 **/*.rs.bk
+*.pdb
+*.lib
 
 # IDEs
 .vscode/
@@ -39,12 +41,17 @@ Cargo.lock
 # Project specific
 uploads/
 sessions/
+brain_configs/
 *.wav
 *.mp3
 *.flac
 *.aac
 *.mid
 *.midi
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 
 # Temporary files
 *.tmp

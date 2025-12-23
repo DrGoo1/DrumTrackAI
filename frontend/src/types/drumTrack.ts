@@ -1,3 +1,5 @@
+import type { DrumBrainConfig } from "./brain";
+
 /**
  * DrumTrack Types - Drum Builder v2.0
  * ===================================
@@ -34,7 +36,7 @@ export type GlobalFeel = 'straight' | 'swing' | 'shuffle' | 'laid_back' | 'pushe
 export type QuantizationBase = '16th' | '8th' | 'triplet_8th' | 'triplet_16th';
 export type PhraseShape = 'flat' | 'swell' | 'decay' | 'wave';
 
-// Jamstix-style attribute types
+// Limb-aware attribute types
 export type LimbId = 'LH' | 'RH' | 'LF' | 'RF' | 'LS' | 'RS' | 'other';
 export type HitStyle = 'single' | 'double' | 'bounce';
 export type NoteAspect = 'groove' | 'accent' | 'fill';
@@ -63,7 +65,7 @@ export interface DrumNoteEvent {
   // Optional aspect classification
   aspect?: NoteAspect;
   
-  // Jamstix-style attributes
+  // Limb-aware attributes
   limbId?: LimbId;  // Which limb plays this note
   priority?: number;  // 0..1 (importance in limb conflicts)
   timingOffsetMs?: number;  // Per-note timing offset (±50ms)
@@ -80,6 +82,10 @@ export interface DrumNoteEvent {
   // Performance grouping
   performanceGroupId?: string;
   microTimingMs?: number;  // From LLM performance spec
+
+  // Rudiment metadata
+  phraseMarker?: string;
+  rudimentId?: string;
 }
 
 // ============================================================================
@@ -179,6 +185,42 @@ export interface DrumGenerationMetadata {
 // Generation Config (Extended for v2.0)
 // ============================================================================
 
+export type FillFrequency = 'none' | 'every_4_bars' | 'section_transitions' | 'all_transitions';
+
+export interface SongSectionConfig {
+  name: string;
+  bars: number;
+}
+
+export interface FillControls {
+  fillType: string;
+  density: number;
+  frequency: FillFrequency;
+}
+
+export type RudimentHandLead = 'auto' | 'left' | 'right';
+
+export interface RudimentControls {
+  enabled: boolean;
+  preferredFamilies: string[];
+  preferredRudiments: string[];
+  density: number;
+  ensureDownbeatKick: boolean;
+  preserveHatTail: boolean;
+  handLead: RudimentHandLead;
+}
+
+export interface RudimentBlock {
+  blockId: string;
+  startBar: number;
+  lengthBars: number;
+  families?: string[];
+  rudimentId?: string;
+  density?: number;
+  ensureDownbeatKick?: boolean;
+  preserveHatTail?: boolean;
+}
+
 export interface DrumGenerationConfig {
   // Required fields
   sectionId: string;
@@ -194,6 +236,15 @@ export interface DrumGenerationConfig {
   humanize: boolean;
   fillLocations: number[];
   fillType: string;
+  fillDensity?: number;
+
+  // Optional output controls
+  midiMapName?: string;
+
+  // Optional groove library controls
+  grooveSource?: string;
+  styleGroup?: string;
+  grooveControls?: Record<string, any>;
   
   // New v2.0 fields
   humanizeAmount?: number;  // 0.0-1.0 (default: 0.7)
@@ -202,6 +253,12 @@ export interface DrumGenerationConfig {
   buildScope?: 'full_song' | 'selected_section';
   guideEnabled?: boolean;
   guideInstrument?: 'mix' | 'bass' | 'guitar' | 'keys' | 'vocal' | 'other';
+  brainConfig?: DrumBrainConfig;
+  songStyle?: 'pop' | 'rock' | 'blues' | 'jazz' | 'metal' | 'funk' | 'shoegaze' | 'edm' | 'dance';
+  songSections?: SongSectionConfig[];
+  fillControls?: FillControls;
+  rudimentControls?: RudimentControls;
+  rudimentBlocks?: RudimentBlock[];
 }
 
 // ============================================================================

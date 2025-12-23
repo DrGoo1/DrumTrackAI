@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+import json
 
 from PySide6.QtCore import QObject, Signal
 
@@ -37,7 +38,22 @@ class CentralDatabaseService(QObject):
         self._connections = {}  # Thread-local connections
         self._initialized = False
         self._tables_created = False
+        self._schema_cache: Dict[str, set] = {}
         logger.info("CentralDatabaseService initialized")
+
+    def _table_columns(self, table_name: str) -> set:
+        if table_name in self._schema_cache:
+            return self._schema_cache[table_name]
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+            cols = {row[1] for row in rows} if rows else set()
+            self._schema_cache[table_name] = cols
+            return cols
+        except Exception:
+            self._schema_cache[table_name] = set()
+            return set()
 
     @classmethod
     def get_instance(cls):
@@ -72,11 +88,40 @@ class CentralDatabaseService(QObject):
                 if env_path:
                     db_path = env_path
                 else:
-                    # Fallback to the original per-user location.
-                    home = Path.home()
-                    db_dir = home / "DrumTracKAI" / "database"
-                    db_dir.mkdir(parents=True, exist_ok=True)
-                    db_path = str(db_dir / "drum_tracks.db")
+                    # Prefer project-local DBs when running from a repo checkout.
+                    # This prevents the admin UI from silently connecting to a
+                    # fresh per-user DB with no drummers/beats.
+                    try:
+                        project_root = Path(__file__).resolve().parents[2]
+                    except Exception:
+                        project_root = None
+
+                    candidates: List[Path] = []
+                    if project_root:
+                        candidates.extend([
+                            project_root / "admin" / "drumtrackai.db",
+                            project_root / "admin" / "admin" / "drumtrackai.db",
+                            project_root / "admin" / "data" / "drum_training.db",
+                            project_root / "admin" / "admin" / "data" / "drum_training.db",
+                        ])
+
+                    selected = None
+                    for candidate in candidates:
+                        try:
+                            if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 0:
+                                selected = candidate
+                                break
+                        except Exception:
+                            continue
+
+                    if selected is not None:
+                        db_path = str(selected)
+                    else:
+                        # Fallback to the original per-user location.
+                        home = Path.home()
+                        db_dir = home / "DrumTracKAI" / "database"
+                        db_dir.mkdir(parents=True, exist_ok=True)
+                        db_path = str(db_dir / "drum_tracks.db")
                 
             logger.info(f"Initializing database at: {db_path}")
             self._db_path = db_path
@@ -189,7 +234,28 @@ class CentralDatabaseService(QObject):
                 updated_at TEXT NOT NULL
             )
             ''')
-            
+            # Note: drummer_personas lives in the admin DB and is created by
+            # admin/tools/init_drummer_personas_table.py. We don't create it
+            # here to avoid surprising frontends that use a different DB
+            # layout, but we *do* provide read helpers below if it exists.
+
+            # Admin-only mapping of public DrumTracKAI drummer categories to
+            # analysis personas & default knob settings. This lives in the same
+            # DB so both the admin tools and backend can share it.
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_category_mappings (
+                category_id TEXT PRIMARY KEY,
+                display_name TEXT,
+                primary_persona_id TEXT,
+                backup_persona_ids_json TEXT,
+                default_humanize REAL,
+                default_swing REAL,
+                default_chorus_ride_pref REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            ''')
+
             conn.commit()
             self._tables_created = True
             logger.info("Database tables created successfully")
@@ -210,9 +276,88 @@ class CentralDatabaseService(QObject):
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM drummers ORDER BY name')
+            cols = self._table_columns("drummers")
+            if "display_name" in cols:
+                cursor.execute('SELECT * FROM drummers ORDER BY display_name')
+            elif "name" in cols:
+                cursor.execute('SELECT * FROM drummers ORDER BY name')
+            else:
+                cursor.execute('SELECT * FROM drummers ORDER BY id')
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            results = [dict(row) for row in rows]
+            if results:
+                return results
+
+            # Prefer real drummers derived from style-vector ingestion.
+            # This is the authoritative "real drummers" list in v1.1.17.
+            try:
+                vec_cols = self._table_columns("drummer_style_vectors")
+                if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
+                    cursor.execute(
+                        'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors '
+                        'WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) != "" '
+                        'ORDER BY drummer_name'
+                    )
+                    vec_rows = cursor.fetchall()
+                    if vec_rows:
+                        return [
+                            {
+                                "id": row[0],
+                                "drummer_id": row[0],
+                                "display_name": row[1],
+                                "name": row[1],
+                                "source": "drummer_style_vectors",
+                            }
+                            for row in vec_rows
+                        ]
+            except Exception:
+                pass
+
+            # Fallback: many v1.1.x admin DBs use drummer_personas/drummer_profiles
+            # instead of the simple drummers table.
+            try:
+                persona_cols = self._table_columns("drummer_personas")
+                if persona_cols:
+                    cursor.execute('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name')
+                    persona_rows = cursor.fetchall()
+                    return [
+                        {
+                            "id": row[0],
+                            "drummer_id": row[0],
+                            "display_name": row[1],
+                            "name": row[1],
+                            "archetypes_json": row[2],
+                            "style_json": row[3],
+                            "created_at": row[4],
+                            "updated_at": row[5],
+                            "source": "drummer_personas",
+                        }
+                        for row in persona_rows
+                    ]
+            except Exception:
+                pass
+
+            try:
+                profile_cols = self._table_columns("drummer_profiles")
+                if profile_cols:
+                    cursor.execute('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name')
+                    profile_rows = cursor.fetchall()
+                    return [
+                        {
+                            "id": row[0],
+                            "drummer_id": row[0],
+                            "display_name": row[1],
+                            "name": row[1],
+                            "category": row[2],
+                            "era": row[3],
+                            "source": "drummer_profiles",
+                        }
+                        for row in profile_rows
+                    ]
+            except Exception:
+                pass
+
+            return []
         except Exception as e:
             logger.error(f"Error getting drummers: {str(e)}")
             self.database_error.emit(f"Error getting drummers: {str(e)}")
@@ -231,9 +376,71 @@ class CentralDatabaseService(QObject):
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
+            cols = self._table_columns("drummers")
+            if "drummer_id" in cols:
+                cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+            else:
+                cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if row:
+                return dict(row)
+
+            vec_cols = self._table_columns("drummer_style_vectors")
+            if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
+                cursor.execute(
+                    'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = ? LIMIT 1',
+                    (drummer_id,),
+                )
+                vrow = cursor.fetchone()
+                if vrow:
+                    return {
+                        "id": vrow[0],
+                        "drummer_id": vrow[0],
+                        "display_name": vrow[1],
+                        "name": vrow[1],
+                        "source": "drummer_style_vectors",
+                    }
+
+            persona_cols = self._table_columns("drummer_personas")
+            if persona_cols:
+                cursor.execute(
+                    'SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = ?',
+                    (drummer_id,),
+                )
+                prow = cursor.fetchone()
+                if prow:
+                    return {
+                        "id": prow[0],
+                        "drummer_id": prow[0],
+                        "display_name": prow[1],
+                        "name": prow[1],
+                        "archetypes_json": prow[2],
+                        "style_json": prow[3],
+                        "created_at": prow[4],
+                        "updated_at": prow[5],
+                        "source": "drummer_personas",
+                    }
+
+            profile_cols = self._table_columns("drummer_profiles")
+            if profile_cols:
+                cursor.execute(
+                    'SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = ?',
+                    (drummer_id,),
+                )
+                pr = cursor.fetchone()
+                if pr:
+                    return {
+                        "id": pr[0],
+                        "drummer_id": pr[0],
+                        "display_name": pr[1],
+                        "name": pr[1],
+                        "category": pr[2],
+                        "era": pr[3],
+                        "styles": pr[4],
+                        "source": "drummer_profiles",
+                    }
+
+            return None
         except Exception as e:
             logger.error(f"Error getting drummer {drummer_id}: {str(e)}")
             self.database_error.emit(f"Error getting drummer: {str(e)}")
@@ -253,13 +460,23 @@ class CentralDatabaseService(QObject):
         try:
             drummer_id = str(uuid.uuid4())
             now = datetime.now().isoformat()
-            
+
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                'INSERT INTO drummers (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-                (drummer_id, name, description, now, now)
-            )
+
+            cols = self._table_columns("drummers")
+            if "name" in cols:
+                cursor.execute(
+                    'INSERT INTO drummers (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+                    (drummer_id, name, description, now, now)
+                )
+            elif "display_name" in cols and "drummer_id" in cols:
+                cursor.execute(
+                    'INSERT INTO drummers (drummer_id, display_name) VALUES (?, ?)',
+                    (drummer_id, name)
+                )
+            else:
+                raise RuntimeError("Unsupported drummers table schema")
             conn.commit()
             
             self.data_changed.emit('drummers', 'insert')
@@ -283,8 +500,11 @@ class CentralDatabaseService(QObject):
             bool: True if successful
         """
         try:
-            # Filter out invalid fields
-            valid_fields = {'name', 'description'}
+            cols = self._table_columns("drummers")
+            if "name" in cols:
+                valid_fields = {'name', 'description'}
+            else:
+                valid_fields = {'display_name', 'real_name', 'tagline', 'bio', 'youtube_channel', 'photo_url', 'source'}
             update_data = {k: v for k, v in data.items() if k in valid_fields}
             
             if not update_data:
@@ -292,7 +512,8 @@ class CentralDatabaseService(QObject):
                 return False
                 
             # Add updated_at timestamp
-            update_data['updated_at'] = datetime.now().isoformat()
+            if "updated_at" in cols:
+                update_data['updated_at'] = datetime.now().isoformat()
             
             # Build the SQL query
             field_str = ', '.join([f"{field} = ?" for field in update_data.keys()])
@@ -300,7 +521,10 @@ class CentralDatabaseService(QObject):
             
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE drummers SET {field_str} WHERE id = ?", values)
+            if "drummer_id" in cols:
+                cursor.execute(f"UPDATE drummers SET {field_str} WHERE drummer_id = ?", values)
+            else:
+                cursor.execute(f"UPDATE drummers SET {field_str} WHERE id = ?", values)
             conn.commit()
             
             self.data_changed.emit('drummers', 'update')
@@ -325,7 +549,11 @@ class CentralDatabaseService(QObject):
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM drummers WHERE id = ?', (drummer_id,))
+            cols = self._table_columns("drummers")
+            if "drummer_id" in cols:
+                cursor.execute('DELETE FROM drummers WHERE drummer_id = ?', (drummer_id,))
+            else:
+                cursor.execute('DELETE FROM drummers WHERE id = ?', (drummer_id,))
             conn.commit()
             
             self.data_changed.emit('drummers', 'delete')
@@ -335,6 +563,193 @@ class CentralDatabaseService(QObject):
         except Exception as e:
             logger.error(f"Error deleting drummer {drummer_id}: {str(e)}")
             self.database_error.emit(f"Error deleting drummer: {str(e)}")
+            return False
+
+    # ---- Drummer personas (admin DB integration) ---------------------
+
+    def get_drummer_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        """Load a single drummer persona by ID from drummer_personas.
+
+        Returns a dict with keys:
+        - persona_id
+        - display_name
+        - archetypes (list[str])
+        - style (dict of aggregated style metrics)
+        or None if not found or table missing.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT persona_id, display_name, archetypes_json, style_json
+                FROM drummer_personas
+                WHERE persona_id = ?
+                """,
+                (persona_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            archetypes = json.loads(row["archetypes_json"]) if row["archetypes_json"] else []
+            style = json.loads(row["style_json"]) if row["style_json"] else {}
+            return {
+                "persona_id": row["persona_id"],
+                "display_name": row["display_name"],
+                "archetypes": archetypes,
+                "style": style,
+            }
+        except sqlite3.OperationalError as e:
+            # Likely table does not exist in this DB; fail soft.
+            logger.warning(f"drummer_personas table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting drummer persona {persona_id}: {str(e)}")
+            self.database_error.emit(f"Error getting drummer persona: {str(e)}")
+            return None
+
+    def get_all_drummer_personas(self) -> List[Dict[str, Any]]:
+        """Return all drummer personas as a list of dicts.
+
+        See get_drummer_persona for the dict shape.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT persona_id, display_name, archetypes_json, style_json
+                FROM drummer_personas
+                ORDER BY display_name
+                """
+            )
+            rows = cursor.fetchall()
+            personas: List[Dict[str, Any]] = []
+            for row in rows:
+                archetypes = json.loads(row["archetypes_json"]) if row["archetypes_json"] else []
+                style = json.loads(row["style_json"]) if row["style_json"] else {}
+                personas.append(
+                    {
+                        "persona_id": row["persona_id"],
+                        "display_name": row["display_name"],
+                        "archetypes": archetypes,
+                        "style": style,
+                    }
+                )
+            return personas
+        except sqlite3.OperationalError as e:
+            logger.warning(f"drummer_personas table not available: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting drummer personas: {str(e)}")
+            self.database_error.emit(f"Error getting drummer personas: {str(e)}")
+            return []
+
+    # ---- Drummer category mappings (admin-only) ----------------------
+
+    def get_drummer_category_mapping(self, category_id: str) -> Optional[Dict[str, Any]]:
+        """Return mapping for a public drummer category, if defined.
+
+        Shape:
+          {
+            "category_id": str,
+            "display_name": str,
+            "primary_persona_id": str,
+            "backup_persona_ids": [str],
+            "default_humanize": float | None,
+            "default_swing": float | None,
+            "default_chorus_ride_pref": float | None,
+          }
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                '''SELECT category_id, display_name, primary_persona_id,
+                          backup_persona_ids_json, default_humanize,
+                          default_swing, default_chorus_ride_pref
+                   FROM drummer_category_mappings
+                   WHERE category_id = ?''',
+                (category_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            backups = []
+            if row[3]:
+                try:
+                    backups = json.loads(row[3])
+                except Exception:
+                    backups = []
+            return {
+                "category_id": row[0],
+                "display_name": row[1],
+                "primary_persona_id": row[2],
+                "backup_persona_ids": backups,
+                "default_humanize": row[4],
+                "default_swing": row[5],
+                "default_chorus_ride_pref": row[6],
+            }
+        except sqlite3.OperationalError as e:
+            logger.warning(f"drummer_category_mappings table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting drummer category mapping {category_id}: {str(e)}")
+            self.database_error.emit(f"Error getting drummer category mapping: {str(e)}")
+            return None
+
+    def upsert_drummer_category_mapping(
+        self,
+        category_id: str,
+        display_name: str,
+        primary_persona_id: str,
+        backup_persona_ids: Optional[List[str]] = None,
+        default_humanize: Optional[float] = None,
+        default_swing: Optional[float] = None,
+        default_chorus_ride_pref: Optional[float] = None,
+    ) -> bool:
+        """Insert or update a mapping from category_id -> persona + defaults."""
+        try:
+            now = datetime.now().isoformat()
+            backups_json = json.dumps(backup_persona_ids or [])
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                '''INSERT INTO drummer_category_mappings (
+                       category_id, display_name, primary_persona_id,
+                       backup_persona_ids_json, default_humanize,
+                       default_swing, default_chorus_ride_pref,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(category_id) DO UPDATE SET
+                       display_name = excluded.display_name,
+                       primary_persona_id = excluded.primary_persona_id,
+                       backup_persona_ids_json = excluded.backup_persona_ids_json,
+                       default_humanize = excluded.default_humanize,
+                       default_swing = excluded.default_swing,
+                       default_chorus_ride_pref = excluded.default_chorus_ride_pref,
+                       updated_at = excluded.updated_at
+                ''',
+                (
+                    category_id,
+                    display_name,
+                    primary_persona_id,
+                    backups_json,
+                    default_humanize,
+                    default_swing,
+                    default_chorus_ride_pref,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            logger.info(f"Upserted drummer_category_mapping for {category_id} -> {primary_persona_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting drummer category mapping for {category_id}: {str(e)}")
+            self.database_error.emit(f"Error upserting drummer category mapping: {str(e)}")
             return False
 
     # CRUD operations for songs
@@ -462,12 +877,39 @@ class CentralDatabaseService(QObject):
                 query += ' WHERE song_id = ?'
                 params = [song_id]
                 
-            query += ' ORDER BY name'
+            cols = self._table_columns("drum_beats")
+            query += ' ORDER BY name' if 'name' in cols else ' ORDER BY id'
             
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-            
+            results = [dict(row) for row in rows]
+            if results:
+                return results
+
+            # Fallback: if drum_beats table is empty, show beats from the local DrumBeats folder
+            try:
+                project_root = Path(__file__).resolve().parents[2]
+                beats_dir = project_root / "DrumBeats"
+                if beats_dir.exists() and beats_dir.is_dir():
+                    synthetic: List[Dict[str, Any]] = []
+                    for wav in sorted(beats_dir.glob("*.wav")):
+                        synthetic.append({
+                            "id": wav.stem,
+                            "name": wav.stem.replace("_", " "),
+                            "description": "(filesystem)",
+                            "file_path": str(wav),
+                            "song_id": None,
+                            "drummer_id": None,
+                            "bpm": None,
+                            "time_signature": None,
+                            "complexity": None,
+                            "energy": None,
+                        })
+                    return synthetic
+            except Exception:
+                pass
+
+            return []
         except Exception as e:
             logger.error(f"Error getting drum beats: {str(e)}")
             self.database_error.emit(f"Error getting drum beats: {str(e)}")

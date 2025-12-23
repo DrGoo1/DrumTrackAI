@@ -6,9 +6,10 @@ Converts internal drum events to rich DrumTrackForDCSM format with
 Jamstix-style attributes (limb assignment, priority, timing, etc.).
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Type, TypeVar
 import math
 import logging
+from enum import Enum
 
 from .dcsm_drumtrack_schema import (
     DrumNoteEvent,
@@ -23,6 +24,22 @@ from .dcsm_drumtrack_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+EnumT = TypeVar("EnumT", bound=Enum)
+
+
+def coerce_enum(enum_cls: Type[EnumT], value: Any) -> Optional[EnumT]:
+    """Best-effort conversion of loose values (strings) into Enum members."""
+    if value is None:
+        return None
+    if isinstance(value, enum_cls):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        for member in enum_cls:
+            if member.value.lower() == normalized or member.name.lower() == normalized:
+                return member
+    return None
 
 
 def find_phrase_id_for_bar(performance_spec: dict, bar_index: int) -> Optional[str]:
@@ -375,11 +392,16 @@ def build_drumtrack_for_dcsm(
             performanceGroupId=phrase_id,
             microTimingMs=micro_ms,  # Same as timingOffsetMs for now
         )
+
+        note.phraseMarker = ev.get("phraseMarker")
+        note.rudimentId = ev.get("rudimentId")
         
         # Copy Jamstix-style attributes from internal event if present
         # (allows external enrichment to override defaults)
         if "limbId" in ev:
-            note.limbId = ev["limbId"]
+            coerced_limb = coerce_enum(LimbId, ev["limbId"])
+            if coerced_limb:
+                note.limbId = coerced_limb
         if "priority" in ev:
             note.priority = ev["priority"]
         if "timingOffsetMs" in ev:
@@ -389,11 +411,15 @@ def build_drumtrack_for_dcsm(
         if "hatOpenLevel" in ev:
             note.hatOpenLevel = ev["hatOpenLevel"]
         if "hitStyle" in ev:
-            note.hitStyle = ev["hitStyle"]
+            coerced_hit = coerce_enum(HitStyle, ev["hitStyle"])
+            if coerced_hit:
+                note.hitStyle = coerced_hit
         if "locked" in ev:
             note.locked = ev["locked"]
         if "aspect" in ev:
-            note.aspect = ev["aspect"]
+            coerced_aspect = coerce_enum(NoteAspect, ev["aspect"])
+            if coerced_aspect:
+                note.aspect = coerced_aspect
         
         notes.append(note)
     

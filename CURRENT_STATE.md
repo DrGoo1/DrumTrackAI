@@ -157,6 +157,9 @@ cd audio-core && cargo build --release
 
 # Run tests (if available)
 cd DrumTracKAIConnector && RUN_TESTS.bat
+
+# Restart full dev stack (backend + frontend + port cleanup)
+powershell -ExecutionPolicy Bypass -File scripts/reset_and_launch_dev.ps1
 ```
 
 ---

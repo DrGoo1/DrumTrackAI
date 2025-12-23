@@ -3,6 +3,7 @@
  * Integrates with all existing analytics and generation tools
  */
 import React, { useState } from 'react';
+import type { DrumBrainConfig } from '../types/brain';
 
 interface MeasureRange {
   sectionId: string;
@@ -35,6 +36,7 @@ export interface DrumGenerationConfig {
   humanize: boolean;
   fillLocations: number[];
   fillType: string;
+  brainConfig?: DrumBrainConfig;
 }
 
 export const DrumBuilderPanel: React.FC<DrumBuilderPanelProps> = ({

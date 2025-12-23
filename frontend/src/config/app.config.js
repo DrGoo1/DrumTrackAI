@@ -9,7 +9,7 @@ export const APP_CONFIG = {
   
   // API Configuration
   api: {
-    baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000/api',
+    baseURL: process.env.REACT_APP_API_BASE || process.env.REACT_APP_API_URL || '',
     timeout: 30000, // 30 seconds
     retryAttempts: 3,
     retryDelay: 1000, // 1 second

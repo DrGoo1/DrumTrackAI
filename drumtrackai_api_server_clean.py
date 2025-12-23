@@ -1,5 +1,6 @@
 # drumtrackai_api_server_clean.py
 import os, asyncio, logging, mimetypes, time, shutil, json, subprocess
+import sqlite3
 from pathlib import Path
 import numpy as np
 
@@ -31,6 +32,8 @@ UPLOAD_DIR = (BASE_DIR / "uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR = BASE_DIR / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
+
+SAMPLE_DB_PATH = Path(os.getenv("SAMPLE_DB_PATH", str((BASE_DIR / "admin" / "drumtrackai.db").resolve())))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 LOG = logging.getLogger("drumtrackai")
@@ -677,6 +680,11 @@ def make_app() -> web.Application:
         web.get("/dcsm/sectionize", dcsm_sectionize),
         web.post("/dcsm/generate", dcsm_generate),
         web.post("/dcsm/export_midi", dcsm_export_midi),
+
+        # Sample DB endpoints
+        web.get("/api/sample-collections", list_sample_collections),
+        web.get("/api/drum-samples", list_drum_samples),
+        web.get("/api/drum-samples/{sample_id}/audio", stream_drum_sample_audio),
     ])
 
     # CORS for dev
@@ -714,6 +722,154 @@ async def _amain():
 class SectionIn(BaseModel):
     start: float
     end: float
+
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(SAMPLE_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _get_allowed_sample_roots(conn: sqlite3.Connection) -> list[Path]:
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT folder_path FROM sample_collections WHERE folder_path IS NOT NULL")
+        roots: list[Path] = []
+        for r in cur.fetchall():
+            fp = r[0]
+            if not fp:
+                continue
+            try:
+                roots.append(Path(fp).resolve())
+            except Exception:
+                continue
+        return roots
+    except Exception:
+        return []
+
+
+def _is_under_any_root(path: Path, roots: list[Path]) -> bool:
+    try:
+        rp = path.resolve()
+    except Exception:
+        return False
+    for root in roots:
+        try:
+            rr = root.resolve()
+        except Exception:
+            continue
+        try:
+            if rp == rr or rr in rp.parents:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def list_sample_collections(request: web.Request) -> web.Response:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+    try:
+        conn = _db_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, collection_name, description, manufacturer, category, folder_path, sample_count, created_at "
+                "FROM sample_collections ORDER BY id"
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            return web.json_response({"db": str(SAMPLE_DB_PATH), "collections": rows})
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"list_sample_collections failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def list_drum_samples(request: web.Request) -> web.Response:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+
+    collection_id = request.query.get("collection_id")
+    drum_type = request.query.get("drum_type")
+    limit = request.query.get("limit")
+    offset = request.query.get("offset")
+
+    try:
+        limit_n = int(limit) if limit is not None else 200
+    except Exception:
+        limit_n = 200
+    try:
+        offset_n = int(offset) if offset is not None else 0
+    except Exception:
+        offset_n = 0
+
+    try:
+        conn = _db_connect()
+        try:
+            cur = conn.cursor()
+            where = []
+            params: list[object] = []
+
+            join = ""
+            if collection_id:
+                join = " JOIN collection_samples cs ON cs.sample_id = ds.id "
+                where.append("cs.collection_id = ?")
+                params.append(collection_id)
+            if drum_type:
+                where.append("ds.drum_type = ?")
+                params.append(drum_type)
+
+            where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+            sql = (
+                "SELECT ds.id, ds.file_path, ds.file_name, ds.file_size, ds.drum_type, ds.variation, ds.format, ds.kit_name "
+                "FROM drum_samples ds" + join + where_sql + " ORDER BY ds.id LIMIT ? OFFSET ?"
+            )
+            params.extend([limit_n, offset_n])
+            cur.execute(sql, params)
+            rows = [dict(r) for r in cur.fetchall()]
+            return web.json_response({"db": str(SAMPLE_DB_PATH), "samples": rows, "limit": limit_n, "offset": offset_n})
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"list_drum_samples failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def stream_drum_sample_audio(request: web.Request) -> web.StreamResponse:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+
+    sample_id = request.match_info.get("sample_id")
+    if not sample_id:
+        return web.json_response({"error": "sample_id required"}, status=400)
+
+    try:
+        conn = _db_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT file_path FROM drum_samples WHERE id = ?", (sample_id,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return web.json_response({"error": "sample not found"}, status=404)
+
+            file_path = Path(row[0])
+            if not file_path.exists() or not file_path.is_file():
+                return web.json_response({"error": "file not found", "file_path": str(file_path)}, status=404)
+
+            roots = _get_allowed_sample_roots(conn)
+            if roots and not _is_under_any_root(file_path, roots):
+                return web.json_response({"error": "file path not allowed"}, status=403)
+
+            ctype, _ = mimetypes.guess_type(str(file_path))
+            if not ctype:
+                ctype = "application/octet-stream"
+            return web.FileResponse(path=str(file_path), headers={"Content-Type": ctype})
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"stream_drum_sample_audio failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 async def analyze_onsets(request):
     key = request.query.get("key")

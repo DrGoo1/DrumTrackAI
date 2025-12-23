@@ -12,7 +12,10 @@ local reaper = reaper
 local TEMPLATE_PROJECT_PATH = "C:/Users/dagol/ReaperTemplates/JamstixTemplate.rpp"
 local OUTPUT_BASE = "F:/DrumTrackAI_Jamstix_Dataset"
 local BARS_PER_TAKE = 16
-local TEMPO_BPM = 100
+
+-- Tempo grid and variation count for richer LLM data
+local TEMPOS = { 60, 80, 100, 120 }
+local VARIATIONS_PER_COMBO = 5
 
 -- Drummers and styles to iterate (must match Jamstix presets)
 local DRUMMERS = {
@@ -185,88 +188,102 @@ local function main()
   msg("Template: " .. TEMPLATE_PROJECT_PATH)
   msg("Output:   " .. OUTPUT_BASE)
   msg("Bars:     " .. BARS_PER_TAKE)
-  msg("Tempo:    " .. TEMPO_BPM .. " BPM")
+  msg("Tempos:   " .. table.concat(TEMPOS, ", ") .. " BPM")
   msg("")
   
   reaper.Main_openProject(TEMPLATE_PROJECT_PATH)
 
   ensure_directory(OUTPUT_BASE)
-  set_project_tempo(TEMPO_BPM)
-  set_time_selection_for_bars(TEMPO_BPM, BARS_PER_TAKE)
-
-  local count = 0
-  local total = #DRUMMERS * #STYLES * #SONG_PRESETS
   
-  msg("Total combinations to generate: " .. total)
+  local count = 0
+  local total = #DRUMMERS * #STYLES * #SONG_PRESETS * #TEMPOS * VARIATIONS_PER_COMBO
+  
+  msg("Total combinations to generate (including tempos and variations): " .. total)
   msg("")
 
   for _, drummerName in ipairs(DRUMMERS) do
     for _, styleName in ipairs(STYLES) do
       for _, songPreset in ipairs(SONG_PRESETS) do
+        for _, tempo in ipairs(TEMPOS) do
+          for variation_index = 1, VARIATIONS_PER_COMBO do
 
-        count = count + 1
-        msg("=" .. string.rep("=", 69))
-        msg("Combination " .. count .. "/" .. total)
-        msg("=" .. string.rep("=", 69))
-        
-        set_jamstix_preset(drummerName, styleName, songPreset)
+            count = count + 1
+            msg("=" .. string.rep("=", 69))
+            msg("Combination " .. count .. "/" .. total)
+            msg("=" .. string.rep("=", 69))
+            msg("Drummer:    " .. drummerName)
+            msg("Style:      " .. styleName)
+            msg("Preset:     " .. songPreset)
+            msg("Tempo:      " .. tempo .. " BPM")
+            msg("Variation:  " .. variation_index)
 
-        -- Prompt user to set preset manually
-        local result = reaper.MB(
-          "Set Jamstix preset:\n\n" ..
-          "Drummer: " .. drummerName .. "\n" ..
-          "Style: " .. styleName .. "\n" ..
-          "Preset: " .. songPreset .. "\n\n" ..
-          "Then click OK to record.\nClick Cancel to skip.",
-          "Jamstix Preset - " .. count .. "/" .. total,
-          1
-        )
+            set_project_tempo(tempo)
+            set_time_selection_for_bars(tempo, BARS_PER_TAKE)
+            set_jamstix_preset(drummerName, styleName, songPreset)
 
-        if result == 2 then
-          msg("Skipped by user\n")
-          goto continue
-        end
+            -- Prompt user to set preset / randomize manually
+            local result = reaper.MB(
+              "Set Jamstix preset and (optionally) randomize for this variation:\n\n" ..
+              "Drummer: " .. drummerName .. "\n" ..
+              "Style: " .. styleName .. "\n" ..
+              "Preset: " .. songPreset .. "\n" ..
+              "Tempo:  " .. tempo .. " BPM\n" ..
+              "Variation: " .. variation_index .. "\n\n" ..
+              "Then click OK to record.\nClick Cancel to skip this variation.",
+              "Jamstix Preset - " .. count .. "/" .. total,
+              1
+            )
 
-        local ok = record_jamstix_to_midi(BARS_PER_TAKE)
-        if not ok then
-          msg("Recording failed, skipping combination\n")
-        else
-          local comboDir = string.format(
-            "%s\\jam_%04d_%s_%s_%s",
-            OUTPUT_BASE,
-            count,
-            drummerName,
-            styleName,
-            songPreset
-          )
-          ensure_directory(comboDir)
+            if result == 2 then
+              msg("Skipped by user\n")
+              goto continue
+            end
 
-          local midiPath = comboDir .. "\\drums.mid"
-          export_capture_track_midi(midiPath)
+            local ok = record_jamstix_to_midi(BARS_PER_TAKE)
+            if not ok then
+              msg("Recording failed, skipping combination\n")
+            else
+              local comboDir = string.format(
+                "%s\\jam_%04d_%s_%s_%s_%dbpm_var%d",
+                OUTPUT_BASE,
+                count,
+                drummerName,
+                styleName,
+                songPreset,
+                tempo,
+                variation_index
+              )
+              ensure_directory(comboDir)
 
-          -- Metadata JSON
-          local metaPath = comboDir .. "\\jamstix_meta.json"
-          local metaFile = io.open(metaPath, "w")
-          if metaFile then
-            metaFile:write(string.format([[
+              local midiPath = comboDir .. "\\drums.mid"
+              export_capture_track_midi(midiPath)
+
+              -- Metadata JSON
+              local metaPath = comboDir .. "\\jamstix_meta.json"
+              local metaFile = io.open(metaPath, "w")
+              if metaFile then
+                metaFile:write(string.format([[[
 {
   "drummer": %q,
   "style": %q,
   "song_preset": %q,
   "tempo": %d,
   "bars": %d,
+  "variation_index": %d,
   "generated_at": "%s",
   "combination_id": %d
 }
-]], drummerName, styleName, songPreset, TEMPO_BPM, BARS_PER_TAKE, os.date("%Y-%m-%d %H:%M:%S"), count))
-            metaFile:close()
+]], drummerName, styleName, songPreset, tempo, BARS_PER_TAKE, variation_index, os.date("%Y-%m-%d %H:%M:%S"), count))
+                metaFile:close()
+              end
+
+              msg("? Generated: " .. comboDir)
+              msg("")
+            end
+
+            ::continue::
           end
-
-          msg("✓ Generated: " .. comboDir)
-          msg("")
         end
-
-        ::continue::
       end
     end
   end

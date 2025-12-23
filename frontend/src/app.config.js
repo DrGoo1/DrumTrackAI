@@ -1,7 +1,7 @@
 // DrumTracKAI Application Configuration
 const APP_CONFIG = {
   // API Configuration
-  API_BASE_URL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+  API_BASE_URL: process.env.REACT_APP_API_BASE || process.env.REACT_APP_API_URL || '',
   
   // Authentication
   JWT_STORAGE_KEY: 'drumtrackai_token',
@@ -63,7 +63,7 @@ const APP_CONFIG = {
   },
   
   // WebSocket Configuration
-  WEBSOCKET_URL: process.env.REACT_APP_WS_URL || 'ws://localhost:8000/ws',
+  WEBSOCKET_URL: process.env.REACT_APP_WS_URL || '',
   
   // Progress Polling
   PROGRESS_POLL_INTERVAL: 2000, // 2 seconds

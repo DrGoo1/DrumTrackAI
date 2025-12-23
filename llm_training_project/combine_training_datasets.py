@@ -12,8 +12,11 @@ def combine_datasets():
     
     datasets = {
         "E-GMD Patterns": Path("llm_training_project/training_datasets/egmd_pattern_train.jsonl"),
+        "E-GMD Phrase Select": Path("llm_training_project/training_datasets/egmd_phrase_select_train.jsonl"),
+        "Rudiment Fragments": Path("llm_training_project/training_datasets/rudiment_fragments_train.jsonl"),
         "Public Domain": Path("llm_training_project/training_datasets/public_domain_train.jsonl"),
         "Jamstix Brain": Path("llm_training_project/training_datasets/jamstix_brain_train.jsonl"),
+        "Signature Grooves": Path("llm_training_project/training_datasets/signature_groove_train.jsonl"),
     }
     
     output_file = Path("llm_training_project/training_datasets/multitask_full.jsonl")

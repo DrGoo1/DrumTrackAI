@@ -12,8 +12,22 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <script>
-      // Hard override so preview ports (127.0.0.1:52xxx) don't need a proxy.
-      window.__API_BASE__ = 'http://localhost:8000';
+      // Resolve backend base URL automatically for local + deployed envs.
+      (function resolveApiBase(win) {
+        if (win.__API_BASE__) {
+          return;
+        }
+        const { location } = win;
+        const isLocal = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
+        const protocol = location?.protocol || "http:";
+        const host = location?.hostname || "localhost";
+        if (isLocal) {
+          win.__API_BASE__ = "";
+        } else {
+          const portSegment = location.port ? `:${location.port}` : "";
+          win.__API_BASE__ = `${protocol}//${host}${portSegment}`;
+        }
+      })(window);
     </script>
     <!-- Audio Debug Script -->
     <script src="%PUBLIC_URL%/inject_debug.js"></script>

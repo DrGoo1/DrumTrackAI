@@ -138,6 +138,10 @@ def enrich_internal_events_with_jamstix_attrs(
     internal_events: List[Dict[str, Any]],
     laid_back_amount: float,
     global_hat_openness: float,
+    ride_bell_bias: float = 0.0,
+    ride_velocity_bias: float = 0.0,
+    ride_density_bias: float = 0.0,
+    drum_config: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     internal_events: list of dicts, each with at least:
@@ -153,7 +157,7 @@ def enrich_internal_events_with_jamstix_attrs(
       - barStartTime
       - barEndTime
 
-    Returns the same list with extra keys:
+        Returns the same list with extra keys:
       - limbId
       - priority
       - aspect
@@ -161,6 +165,7 @@ def enrich_internal_events_with_jamstix_attrs(
       - hatOpenLevel
       - timingOffsetMs
       - bar_pos_frac
+        drum_config is accepted for API compatibility (unused currently).
     """
     for ev in internal_events:
         inst = ev["instrument_id"]
@@ -179,5 +184,28 @@ def enrich_internal_events_with_jamstix_attrs(
         ev["hitStyle"] = assign_hit_style(ev)
         ev["hatOpenLevel"] = assign_hat_open_level(ev, global_hat_openness)
         ev["timingOffsetMs"] = compute_timing_offset_ms(ev, laid_back_amount)
+
+        # --- Ride-specific customization ---------------------------------
+        if inst.startswith("ride"):
+            # Density: nudge priority for ride hits
+            if ride_density_bias != 0.0:
+                scale = 1.0 + 0.5 * ride_density_bias
+                ev["priority"] = max(0.0, min(1.0, ev["priority"] * scale))
+
+            # Velocity: scale ride velocities
+            if ride_velocity_bias != 0.0:
+                vel_scale = 1.0 + ride_velocity_bias
+                vel_scale = max(0.5, min(1.5, vel_scale))
+                new_vel = int(round(ev["velocity"] * vel_scale))
+                ev["velocity"] = max(1, min(127, new_vel))
+
+            # Bow vs Bell: if bias > 0, favor bell on accents; if < 0, favor bow
+            if ride_bell_bias != 0.0:
+                if ride_bell_bias > 0:
+                    if inst == "ride_bow" and ev.get("isAccent", False):
+                        ev["instrument_id"] = "ride_bell"
+                else:
+                    if inst == "ride_bell" and not ev.get("isAccent", False):
+                        ev["instrument_id"] = "ride_bow"
 
     return internal_events

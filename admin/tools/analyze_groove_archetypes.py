@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -60,6 +61,9 @@ def ensure_analysis_schema(conn: sqlite3.Connection) -> None:
             snare_density REAL,
             cymbal_density REAL,
             dynamics_spread REAL,
+            ride_density REAL,
+            ride_mean_velocity REAL,
+            ride_bell_ratio REAL,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -67,6 +71,21 @@ def ensure_analysis_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    # Backwards-compatible: add new ride_* columns if table already existed
+    cur.execute("PRAGMA table_info(groove_style_vectors);")
+    existing_cols = {row[1] for row in cur.fetchall()}
+    for col_def in [
+        ("ride_density", "REAL"),
+        ("ride_mean_velocity", "REAL"),
+        ("ride_bell_ratio", "REAL"),
+    ]:
+        name, ctype = col_def
+        if name not in existing_cols:
+            try:
+                cur.execute(f"ALTER TABLE groove_style_vectors ADD COLUMN {name} {ctype};")
+            except sqlite3.OperationalError:
+                # Column might have been added by a concurrent migration; ignore.
+                pass
     # Per-hit event data for each groove archetype
     cur.execute(
         """
@@ -96,6 +115,25 @@ def list_archetypes(conn: sqlite3.Connection):
     return cur.fetchall()
 
 
+def list_missing_archetypes(conn: sqlite3.Connection):
+    """Return archetypes that do not yet have a groove_style_vectors row.
+
+    This lets us run analysis only for missing items when using --missing-only.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT ga.archetype_id, ga.song_title, ga.drum_path
+        FROM groove_archetypes AS ga
+        LEFT JOIN groove_style_vectors AS gsv
+            ON ga.archetype_id = gsv.archetype_id
+        WHERE gsv.archetype_id IS NULL
+        ORDER BY ga.archetype_id;
+        """
+    )
+    return cur.fetchall()
+
+
 def upsert_style_vector(
     conn: sqlite3.Connection,
     archetype_id: str,
@@ -109,6 +147,9 @@ def upsert_style_vector(
     snare_density: Optional[float] = None,
     cymbal_density: Optional[float] = None,
     dynamics_spread: Optional[float] = None,
+    ride_density: Optional[float] = None,
+    ride_mean_velocity: Optional[float] = None,
+    ride_bell_ratio: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> None:
     cur = conn.cursor()
@@ -118,8 +159,9 @@ def upsert_style_vector(
             archetype_id, bpm, swing_amount, shuffle_amount,
             backbeat_late_ms, hat_open_ratio, ghost_snare_ratio,
             kick_density, snare_density, cymbal_density,
-            dynamics_spread, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            dynamics_spread, ride_density, ride_mean_velocity, ride_bell_ratio,
+            notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(archetype_id) DO UPDATE SET
             bpm=excluded.bpm,
             swing_amount=excluded.swing_amount,
@@ -131,6 +173,9 @@ def upsert_style_vector(
             snare_density=excluded.snare_density,
             cymbal_density=excluded.cymbal_density,
             dynamics_spread=excluded.dynamics_spread,
+            ride_density=excluded.ride_density,
+            ride_mean_velocity=excluded.ride_mean_velocity,
+            ride_bell_ratio=excluded.ride_bell_ratio,
             notes=excluded.notes,
             updated_at=CURRENT_TIMESTAMP
         """,
@@ -146,6 +191,9 @@ def upsert_style_vector(
             snare_density,
             cymbal_density,
             dynamics_spread,
+            ride_density,
+            ride_mean_velocity,
+            ride_bell_ratio,
             notes,
         ),
     )
@@ -232,24 +280,35 @@ def analyze_one_groove(archetype_id: str, song_title: str, drum_path: str):
         "snare_density": numeric_features.get("snare_hits_per_bar"),
         "cymbal_density": numeric_features.get("cymbal_hits_per_bar"),
         "dynamics_spread": numeric_features.get("velocity_std"),
+        "ride_density": numeric_features.get("ride_hits_per_bar"),
+        "ride_mean_velocity": numeric_features.get("ride_velocity_mean"),
+        "ride_bell_ratio": numeric_features.get("ride_bell_ratio"),
         "notes": None,
     }
     return events, features
 
 
-def analyze_all_grooves() -> None:
+def analyze_all_grooves(missing_only: bool = False) -> None:
     db_path = get_db_path()
     print(f"Using DB: {db_path}")
 
     conn = sqlite3.connect(db_path)
     try:
         ensure_analysis_schema(conn)
-        rows = list_archetypes(conn)
+        if missing_only:
+            rows = list_missing_archetypes(conn)
+            mode_label = "missing-only"
+        else:
+            rows = list_archetypes(conn)
+            mode_label = "all"
         if not rows:
-            print("No groove_archetypes found. Run import_groove_archetypes first.")
+            if missing_only:
+                print("No missing groove_style_vectors rows; nothing to analyze.")
+            else:
+                print("No groove_archetypes found. Run import_groove_archetypes first.")
             return
 
-        print(f"Found {len(rows)} groove archetypes to analyze.\n")
+        print(f"Found {len(rows)} groove archetypes to analyze ({mode_label} mode).\n")
         for archetype_id, song_title, drum_path in rows:
             events, features = analyze_one_groove(archetype_id, song_title, drum_path)
             clear_events_for_archetype(conn, archetype_id)
@@ -274,5 +333,9 @@ def analyze_all_grooves() -> None:
         conn.close()
 
 if __name__ == "__main__":
-    analyze_all_grooves()
-
+    import sys
+    missing_only_flag = "--missing-only"
+    missing_only = missing_only_flag in sys.argv[1:]
+    if missing_only:
+        print("Running in missing-only mode: only archetypes without groove_style_vectors rows will be analyzed.\n")
+    analyze_all_grooves(missing_only=missing_only)

@@ -84,6 +84,10 @@ class DrumNoteEvent:
     
     # Micro-timing from performance spec
     microTimingMs: Optional[float] = None        # From LLM performance spec
+
+    # Rudiment metadata (optional)
+    phraseMarker: Optional[str] = None
+    rudimentId: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

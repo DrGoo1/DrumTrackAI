@@ -1,36 +1,43 @@
 services:
-  # DCSM Backend v1.1.16 with Rust Audio Core
+  # DCSM Backend v1.1.17 with Rust Audio Core
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: drumtrackai-v1116-backend
+    container_name: drumtrackai-v1117-backend
     ports:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
       - USE_RUST=1
       - AUDIO_CORE_BIN=/usr/local/bin/audio-core
+      # DB path inside container (mount a single SQLite file here)
+      - SAMPLE_DB_PATH=/data/db/drumtrackai.db
+      # Samples root inside container (mount host samples root here)
+      - SAMPLES_ROOT=/data/samples
+      # Optional: if DB still contains Windows absolute paths, remap prefix
+      - SAMPLE_PATH_MAP_FROM=${SAMPLE_PATH_MAP_FROM}
+      - SAMPLE_PATH_MAP_TO=${SAMPLE_PATH_MAP_TO}
     volumes:
       - ./admin:/app/admin
       - ./uploads:/app/uploads
       - ./sessions:/app/sessions
+      # Persist/override the DB file location (cloud-friendly)
+      - ${DRUMTRACKAI_DB_HOST_PATH:-./admin/drumtrackai.db}:/data/db/drumtrackai.db
+      # Mount the host sample library (read-only recommended)
+      - ${DRUMTRACKAI_SAMPLES_HOST_PATH:-E:\\Drum Samples}:/data/samples:ro
     networks:
       - drumtrackai-network
     restart: unless-stopped
 
-  # React Frontend v1.1.16
+  # React Frontend v1.1.17 (Landing + BeatSketch)
   frontend:
     build:
-      context: ./web-frontend
+      context: ./frontend
       dockerfile: Dockerfile
-      args:
-        - REACT_APP_API_BASE=http://localhost:8000
-    container_name: drumtrackai-v1116-frontend
+    container_name: drumtrackai-v1117-frontend
     ports:
       - "3000:80"
-    environment:
-      - REACT_APP_API_BASE=http://localhost:8000
     depends_on:
       - backend
     networks:

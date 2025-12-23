@@ -1,15 +1,37 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import webdawApi, { alignSections, loadSession, saveSession, sectionizeAudio, dcsmSectionizeSmart, generateDrumPattern } from "../services/api";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import webdawApi, { alignSections, loadSession, saveSession, sectionizeAudio, dcsmSectionizeSmart } from "../services/api";
 import Timeline from "./Timeline";
 import { Engine } from "../audio/engine";
-import Mixer from "./Mixer";
-import PianoRoll, { MidiNote } from "./PianoRoll";
+import DrumPlayerModal from "./drums/DrumPlayerModal";
+import type { MidiNote as PianoRollNote } from "./PianoRoll";
 import { SectionControls } from "./SectionControls";
 import { DrummerSelector, Drummer } from "./DrummerSelector";
 import DrumOptionsPanel, { DrumOptions } from "./DrumOptionsPanel";
 import { ManualArrangementModal, ManualArrangement } from "./ManualArrangementModal";
 import { InternetSongLookupModal, SongInfo } from "./InternetSongLookupModal";
-import DrumBuilderPanel, { DrumGenerationConfig } from "./DrumBuilderPanel";
+import DrumBuilderPanelV2 from "./DrumBuilderPanelV2";
+import { useBrainPanelStore } from "../state/useBrainPanelStore";
+import { BrainPanel } from "./brain/BrainPanel";
+import {
+  DrumGenerationConfig,
+  DrumTrackForDCSM,
+  DrumNoteEvent,
+  DrumInstrumentId,
+  LimbId as DrumTrackLimbId,
+  DRUM_INSTRUMENT_MIDI_MAP,
+} from "../types/drumTrack";
+import { GrooveWeightMap } from "../types/grooveWeight";
+import { DrumEditorPane } from "./drums/DrumEditorPane";
+import { resolveApiBaseNormalized } from "../utils/apiBase";
+import { GridResolution } from "../utils/pianoRollGrid";
+import { inferLimbFromInstrument, inferLimbFromLane, type LimbId } from "../constants/limbs";
+import { useMidi } from "../midi/midiStore";
+import type { MidiClip, MidiNote as MidiClipNote } from "../midi/types";
+import {
+  applyDrumGenerationResult,
+  DrumGenerationDebugSnapshot,
+  DrumTrackPlacementContext,
+} from "./drumGenerationHandlers";
 
 export type UploadedTrack = {
   key: string;
@@ -18,6 +40,16 @@ export type UploadedTrack = {
   seconds: number;
   color: string;
   name: string;
+  peaksL?: number[];
+  peaksR?: number[];
+  waveformExtents?: WaveformExtent[];
+  waveformExtentsL?: WaveformExtent[];
+  waveformExtentsR?: WaveformExtent[];
+};
+
+type WaveformExtent = {
+  min: number;
+  max: number;
 };
 
 export type Section = {
@@ -35,6 +67,10 @@ export type Section = {
   tempo?: number;                  // Detected tempo for this section
   tempoConfidence?: number;        // 0.0-1.0 confidence in tempo detection
   tempoLocked?: boolean;           // User has manually set tempo
+  startBarIndex?: number;          // Absolute bar index from SongMap
+  endBarIndex?: number;            // Inclusive bar index
+  barCount?: number;               // Number of bars in section
+  timeSignature?: [number, number];// Section-specific meter if available
 };
 
 export type MeasureRange = {
@@ -46,7 +82,710 @@ export type MeasureRange = {
   tempos: number[];
   avgTempo: number;
   timeSignature: [number, number];
+  startTime: number;
+  endTime: number;
 };
+
+const DRUM_SECTION_LABELS = new Set(["intro", "verse", "chorus", "bridge", "outro"]);
+
+type SectionPatternPreset = {
+  intensity: number;
+  variation: number;
+  fillDensity: number;
+  fillType: DrumOptions["fill_preset"];
+  mode: "template" | "ai_variation" | "full_ai";
+  swingBoost?: number;
+  ghostBoost?: number;
+  preferRudiments?: boolean;
+  enforceFill?: boolean;
+};
+
+const SECTION_AUTOGEN_PRESETS: Record<string, SectionPatternPreset> = {
+  intro: {
+    intensity: 0.35,
+    variation: 0.25,
+    fillDensity: 0.15,
+    fillType: "none",
+    mode: "template",
+    swingBoost: -0.05,
+  },
+  verse: {
+    intensity: 0.55,
+    variation: 0.35,
+    fillDensity: 0.25,
+    fillType: "auto",
+    mode: "ai_variation",
+  },
+  chorus: {
+    intensity: 0.9,
+    variation: 0.65,
+    fillDensity: 0.55,
+    fillType: "tomrun",
+    mode: "full_ai",
+    swingBoost: 0.05,
+    ghostBoost: 0.1,
+    preferRudiments: true,
+    enforceFill: true,
+  },
+  bridge: {
+    intensity: 0.7,
+    variation: 0.7,
+    fillDensity: 0.45,
+    fillType: "snarebuzz",
+    mode: "full_ai",
+    ghostBoost: 0.08,
+    preferRudiments: true,
+  },
+  outro: {
+    intensity: 0.45,
+    variation: 0.4,
+    fillDensity: 0.2,
+    fillType: "auto",
+    mode: "ai_variation",
+    swingBoost: -0.02,
+  },
+  default: {
+    intensity: 0.6,
+    variation: 0.45,
+    fillDensity: 0.3,
+    fillType: "auto",
+    mode: "ai_variation",
+  },
+};
+
+const clamp01 = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+};
+
+type SongMapSummary = {
+  duration?: number;
+  globalBpmEstimate?: number;
+  meter?: [number, number];
+  bars?: Array<{ tempo_bpm?: number }>;
+  sections?: any[];
+  beatTimes?: number[];
+  source?: string;
+  title?: string;
+  artist?: string;
+};
+
+const mapInstrumentToLane = (instrument?: string): string => {
+  if (!instrument) return "snare";
+  const id = instrument.toLowerCase();
+  if (id.startsWith("kick")) return "kick";
+  if (id.startsWith("snare")) return "snare";
+  if (id.includes("open") && id.includes("hat")) return "openhat";
+  if (id.includes("hat")) return "hihat";
+  if (id.startsWith("ride")) return "ride";
+  if (id.startsWith("crash") || id.includes("china") || id.includes("splash")) return "crash";
+  if (id.startsWith("tom")) return "tom";
+  if (id.includes("clap") || id.includes("perc") || id.includes("cowbell")) return "clap";
+  return "tom";
+};
+
+const laneToInstrumentId = (lane?: string): DrumInstrumentId => {
+  switch ((lane || "snare").toLowerCase()) {
+    case "kick":
+      return "kick";
+    case "snare":
+    case "snare_center":
+      return "snare_center";
+    case "snare_rim":
+      return "snare_rim";
+    case "snare_ghost":
+      return "snare_ghost";
+    case "openhat":
+      return "hihat_open";
+    case "hihat":
+      return "hihat_closed";
+    case "ride":
+      return "ride_bow";
+    case "ridebell":
+      return "ride_bell";
+    case "tom":
+    case "tom_high":
+      return "tom_high";
+    case "tom_mid":
+      return "tom_mid";
+    case "tom_floor":
+      return "tom_floor";
+    case "crash":
+      return "crash_1";
+    case "crash2":
+      return "crash_2";
+    case "perc":
+    case "clap":
+    case "cowbell":
+      return "other";
+    default:
+      return "other";
+  }
+};
+
+const normalizeVelocity = (velocity?: number): number => {
+  if (velocity == null) return 0.8;
+  if (velocity > 1) {
+    return Math.max(0, Math.min(1, velocity / 127));
+  }
+  return Math.max(0, Math.min(1, velocity));
+};
+
+type LegacyNoteCandidate = {
+  id?: string;
+  time?: number;
+  length?: number;
+  duration?: number;
+  drum?: string;
+  instrument?: string;
+  instrumentId?: string;
+  velocity?: number;
+  vel?: number;
+};
+
+const synthesizeDrumTrackFromLegacyNotes = (
+  legacyNotes: LegacyNoteCandidate[],
+  sectionId: string,
+  config: DrumGenerationConfig,
+  fallbackBpm: number,
+): DrumTrackForDCSM | null => {
+  if (!Array.isArray(legacyNotes) || !legacyNotes.length) {
+    return null;
+  }
+
+  const ticksPerBeat = 960;
+  const beatsPerBar = config.timeSignature?.[0] ?? 4;
+  const measureCount = Math.max(1, config.endMeasure - config.startMeasure + 1);
+  const baseTempos = config.tempos && config.tempos.length ? config.tempos : [];
+  const measureTempos = Array.from({ length: measureCount }).map((_, idx) => {
+    const tempo = baseTempos[idx] ?? baseTempos[baseTempos.length - 1] ?? fallbackBpm;
+    return tempo > 0 ? tempo : fallbackBpm;
+  });
+  const measureDurations = measureTempos.map((tempo) => (60 / tempo) * beatsPerBar);
+  const measureBoundaries: number[] = [0];
+  for (const duration of measureDurations) {
+    measureBoundaries.push(measureBoundaries[measureBoundaries.length - 1] + duration);
+  }
+
+  const locateMeasurePosition = (relativeTime: number) => {
+    const clampedTime = Math.max(0, relativeTime);
+    let measureIndex = measureDurations.length - 1;
+    for (let i = 0; i < measureDurations.length; i += 1) {
+      if (clampedTime < measureBoundaries[i + 1] - 1e-6) {
+        measureIndex = i;
+        break;
+      }
+    }
+    const tempo = measureTempos[Math.min(measureIndex, measureTempos.length - 1)] || fallbackBpm;
+    const secondsPerBeat = 60 / Math.max(tempo, 1);
+    const offsetWithinMeasure = clampedTime - measureBoundaries[measureIndex];
+    const beatsIntoMeasure = Math.max(0, offsetWithinMeasure / secondsPerBeat);
+    const tickInBar = Math.round(beatsIntoMeasure * ticksPerBeat);
+    return {
+      barIndex: config.startMeasure + measureIndex,
+      tickInBar,
+      secondsPerBeat,
+    };
+  };
+
+  const drumNotes: DrumNoteEvent[] = legacyNotes.map((raw, idx) => {
+    const lane = mapInstrumentToLane(raw?.instrument || raw?.instrumentId || raw?.drum);
+    const instrumentId = laneToInstrumentId(lane);
+    const midiPitch = DRUM_INSTRUMENT_MIDI_MAP[instrumentId] ?? DRUM_INSTRUMENT_MIDI_MAP.snare_center;
+    const relativeTime = typeof raw?.time === "number" ? raw.time : 0;
+    const durationSec = typeof raw?.length === "number"
+      ? raw.length
+      : typeof raw?.duration === "number"
+        ? raw.duration
+        : 0.25;
+    const { barIndex, tickInBar, secondsPerBeat } = locateMeasurePosition(relativeTime);
+    const tickLength = Math.max(
+      Math.round((durationSec / secondsPerBeat) * ticksPerBeat),
+      ticksPerBeat / 16,
+    );
+    const velocitySource = typeof raw?.velocity === "number"
+      ? raw.velocity
+      : typeof raw?.vel === "number"
+        ? raw.vel
+        : 0.85;
+    const normalizedVelocity = normalizeVelocity(velocitySource);
+    const velocity = Math.max(1, Math.min(127, Math.round(normalizedVelocity * 127)));
+
+    return {
+      id: raw?.id || `legacy-${sectionId}-${idx}-${Date.now()}`,
+      barIndex,
+      tickInBar,
+      tickLength,
+      channel: 9,
+      midiPitch,
+      velocity,
+      instrumentId,
+      limbId: inferLimbFromLane(lane) ?? undefined,
+      isGhost: velocity <= 45,
+      isAccent: velocity >= 110,
+      isFlam: false,
+      isDrag: false,
+    };
+  });
+
+  return {
+    track_id: `legacy-${sectionId}-${Date.now()}`,
+    style_id: config.style || "legacy",
+    resolution_ppq: ticksPerBeat,
+    notes: drumNotes,
+    performance_spec: {
+      styleId: config.style || "legacy",
+      globalFeel: "straight",
+      quantizationBase: "16th",
+      phrases: [],
+    },
+  };
+};
+
+const hydrateLegacyNote = (raw: any, idx: number, defaultDuration: number, prefix: string): PianoRollNote => {
+  const durationValue =
+    typeof raw?.duration === "number"
+      ? raw.duration
+      : typeof raw?.length === "number"
+        ? raw.length
+        : defaultDuration;
+
+  const lane = raw?.lane || mapInstrumentToLane(raw?.instrumentId || raw?.drum);
+  const limbId = coerceSupportedLimb(raw?.limbId) ?? inferLimbFromLane(lane);
+
+  return {
+    id: raw?.id || `${prefix}-${Date.now()}-${idx}`,
+    time: typeof raw?.time === "number" ? raw.time : 0,
+    duration: durationValue,
+    lane,
+    vel: normalizeVelocity(raw?.vel ?? raw?.velocity),
+    aspect: raw?.aspect,
+    phraseMarker: raw?.phraseMarker,
+    rudimentId: raw?.rudimentId,
+    limbId,
+  };
+};
+
+const TRACK_COLOR_POOL = ["#60a5fa", "#22d3ee", "#a78bfa", "#34d399", "#f59e0b", "#ef4444"] as const;
+const pickTrackColor = (count: number) => TRACK_COLOR_POOL[count % TRACK_COLOR_POOL.length];
+
+type WaveformPayload = {
+  key?: string;
+  peaks?: number[];
+  peaksL?: number[];
+  peaksR?: number[];
+  sr?: number;
+  duration?: number;
+};
+
+const SUPPORTED_NOTE_LIMBS: readonly LimbId[] = ["RH", "LH", "RF", "LF"];
+const coerceSupportedLimb = (value?: DrumTrackLimbId | LimbId | null): LimbId | null => {
+  if (!value) {
+    return null;
+  }
+  return SUPPORTED_NOTE_LIMBS.includes(value as LimbId) ? (value as LimbId) : null;
+};
+
+type NoteAspectValue = NonNullable<PianoRollNote["aspect"]>;
+const NOTE_ASPECT_VALUES: readonly NoteAspectValue[] = ["groove", "accent", "fill"] as const;
+const coerceNoteAspect = (value?: string | null): NoteAspectValue | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return NOTE_ASPECT_VALUES.find((candidate) => candidate === normalized) ?? undefined;
+};
+
+const summarizeDrumTrack = (track: DrumTrackForDCSM) => {
+  const notes = Array.isArray(track?.notes) ? track.notes : [];
+  if (!notes.length) {
+    return {
+      noteCount: 0,
+      minBar: null as number | null,
+      maxBar: null as number | null,
+      instruments: [] as string[],
+    };
+  }
+
+  let minBar = Number.POSITIVE_INFINITY;
+  let maxBar = Number.NEGATIVE_INFINITY;
+  const instruments = new Set<string>();
+
+  for (const note of notes) {
+    const barIndex = Number(note?.barIndex ?? 0);
+    if (Number.isFinite(barIndex)) {
+      if (barIndex < minBar) minBar = barIndex;
+      if (barIndex > maxBar) maxBar = barIndex;
+    }
+    if (note?.instrumentId) {
+      instruments.add(String(note.instrumentId));
+    }
+  }
+
+  return {
+    noteCount: notes.length,
+    minBar: Number.isFinite(minBar) ? minBar : null,
+    maxBar: Number.isFinite(maxBar) ? maxBar : null,
+    instruments: Array.from(instruments),
+  };
+};
+
+const normalizePeakSeries = (input: any): number[] => {
+  if (!input) return [];
+
+  const coerceSample = (value: any): number => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : 0;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (Array.isArray(value)) {
+      let maxAbs = 0;
+      for (const entry of value) {
+        maxAbs = Math.max(maxAbs, Math.abs(coerceSample(entry)));
+      }
+      return maxAbs;
+    }
+    if (value && typeof value === "object") {
+      const numericFields = ["max", "min", "rms", "peak", "value"];
+      let candidate = 0;
+      for (const field of numericFields) {
+        const sample = (value as Record<string, unknown>)[field];
+        if (typeof sample === "number" && Number.isFinite(sample)) {
+          candidate = Math.max(candidate, Math.abs(sample));
+        }
+      }
+      return candidate;
+    }
+    return 0;
+  };
+
+  let samples: number[] = [];
+  if (Array.isArray(input)) {
+    samples = input.map(coerceSample);
+  } else if (ArrayBuffer.isView(input)) {
+    samples = Array.from(input as unknown as ArrayLike<number>).map(coerceSample);
+  } else if (input instanceof ArrayBuffer) {
+    samples = Array.from(new Float32Array(input));
+  } else if (typeof input === "object" && Array.isArray((input as any).data)) {
+    samples = (input as any).data.map(coerceSample);
+  }
+
+  if (!samples.length) {
+    return [];
+  }
+
+  let maxAbs = 0;
+  for (const value of samples) {
+    if (!Number.isFinite(value)) continue;
+    const abs = Math.abs(value);
+    if (abs > maxAbs) {
+      maxAbs = abs;
+    }
+  }
+
+  if (!Number.isFinite(maxAbs) || maxAbs <= 0) {
+    return samples.map(() => 0);
+  }
+
+  const scale = 1 / maxAbs;
+  return samples.map((value) => {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    const scaled = value * scale;
+    if (scaled > 1) return 1;
+    if (scaled < -1) return -1;
+    return scaled;
+  });
+};
+
+const clampSignedUnit = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  if (value > 1) return 1;
+  if (value < -1) return -1;
+  return value;
+};
+
+const collectNumericCandidates = (value: any, target: number[]) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    target.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectNumericCandidates(entry, target));
+    return;
+  }
+  if (ArrayBuffer.isView(value)) {
+    const view = value as unknown as ArrayLike<number>;
+    for (let i = 0; i < view.length; i++) {
+      const entry = view[i];
+      if (typeof entry === "number" && Number.isFinite(entry)) {
+        target.push(entry);
+      }
+    }
+    return;
+  }
+  if (value instanceof ArrayBuffer) {
+    collectNumericCandidates(new Float32Array(value), target);
+    return;
+  }
+  if (value && typeof value === "object") {
+    const numericFields = [
+      "min",
+      "max",
+      "low",
+      "high",
+      "neg",
+      "pos",
+      "negative",
+      "positive",
+      "peak",
+      "value",
+      "rms",
+    ];
+    numericFields.forEach((field) => {
+      const candidate = (value as Record<string, unknown>)[field];
+      if (typeof candidate === "number" && Number.isFinite(candidate)) {
+        target.push(candidate);
+      }
+    });
+  }
+};
+
+const extractExtent = (value: any): WaveformExtent => {
+  const candidates: number[] = [];
+  collectNumericCandidates(value, candidates);
+  if (!candidates.length) {
+    return { min: 0, max: 0 };
+  }
+
+  let localMin = Infinity;
+  let localMax = -Infinity;
+  let hasPositive = false;
+  let hasNegative = false;
+
+  candidates.forEach((candidate) => {
+    if (candidate < localMin) localMin = candidate;
+    if (candidate > localMax) localMax = candidate;
+    if (candidate >= 0) hasPositive = true;
+    if (candidate <= 0) hasNegative = true;
+  });
+
+  if (!hasNegative && hasPositive) {
+    const amplitude = Math.max(0, localMax);
+    return { min: -amplitude, max: amplitude };
+  }
+
+  if (!hasPositive && hasNegative) {
+    const amplitude = Math.abs(localMin);
+    return { min: -amplitude, max: amplitude };
+  }
+
+  if (!Number.isFinite(localMin) || !Number.isFinite(localMax)) {
+    return { min: 0, max: 0 };
+  }
+
+  if (localMin === localMax) {
+    const amplitude = Math.abs(localMax);
+    return { min: -amplitude, max: amplitude };
+  }
+
+  return { min: localMin, max: localMax };
+};
+
+const normalizePeakExtents = (input: any): WaveformExtent[] => {
+  if (!input || !Array.isArray(input)) {
+    return [];
+  }
+
+  const extents = input.map((value) => extractExtent(value));
+  let maxAbs = 0;
+  for (const extent of extents) {
+    if (Number.isFinite(extent.max)) {
+      maxAbs = Math.max(maxAbs, Math.abs(extent.max));
+    }
+    if (Number.isFinite(extent.min)) {
+      maxAbs = Math.max(maxAbs, Math.abs(extent.min));
+    }
+  }
+
+  if (maxAbs <= 0) {
+    return extents.map(() => ({ min: 0, max: 0 }));
+  }
+
+  const scale = 1 / maxAbs;
+  return extents.map((extent) => ({
+    min: clampSignedUnit(extent.min * scale),
+    max: clampSignedUnit(extent.max * scale),
+  }));
+};
+
+const waveformHasAudio = (wf?: WaveformPayload | null) => {
+  if (!wf) return false;
+  const peaks = normalizePeakSeries(wf.peaks);
+  return peaks.length > 0 && typeof wf.sr === "number";
+};
+
+const audioDurationCache = new Map<string, number>();
+
+const buildAudioUrlCandidates = (key: string): string[] => {
+  const base = resolveApiBaseNormalized();
+  const relative = `/files/audio?key=${encodeURIComponent(key)}`;
+  return base ? [relative, `${base}${relative}`] : [relative];
+};
+
+const withCacheBuster = (url: string) => `${url}${url.includes("?") ? "&" : "?"}cb=${Date.now()}`;
+
+async function fetchAudioDurationSeconds(key: string): Promise<number | null> {
+  if (audioDurationCache.has(key)) {
+    return audioDurationCache.get(key)!;
+  }
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return null;
+  }
+
+  const candidates = buildAudioUrlCandidates(key);
+  for (const candidate of candidates) {
+    const duration = await new Promise<number | null>((resolve) => {
+      const audioEl = document.createElement("audio");
+      audioEl.preload = "metadata";
+      const cleanup = () => {
+        audioEl.removeAttribute("src");
+        audioEl.load();
+        audioEl.remove();
+      };
+      audioEl.onloadedmetadata = () => {
+        const detected = Number.isFinite(audioEl.duration) ? audioEl.duration : null;
+        cleanup();
+        resolve(detected);
+      };
+      audioEl.onerror = () => {
+        cleanup();
+        resolve(null);
+      };
+      audioEl.src = withCacheBuster(candidate);
+    });
+    if (typeof duration === "number" && duration > 0.2) {
+      audioDurationCache.set(key, duration);
+      return duration;
+    }
+  }
+  return null;
+}
+
+async function fetchWaveformData(key: string): Promise<WaveformPayload> {
+  const base = resolveApiBaseNormalized();
+  const query = `?key=${encodeURIComponent(key)}`;
+  const relativePaths = ["/waveform", "/files/waveform"];
+  const candidates = new Set<string>();
+
+  relativePaths.forEach((path) => {
+    candidates.add(`${path}${query}`);
+    if (base) {
+      candidates.add(`${base}${path}${query}`);
+    }
+  });
+
+  let lastError: Error | null = null;
+
+  for (const url of Array.from(candidates)) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return await response.json();
+      }
+      const body = await response.text().catch(() => "");
+      lastError = new Error(`Waveform fetch failed (${response.status}): ${body.slice(0, 120)}`);
+    } catch (err: any) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError ?? new Error("Unable to load waveform data");
+}
+
+async function buildTrackFromWaveform({
+  key,
+  name,
+  color,
+  initialWaveform,
+  preferFreshWaveform = false,
+}: {
+  key: string;
+  name: string;
+  color: string;
+  initialWaveform?: WaveformPayload | null;
+  preferFreshWaveform?: boolean;
+}): Promise<UploadedTrack> {
+  let waveform: WaveformPayload | undefined | null = initialWaveform;
+
+  const shouldForceRefresh = preferFreshWaveform || !waveformHasAudio(waveform);
+  if (shouldForceRefresh) {
+    try {
+      const refreshed = await fetchWaveformData(key);
+      if (waveformHasAudio(refreshed)) {
+        waveform = refreshed;
+      }
+    } catch (err) {
+      if (!waveformHasAudio(waveform)) {
+        throw err;
+      }
+      console.warn('Waveform refresh failed, using placeholder data instead:', err);
+    }
+  }
+
+  let peaks = normalizePeakSeries(waveform?.peaks);
+  const peaksL = normalizePeakSeries(waveform?.peaksL);
+  const peaksR = normalizePeakSeries(waveform?.peaksR);
+  const waveformExtents = normalizePeakExtents(waveform?.peaks);
+  const waveformExtentsL = normalizePeakExtents(waveform?.peaksL);
+  const waveformExtentsR = normalizePeakExtents(waveform?.peaksR);
+  if (!peaks.length && peaksL.length) {
+    peaks = peaksL;
+  }
+  const sr = typeof waveform?.sr === "number" ? waveform!.sr : 44100;
+  const durationFromBackend = typeof waveform?.duration === "number" ? waveform!.duration : undefined;
+  const computedSeconds = peaks.length > 0 ? peaks.length / sr : undefined;
+  let seconds = Math.max(1, durationFromBackend ?? computedSeconds ?? 1);
+
+  if (seconds <= 5) {
+    try {
+      const detectedDuration = await fetchAudioDurationSeconds(key);
+      if (typeof detectedDuration === "number" && detectedDuration > seconds + 0.25) {
+        seconds = detectedDuration;
+      }
+    } catch (durationErr) {
+      console.warn("Audio duration probe failed", durationErr);
+    }
+  }
+
+  const hydrated: UploadedTrack = {
+    key,
+    peaks,
+    sr,
+    seconds,
+    color,
+    name,
+    waveformExtents: waveformExtents.length ? waveformExtents : undefined,
+  };
+
+  if (peaksL.length && peaksR.length) {
+    hydrated.peaksL = peaksL;
+    hydrated.peaksR = peaksR;
+  }
+
+  if (waveformExtentsL.length && waveformExtentsR.length) {
+    hydrated.waveformExtentsL = waveformExtentsL;
+    hydrated.waveformExtentsR = waveformExtentsR;
+  }
+
+  return hydrated;
+}
 
 function secToBarsBeats(sec: number, bpm: number, [num, den]: [number, number]) {
   const secPerBeat = (60 / bpm) * (4 / den);
@@ -58,29 +797,166 @@ function secToBarsBeats(sec: number, bpm: number, [num, den]: [number, number]) 
 }
 
 // Convert section to measure range for drum builder
-function sectionToMeasureRange(section: Section, bpm: number, timeSig: [number, number]): MeasureRange {
-  const beatsPerMeasure = timeSig[0];
-  const secPerBeat = 60 / bpm;
-  const secPerMeasure = secPerBeat * beatsPerMeasure;
-  
-  const startMeasure = Math.floor(section.start / secPerMeasure);
-  const endMeasure = Math.ceil(section.end / secPerMeasure);
-  const measureCount = endMeasure - startMeasure;
-  
-  // Create array of tempos (use section tempo or global bpm)
-  const tempo = section.tempo || bpm;
-  const tempos = Array(measureCount).fill(tempo);
-  
+function sectionToMeasureRange(
+  section: Section,
+  bpm: number,
+  defaultTimeSig: [number, number],
+  songMap?: SongMapSummary | null,
+): MeasureRange {
+  const resolvedTimeSig = section.timeSignature || songMap?.meter || defaultTimeSig;
+  const beatsPerMeasure = resolvedTimeSig[0];
+  const hasBarAnchors =
+    typeof section.startBarIndex === "number" && typeof section.endBarIndex === "number";
+
+  let startMeasure = 0;
+  let measureCount = 1;
+
+  const beatTimes = Array.isArray(songMap?.beatTimes) ? songMap!.beatTimes! : [];
+
+  const nearestBeatIndex = (t: number) => {
+    if (!beatTimes.length) return null;
+    let lo = 0;
+    let hi = beatTimes.length - 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (beatTimes[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    const idx = lo;
+    if (idx <= 0) return 0;
+    if (idx >= beatTimes.length) return beatTimes.length - 1;
+    const prev = idx - 1;
+    return Math.abs(beatTimes[idx] - t) < Math.abs(beatTimes[prev] - t) ? idx : prev;
+  };
+
+  if (hasBarAnchors) {
+    startMeasure = Math.max(0, section.startBarIndex!);
+    const inferredCount = section.barCount ?? section.endBarIndex! - section.startBarIndex! + 1;
+    measureCount = Math.max(1, inferredCount);
+
+    if (beatTimes.length) {
+      const beatsPerBar = beatsPerMeasure;
+      const anchorStartBeatIndex = Math.max(0, startMeasure * beatsPerBar);
+      const anchorEndBeatIndex = Math.max(0, (startMeasure + measureCount) * beatsPerBar);
+      const anchoredStartTime =
+        anchorStartBeatIndex < beatTimes.length ? beatTimes[anchorStartBeatIndex] ?? null : null;
+      const anchoredEndTime =
+        anchorEndBeatIndex < beatTimes.length ? beatTimes[anchorEndBeatIndex] ?? null : null;
+
+      const tempoForSection = section.tempo || bpm || 120;
+      const secPerBeat = 60 / Math.max(1, tempoForSection);
+      const secPerBar = secPerBeat * beatsPerBar;
+      const tolerance = Math.max(2, secPerBar * 2);
+
+      const startMismatch =
+        typeof anchoredStartTime === "number" && Number.isFinite(anchoredStartTime)
+          ? Math.abs(anchoredStartTime - section.start) > tolerance
+          : false;
+      const endMismatch =
+        typeof anchoredEndTime === "number" && Number.isFinite(anchoredEndTime)
+          ? Math.abs(anchoredEndTime - section.end) > tolerance
+          : false;
+
+      if (startMismatch || endMismatch) {
+        const startBeatIdx = nearestBeatIndex(section.start);
+        const endBeatIdx = nearestBeatIndex(section.end);
+        if (startBeatIdx !== null && endBeatIdx !== null) {
+          const startBar = Math.floor(startBeatIdx / beatsPerBar);
+          const endBar = Math.max(startBar, Math.floor(endBeatIdx / beatsPerBar));
+          startMeasure = Math.max(0, startBar);
+          measureCount = Math.max(1, endBar - startMeasure + 1);
+        }
+      }
+    }
+  } else {
+    const tempoForSection = section.tempo || bpm;
+    const secPerBeat = 60 / Math.max(1, tempoForSection);
+    const secPerMeasure = secPerBeat * beatsPerMeasure;
+    startMeasure = Math.floor(section.start / secPerMeasure);
+    const rawEndMeasure = Math.ceil(section.end / secPerMeasure);
+    measureCount = Math.max(1, rawEndMeasure - startMeasure);
+  }
+
+  let tempos: number[] = [];
+  if (songMap?.bars?.length && typeof section.startBarIndex === "number") {
+    const sliceStart = Math.max(0, section.startBarIndex);
+    const sliceEndExclusive = Math.min(
+      songMap.bars.length,
+      typeof section.endBarIndex === "number"
+        ? section.endBarIndex + 1
+        : sliceStart + measureCount,
+    );
+    tempos = songMap.bars.slice(sliceStart, sliceEndExclusive).map((bar) => {
+      const fallback = section.tempo || bpm;
+      return typeof bar?.tempo_bpm === "number" && bar.tempo_bpm > 0 ? bar.tempo_bpm : fallback;
+    });
+    if (tempos.length) {
+      measureCount = tempos.length;
+    }
+  }
+
+  if (!tempos.length) {
+    const tempo = section.tempo || bpm;
+    tempos = Array(measureCount).fill(tempo);
+  }
+
+  const endMeasure = startMeasure + measureCount - 1;
+  const avgTempo = tempos.reduce((sum, value) => sum + value, 0) / tempos.length;
+
+  let startTime = section.start;
+  let endTime = section.end;
+  if (hasBarAnchors && beatTimes.length) {
+    const beatsPerBar = beatsPerMeasure;
+    const startBeatIndex = Math.max(0, startMeasure * beatsPerBar);
+    const endBeatIndex = Math.max(0, (endMeasure + 1) * beatsPerBar);
+    if (startBeatIndex < beatTimes.length) {
+      startTime = beatTimes[startBeatIndex] ?? startTime;
+    }
+    if (endBeatIndex < beatTimes.length) {
+      endTime = beatTimes[endBeatIndex] ?? endTime;
+    } else if (beatTimes.length) {
+      endTime = Math.max(endTime, beatTimes[beatTimes.length - 1] ?? endTime);
+    }
+  }
+
   return {
     sectionId: section.id,
-    sectionLabel: section.label ? section.label.charAt(0).toUpperCase() + section.label.slice(1) : 'Section',
+    sectionLabel: section.label ? section.label.charAt(0).toUpperCase() + section.label.slice(1) : "Section",
     startMeasure,
     endMeasure,
     measureCount,
     tempos,
-    avgTempo: tempo,
-    timeSignature: timeSig
+    avgTempo,
+    timeSignature: resolvedTimeSig,
+    startTime,
+    endTime,
   };
+}
+
+function pickFirstAvailable<T = unknown>(source: Record<string, any>, keys: string[], fallback?: T) {
+  for (const key of keys) {
+    if (source && Object.prototype.hasOwnProperty.call(source, key)) {
+      const value = source[key];
+      if (value !== undefined && value !== null) {
+        return value as T;
+      }
+    }
+  }
+  return fallback as T;
+}
+
+function readNoteNumber(source: Record<string, any>, keys: string[], fallback: number) {
+  const raw = pickFirstAvailable(source, keys);
+  const num = typeof raw === "string" ? Number(raw) : raw;
+  return Number.isFinite(num) ? Number(num) : fallback;
+}
+
+function readNoteString(source: Record<string, any>, keys: string[], fallback?: string | null) {
+  const raw = pickFirstAvailable<string>(source, keys);
+  if (typeof raw === "string" && raw.trim().length) {
+    return raw;
+  }
+  return fallback ?? null;
 }
 
 export default function WebDAWApp() {
@@ -89,31 +965,945 @@ export default function WebDAWApp() {
   const [err, setErr] = useState<string | null>(null);
   const [tracks, setTracks] = useState<UploadedTrack[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
-  const [notes, setNotes] = useState<MidiNote[]>([]);
+  const [notes, setNotes] = useState<PianoRollNote[]>([]);
+  const [sectionDrumTracks, setSectionDrumTracks] = useState<Record<string, DrumTrackForDCSM>>({});
+  const [sectionGrooveMaps, setSectionGrooveMaps] = useState<Record<string, GrooveWeightMap | undefined>>({});
+  const [sectionPlacementContexts, setSectionPlacementContexts] = useState<Record<string, DrumTrackPlacementContext>>({});
+  const [sectionNoteIds, setSectionNoteIds] = useState<Record<string, string[]>>({});
+  const sectionNoteIdsRef = useRef<Record<string, string[]>>({});
+  const pianoRollScrollRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollSyncStateRef = useRef<{ isSyncing: boolean }>({ isSyncing: false });
+  const lastSectionSyncSignatureRef = useRef<string | null>(null);
+  const loggedTrackSamplesRef = useRef<Set<string>>(new Set());
+  const [drumTrackId, setDrumTrackId] = useState<string | null>(null);
+  const [drumClipId, setDrumClipId] = useState<string | null>(null);
+  const [debugDrumGen, setDebugDrumGen] = useState<DrumGenerationDebugSnapshot | null>(null);
+  const [debugMode, setDebugMode] = useState(false);
+
+  const midiSong = useMidi((state) => state.song);
+  const addMidiTrack = useMidi((state) => state.addTrack);
+  const addMidiClip = useMidi((state) => state.addClip);
+  const updateMidiNotes = useMidi((state) => state.updateNotes);
+  const getMidiClip = useMidi((state) => state.getClip);
+  const updateMidiClip = useMidi((state) => state.updateClip);
+
+  useEffect(() => {
+    sectionNoteIdsRef.current = sectionNoteIds;
+  }, [sectionNoteIds]);
+
+  const getMaxScroll = useCallback((el: HTMLElement) => Math.max(0, el.scrollWidth - el.clientWidth), []);
+
+  const setScrollRatio = useCallback(
+    (ratio: number, source?: HTMLElement | null) => {
+      const timelineEl = timelineScrollRef.current;
+      const pianoEl = pianoRollScrollRef.current;
+      const targets = [timelineEl, pianoEl].filter((el): el is HTMLDivElement => Boolean(el));
+      if (!targets.length) return;
+
+      const clamped = Math.min(1, Math.max(0, Number.isFinite(ratio) ? ratio : 0));
+      scrollSyncStateRef.current.isSyncing = true;
+      targets.forEach((el) => {
+        if (source && el === source) return;
+        const max = getMaxScroll(el);
+        const nextLeft = max * clamped;
+        if (Math.abs(el.scrollLeft - nextLeft) > 0.5) {
+          el.scrollLeft = nextLeft;
+        }
+      });
+      window.requestAnimationFrame(() => {
+        scrollSyncStateRef.current.isSyncing = false;
+      });
+    },
+    [getMaxScroll],
+  );
 
   const [bpm, setBpm] = useState(120);
-  const timeSig: [number, number] = [4,4];
+  const [timeSig, setTimeSig] = useState<[number, number]>([4, 4]);
+  const beatsPerBar = timeSig[0];
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState({ enabled: false, start: 0, end: 4 });
   const [selectedDrummer, setSelectedDrummer] = useState<Drummer | null>(null);
-  
+  const [gridResolution, setGridResolution] = useState<GridResolution>("16th");
+  const [gridPixelsPerBeat, setGridPixelsPerBeat] = useState(80);
+  const [scrollPercent, setScrollPercent] = useState(0);
+
+  const convertTrackToMidiNotes = useCallback(
+    (track: DrumTrackForDCSM, placement?: DrumTrackPlacementContext): PianoRollNote[] => {
+      if (!track?.notes?.length) {
+        return [];
+      }
+      const sampleKey = track.track_id || track.style_id || `track-${track.notes.length}`;
+      if (!loggedTrackSamplesRef.current.has(sampleKey)) {
+        loggedTrackSamplesRef.current.add(sampleKey);
+        console.log("[MidiDebug] track sample", sampleKey, track.notes.slice(0, 3));
+      }
+      const tempoEstimate = (placement?.tempos?.[0] ?? bpm) || 120;
+      const beatsPerBar = placement?.timeSignature?.[0] ?? timeSig[0];
+      const ticksPerBeat = track.resolution_ppq || 960;
+      const ticksPerBar = ticksPerBeat * beatsPerBar;
+      const secondsPerBeat = 60 / Math.max(1, tempoEstimate);
+      const placementStartMeasure = placement?.startMeasure ?? 0;
+      const placementBeatsPerBar = placement?.timeSignature?.[0] ?? beatsPerBar;
+      const fallbackPlacementTempo = placement?.tempos?.[0] ?? tempoEstimate;
+      const providedStartTimeSec =
+        typeof placement?.startTimeSec === "number" && Number.isFinite(placement.startTimeSec)
+          ? placement.startTimeSec
+          : null;
+      const derivedStartTimeSec =
+        placementStartMeasure > 0 && Number.isFinite(fallbackPlacementTempo) && fallbackPlacementTempo > 0
+          ? (placementStartMeasure * 60 * placementBeatsPerBar) / fallbackPlacementTempo
+          : 0;
+      const startOffsetSec = (() => {
+        if (
+          providedStartTimeSec !== null &&
+          (placementStartMeasure <= 4 || providedStartTimeSec > 0.5)
+        ) {
+          return providedStartTimeSec;
+        }
+        if (derivedStartTimeSec > 0) {
+          console.info(
+            "[MidiDebug] Using derived start time for section",
+            placementStartMeasure,
+            "bars ->",
+            derivedStartTimeSec.toFixed(3),
+            "sec",
+          );
+          return derivedStartTimeSec;
+        }
+        return providedStartTimeSec ?? 0;
+      })();
+
+      let trackMinBar = Number.POSITIVE_INFINITY;
+      for (const rawNote of track.notes) {
+        const note = rawNote as Record<string, any>;
+        const barValue = readNoteNumber(note, ["barIndex", "bar_index", "bar"], 0);
+        if (Number.isFinite(barValue) && barValue < trackMinBar) {
+          trackMinBar = barValue;
+        }
+      }
+      const usesAbsoluteBars =
+        Number.isFinite(trackMinBar) && Number.isFinite(placementStartMeasure)
+          ? trackMinBar >= placementStartMeasure - 0.5
+          : false;
+      const barBase = usesAbsoluteBars ? placementStartMeasure : 0;
+
+      return track.notes.map((rawNote, idx) => {
+        const note = rawNote as Record<string, any>;
+        const resolvedBar = readNoteNumber(note, ["barIndex", "bar_index", "bar"], 0);
+        const relativeBar = Math.max(0, resolvedBar - barBase);
+        const tickInBar = readNoteNumber(
+          note,
+          ["tickInBar", "tick_in_bar", "tick", "tickIndex", "tick_index", "tickOffset", "tick_offset"],
+          0,
+        );
+        const totalTicks = relativeBar * ticksPerBar + Math.max(0, tickInBar);
+        const rawRelativeTimeSec = readNoteNumber(
+          note,
+          [
+            "timeSec",
+            "time_sec",
+            "seconds",
+            "second",
+            "timeSeconds",
+            "time_seconds",
+            "relativeTime",
+            "relative_time",
+          ],
+          Number.NaN,
+        );
+        const rawAbsoluteTimeSec = readNoteNumber(
+          note,
+          ["absoluteTimeSec", "absTimeSec", "absolute_time_sec", "abs_time_sec"],
+          Number.NaN,
+        );
+        const rawDurationSec = readNoteNumber(
+          note,
+          [
+            "durationSec",
+            "duration_sec",
+            "durationSeconds",
+            "lengthSec",
+            "length_sec",
+            "secondsLength",
+            "seconds_length",
+          ],
+          Number.NaN,
+        );
+        const rawEndTimeSec = readNoteNumber(
+          note,
+          ["endTimeSec", "end_time_sec", "timeEndSec", "time_end_sec"],
+          Number.NaN,
+        );
+        const microTimingMs = readNoteNumber(
+          note,
+          ["microTimingMs", "micro_timing_ms", "timingOffsetMs", "timing_offset_ms"],
+          0,
+        );
+        const microTimingSec = Number.isFinite(microTimingMs) ? microTimingMs / 1000 : 0;
+
+        const computedTime = startOffsetSec + (totalTicks / ticksPerBeat) * secondsPerBeat;
+        const fallbackTime = Number.isFinite(rawAbsoluteTimeSec)
+          ? rawAbsoluteTimeSec
+          : Number.isFinite(rawRelativeTimeSec)
+            ? startOffsetSec + rawRelativeTimeSec
+            : Number.NaN;
+        const shouldUseFallbackTime =
+          Number.isFinite(fallbackTime) &&
+          (!Number.isFinite(totalTicks) || (totalTicks === 0 && fallbackTime > computedTime + 1e-4));
+        const timeBaseRaw = shouldUseFallbackTime ? fallbackTime : computedTime;
+        const timeBase = Number.isFinite(timeBaseRaw) ? timeBaseRaw : startOffsetSec;
+        const time = timeBase + microTimingSec;
+
+        const tickLength = readNoteNumber(
+          note,
+          ["tickLength", "tick_length", "durationTicks", "duration_ticks", "tickLen", "tick_len"],
+          ticksPerBeat / 4,
+        );
+        const computedDuration = Math.max(0, (tickLength / ticksPerBeat) * secondsPerBeat);
+        let duration = Math.max(0.03, computedDuration);
+        if ((duration <= 0.031 || !Number.isFinite(duration)) && Number.isFinite(rawDurationSec) && rawDurationSec > 0) {
+          duration = Math.max(0.03, rawDurationSec);
+        } else if ((duration <= 0.031 || !Number.isFinite(duration)) && Number.isFinite(rawEndTimeSec)) {
+          const durationBaseline = Number.isFinite(fallbackTime) ? fallbackTime : timeBase;
+          const durationFallback = rawEndTimeSec - durationBaseline;
+          if (durationFallback > 0) {
+            duration = Math.max(0.03, durationFallback);
+          }
+        }
+        const instrumentId = (readNoteString(note, [
+          "instrumentId",
+          "instrument_id",
+          "instrument",
+        ], "snare_center") as DrumInstrumentId) ?? "snare_center";
+        const laneName = readNoteString(note, ["lane", "drumLane", "lane_id"], undefined);
+        const lane = laneName || mapInstrumentToLane(instrumentId);
+        const primaryLimb = coerceSupportedLimb(
+          (readNoteString(note, ["limbId", "limb_id", "limb"], undefined) as LimbId | null) ?? undefined,
+        );
+        const inferredLimb = inferLimbFromInstrument(instrumentId) ?? inferLimbFromLane(lane) ?? undefined;
+        const limbId = primaryLimb ?? inferredLimb ?? undefined;
+        return {
+          id: readNoteString(note, ["id", "noteId", "note_id"], undefined) ?? `dcsm-${Date.now()}-${idx}`,
+          time,
+          duration,
+          lane,
+          vel: normalizeVelocity(
+            readNoteNumber(note, ["velocity", "vel", "midiVelocity", "midi_velocity"], 96),
+          ),
+          aspect: coerceNoteAspect(readNoteString(note, ["aspect"], undefined)),
+          phraseMarker: readNoteString(note, ["phraseMarker", "phrase_marker"], undefined) ?? undefined,
+          rudimentId: readNoteString(note, ["rudimentId", "rudiment_id"], undefined) ?? undefined,
+          limbId,
+        };
+      });
+    },
+    [bpm, timeSig],
+  );
+
+  const convertTrackToMidiClipNotes = useCallback(
+    (track: DrumTrackForDCSM): MidiClipNote[] => {
+      if (!track?.notes?.length) {
+        return [];
+      }
+      const sourceResolution = Number(track.resolution_ppq) > 0 ? Number(track.resolution_ppq) : 960;
+      const targetPpq = midiSong.ppq || 480;
+      const ratio = targetPpq / sourceResolution;
+      const ticksPerBarSource = beatsPerBar * sourceResolution;
+      const stamp = Date.now();
+
+      return track.notes.map((rawNote, idx) => {
+        const note = rawNote as Record<string, any>;
+        const barIndex = readNoteNumber(note, ["barIndex", "bar_index", "bar"], 0);
+        const tickInBar = readNoteNumber(
+          note,
+          ["tickInBar", "tick_in_bar", "tick", "tickIndex", "tick_index", "tickOffset", "tick_offset"],
+          0,
+        );
+        const tickLength = readNoteNumber(
+          note,
+          ["tickLength", "tick_length", "durationTicks", "duration_ticks", "tickLen", "tick_len"],
+          sourceResolution / 4,
+        );
+        const absoluteSourceTicks = barIndex * ticksPerBarSource + tickInBar;
+        const startTick = Math.max(0, Math.round(absoluteSourceTicks * ratio));
+        const endTick = startTick + Math.max(1, Math.round(tickLength * ratio));
+        const pitch = Math.round(
+          readNoteNumber(
+            note,
+            ["midiPitch", "midi_pitch", "pitch", "note", "midi"],
+            DRUM_INSTRUMENT_MIDI_MAP.snare_center,
+          ),
+        );
+        const velocity = Math.max(
+          1,
+          Math.min(127, Math.round(readNoteNumber(note, ["velocity", "vel", "midiVelocity", "midi_velocity"], 96))),
+        );
+        return {
+          id: readNoteString(note, ["id", "noteId", "note_id"], undefined) || `dcsm-midi-${stamp}-${idx}`,
+          t0: startTick,
+          t1: endTick,
+          pitch,
+          vel: velocity,
+          chan: Math.max(0, Math.round(readNoteNumber(note, ["channel", "chan", "midiChannel", "midi_channel"], 10))),
+        };
+      });
+    },
+    [midiSong.ppq, beatsPerBar],
+  );
+
+  const convertLegacyMidiNotesToClip = useCallback(
+    (legacyNotes: any[]): MidiClipNote[] => {
+      if (!Array.isArray(legacyNotes) || !legacyNotes.length) {
+        return [];
+      }
+      const targetPpq = midiSong.ppq || 480;
+      const tempoBpm = midiSong.tempoMap?.[0]?.bpm ?? bpm ?? 120;
+      const ticksPerSecond = (tempoBpm / 60) * targetPpq;
+      const stamp = Date.now();
+
+      return legacyNotes.map((note, idx) => {
+        const startTick = Math.max(0, Math.round(((typeof note?.time === "number" ? note.time : 0) * ticksPerSecond)));
+        const durationSec =
+          typeof note?.length === "number"
+            ? note.length
+            : typeof note?.duration === "number"
+              ? note.duration
+              : 0.25;
+        const endTick = startTick + Math.max(1, Math.round(durationSec * ticksPerSecond));
+        const pitch = typeof note?.note === "number" ? note.note : DRUM_INSTRUMENT_MIDI_MAP.snare_center;
+        const velocity = Math.max(1, Math.min(127, Math.round(typeof note?.velocity === "number" ? note.velocity : 96)));
+        return {
+          id: note?.id || `legacy-midi-${stamp}-${idx}`,
+          t0: startTick,
+          t1: endTick,
+          pitch,
+          vel: velocity,
+          chan: Number(note?.chan ?? 10),
+        };
+      });
+    },
+    [midiSong.ppq, midiSong.tempoMap, bpm],
+  );
+
+  const applyTrackToMidiClip = useCallback(
+    (track?: DrumTrackForDCSM | null, legacyNotes?: any[] | null, placement?: DrumTrackPlacementContext) => {
+      if (!drumTrackId || !drumClipId) {
+        return;
+      }
+      const clip = getMidiClip(drumTrackId, drumClipId);
+      if (!clip) {
+        return;
+      }
+
+      let sectionNotes: MidiClipNote[] = [];
+      if (track?.notes?.length) {
+        sectionNotes = convertTrackToMidiClipNotes(track);
+      } else if (Array.isArray(legacyNotes) && legacyNotes.length) {
+        sectionNotes = convertLegacyMidiNotesToClip(legacyNotes);
+      }
+
+      if (!sectionNotes.length) {
+        return;
+      }
+
+      let mergedNotes = sectionNotes;
+      if (placement && typeof placement.startMeasure === "number" && typeof placement.endMeasure === "number") {
+        const ppq = midiSong.ppq || 480;
+        const beatsPerMeasure = placement.timeSignature?.[0] ?? beatsPerBar;
+        const ticksPerMeasure = ppq * beatsPerMeasure;
+        const rangeStartTick = Math.max(0, Math.round(placement.startMeasure * ticksPerMeasure));
+        const rangeEndTick = Math.max(rangeStartTick, Math.round((placement.endMeasure + 1) * ticksPerMeasure));
+        const existing = Array.isArray(clip.notes) ? clip.notes : [];
+        const preserved = existing.filter((n) => n.t1 <= rangeStartTick || n.t0 >= rangeEndTick);
+        mergedNotes = [...preserved, ...sectionNotes].sort((a, b) => a.t0 - b.t0);
+      }
+
+      updateMidiNotes(drumTrackId, drumClipId, mergedNotes);
+      const clipEndTick = mergedNotes.reduce((max, note) => Math.max(max, note.t1), clip.endTick ?? 0);
+      const updates: Partial<MidiClip> = {
+        endTick: clipEndTick,
+      };
+      if (track) {
+        updates.dcsmTrack = track;
+      }
+      updateMidiClip(drumTrackId, drumClipId, updates);
+    },
+    [
+      drumTrackId,
+      drumClipId,
+      getMidiClip,
+      convertTrackToMidiClipNotes,
+      convertLegacyMidiNotesToClip,
+      updateMidiNotes,
+      updateMidiClip,
+      midiSong.ppq,
+      beatsPerBar,
+    ],
+  );
+
+  const syncSectionMidiNotes = useCallback(
+    (sectionId: string, track: DrumTrackForDCSM, overridePlacement?: DrumTrackPlacementContext) => {
+      if (!sectionId || !track?.notes?.length) {
+        return;
+      }
+      const placement = overridePlacement ?? sectionPlacementContexts[sectionId];
+      const midiNotes = convertTrackToMidiNotes(track, placement);
+      setNotes((prev) => {
+        const existingIds = new Set(sectionNoteIdsRef.current[sectionId] ?? []);
+        const preserved = existingIds.size ? prev.filter((note) => !existingIds.has(note.id)) : prev;
+        return [...preserved, ...midiNotes];
+      });
+      setSectionNoteIds((prev) => ({
+        ...prev,
+        [sectionId]: midiNotes.map((note) => note.id),
+      }));
+    },
+    [convertTrackToMidiNotes, sectionPlacementContexts],
+  );
+
   // NEW: Selected sections for generation
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
+  const hasSectionSelection = selectedSectionIds.size > 0;
   
   // NEW: Full SongMap with bars, meter, enhanced sections
-  const [songMap, setSongMap] = useState<any | null>(null);
+  const [songMap, setSongMap] = useState<SongMapSummary | null>(null);
+
+  const [scratchStyle, setScratchStyle] = useState<string>("rock");
+  const [scratchArrangement, setScratchArrangement] = useState<
+    Array<{ label: string; bars: number }>
+  >([
+    { label: "intro", bars: 4 },
+    { label: "verse", bars: 8 },
+    { label: "chorus", bars: 8 },
+    { label: "verse", bars: 8 },
+    { label: "chorus", bars: 8 },
+    { label: "bridge", bars: 4 },
+    { label: "chorus", bars: 8 },
+    { label: "outro", bars: 4 },
+  ]);
   
   // NEW: Arrangement entry modals
   const [showManualModal, setShowManualModal] = useState(false);
   const [showLookupModal, setShowLookupModal] = useState(false);
+  const [showDrumPlayer, setShowDrumPlayer] = useState(false);
+
+  const [midiMapName, setMidiMapName] = useState<string>("Mixosaurus_EZ_Drummer");
+  const [lastGeneratedMidiBase64, setLastGeneratedMidiBase64] = useState<string | null>(null);
+  const [lastGeneratedMidiLabel, setLastGeneratedMidiLabel] = useState<string | null>(null);
+
+  const [grooveSource, setGrooveSource] = useState<string>("pattern");
+  const [styleGroup, setStyleGroup] = useState<string>("rock");
+  const [lastEgmdPhraseInfo, setLastEgmdPhraseInfo] = useState<any | null>(null);
   
   // NEW: Track arrangement source for conflict handling
   const [arrangementSource, setArrangementSource] = useState<string | null>(null);
-  
+
   // NEW: Drum Builder - measure range selection
   const [selectedMeasureRange, setSelectedMeasureRange] = useState<MeasureRange | null>(null);
+  const buildScratchSong = useCallback(() => {
+    const resolvedBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+    const beatsPerBarLocal = timeSig[0] || 4;
+    const secondsPerBeat = 60 / resolvedBpm;
+    const secondsPerBar = secondsPerBeat * beatsPerBarLocal;
+
+    const cleaned = scratchArrangement
+      .map((row) => ({
+        label: (row.label || "section").toLowerCase(),
+        bars: Math.max(1, Math.floor(row.bars || 1)),
+      }))
+      .filter((row) => row.bars > 0);
+
+    let t = 0;
+    let barCursor = 0;
+    const nextSections: Section[] = cleaned.map((row, idx) => {
+      const dur = row.bars * secondsPerBar;
+      const start = t;
+      const end = t + dur;
+      const startBarIndex = barCursor;
+      const endBarIndex = barCursor + row.bars - 1;
+      t = end;
+      barCursor = endBarIndex + 1;
+      return {
+        id: `scratch-${idx}-${Date.now()}`,
+        start,
+        end,
+        density: 0.7,
+        fillIn: idx > 0,
+        fillOut: idx < cleaned.length - 1,
+        label: row.label,
+        confidence: 1.0,
+        tempo: resolvedBpm,
+        startBarIndex,
+        endBarIndex,
+        barCount: row.bars,
+        timeSignature: timeSig,
+      };
+    });
+
+    const totalBars = Math.max(1, barCursor);
+    const bars = Array.from({ length: totalBars }).map(() => ({ tempo_bpm: resolvedBpm }));
+    const beatTimes = Array.from({ length: totalBars * beatsPerBarLocal + 1 }).map((_, i) => i * secondsPerBeat);
+
+    setSongMap({
+      duration: totalBars * secondsPerBar,
+      globalBpmEstimate: resolvedBpm,
+      meter: timeSig,
+      bars,
+      sections: nextSections,
+      beatTimes,
+      source: "scratch",
+      title: "Untitled",
+      artist: "",
+    });
+
+    setSections(nextSections);
+    setSelectedSectionIds(new Set());
+    setSelectedMeasureRange(null);
+    if (nextSections.length) {
+      const first = nextSections[0];
+      setSelectedSectionIds(new Set([first.id]));
+      setSelectedMeasureRange(
+        sectionToMeasureRange(first, resolvedBpm, timeSig, {
+          meter: timeSig,
+          bars,
+          beatTimes,
+        }),
+      );
+    }
+  }, [bpm, scratchArrangement, timeSig]);
+
   const [generatingDrums, setGeneratingDrums] = useState(false);
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [fullSongStatus, setFullSongStatus] = useState<
+    { type: 'progress' | 'success' | 'error'; message: string } | null
+  >(null);
+  const [fullSongProgress, setFullSongProgress] = useState<{ completed: number; total: number }>({
+    completed: 0,
+    total: 0,
+  });
+  const sectionTrackIds = useMemo(() => Object.keys(sectionDrumTracks ?? {}), [sectionDrumTracks]);
+
+  const fullSongDrumTrack = useMemo(() => {
+    const keys = Object.keys(sectionDrumTracks ?? {}).filter(
+      (k) => k !== "__global__" && k !== "full-song",
+    );
+    if (!keys.length) {
+      return null;
+    }
+    const tracksToMerge = keys
+      .map((k) => sectionDrumTracks[k])
+      .filter((t): t is DrumTrackForDCSM => Boolean(t && Array.isArray(t.notes) && t.notes.length));
+    if (!tracksToMerge.length) {
+      return null;
+    }
+    const base = tracksToMerge[0];
+    return {
+      ...base,
+      track_id: "full-song",
+      notes: tracksToMerge.flatMap((t) => t.notes ?? []),
+    } satisfies DrumTrackForDCSM;
+  }, [sectionDrumTracks]);
+  const activeSectionId =
+    selectedMeasureRange?.sectionId === "full-song"
+      ? "full-song"
+      : selectedMeasureRange?.sectionId && sectionDrumTracks[selectedMeasureRange.sectionId]
+        ? selectedMeasureRange.sectionId
+        : sectionTrackIds.length > 0
+          ? sectionTrackIds[0]
+          : null;
+  const activeDrumTrack =
+    activeSectionId === "full-song"
+      ? fullSongDrumTrack
+      : activeSectionId && sectionDrumTracks[activeSectionId]
+        ? sectionDrumTracks[activeSectionId]
+        : null;
+  const activeGrooveMap =
+    activeSectionId && sectionGrooveMaps[activeSectionId]
+      ? sectionGrooveMaps[activeSectionId]
+      : undefined;
+  const fallbackPlacementContext = useMemo(() => {
+    if (!selectedMeasureRange) {
+      return undefined;
+    }
+    return {
+      startMeasure: selectedMeasureRange.startMeasure,
+      endMeasure: selectedMeasureRange.endMeasure,
+      tempos: selectedMeasureRange.tempos,
+      timeSignature: selectedMeasureRange.timeSignature,
+      startTimeSec: selectedMeasureRange.startTime,
+    } satisfies DrumTrackPlacementContext;
+  }, [selectedMeasureRange]);
+
+  const activePlacementContext = useMemo(() => {
+    if (!activeSectionId) {
+      return fallbackPlacementContext;
+    }
+    return sectionPlacementContexts[activeSectionId] ?? fallbackPlacementContext;
+  }, [activeSectionId, sectionPlacementContexts, fallbackPlacementContext]);
+  const activeSelectionId = selectedMeasureRange?.sectionId ?? null;
+
+  useEffect(() => {
+    console.log("[DrumUI] debug", {
+      selectedSectionId: selectedMeasureRange?.sectionId ?? null,
+      activeSectionId,
+      hasActiveDrumTrack: !!activeDrumTrack,
+      trackKeys: sectionTrackIds,
+      notesCount: notes.length,
+    });
+  }, [selectedMeasureRange?.sectionId, activeSectionId, activeDrumTrack, sectionTrackIds, notes.length]);
+
+  useEffect(() => {
+    if (!selectedMeasureRange) {
+      console.log("[MidiDebug] No selectedMeasureRange; notes length:", notes.length);
+      return;
+    }
+
+    const rangeStart = selectedMeasureRange.startTime ?? 0;
+    const rangeEnd = selectedMeasureRange.endTime ?? rangeStart;
+    const toSummary = (note: PianoRollNote) => ({
+      id: note.id,
+      time: Number(note.time?.toFixed?.(3) ?? note.time ?? 0),
+      duration: Number(note.duration?.toFixed?.(3) ?? note.duration ?? 0),
+      lane: note.lane,
+      limbId: note.limbId ?? null,
+    });
+    const inRange = notes.filter((note) => {
+      const start = note.time ?? 0;
+      return start >= rangeStart && start <= rangeEnd;
+    });
+    const times = notes.map((note) => note.time ?? 0);
+    const minTime = times.length ? Math.min(...times) : null;
+    const maxTime = times.length ? Math.max(...times) : null;
+
+    console.log("[MidiDebug] notes", {
+      total: notes.length,
+      minTime,
+      maxTime,
+      rangeStart,
+      rangeEnd,
+      inRangeCount: inRange.length,
+      sampleInRange: inRange.slice(0, 5).map(toSummary),
+    });
+  }, [notes, selectedMeasureRange]);
+
+  useEffect(() => {
+    if (!tracks.length) {
+      return;
+    }
+    console.log(
+      "[WaveDebug] Tracks",
+      tracks.map((track) => ({
+        key: track.key,
+        seconds: track.seconds,
+        peaksLen: track.peaks?.length ?? 0,
+        sr: track.sr,
+      })),
+    );
+  }, [tracks]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const maxTrackSeconds = tracks.reduce((max, track) => {
+      const seconds = typeof track.seconds === "number" ? track.seconds : 0;
+      return Math.max(max, seconds);
+    }, 0);
+    const maxSectionEnd = sections.reduce((max, section) => {
+      const end = typeof section.end === "number" ? section.end : 0;
+      return Math.max(max, end);
+    }, 0);
+    (window as any).__DTK_STATE__ = {
+      tracksCount: tracks.length,
+      sectionsCount: sections.length,
+      notesCount: notes.length,
+      sectionTrackKeys: Object.keys(sectionDrumTracks ?? {}),
+      activeSectionId,
+      selectedSectionId: selectedMeasureRange?.sectionId ?? null,
+      timelineDurationSec: Math.max(10, maxTrackSeconds, maxSectionEnd, 0),
+      sections: sections.slice(0, 50).map((section) => ({
+        id: section.id,
+        start: section.start,
+        end: section.end,
+        label: section.label,
+      })),
+    };
+  }, [tracks, sections, notes.length, sectionDrumTracks, activeSectionId, selectedMeasureRange?.sectionId]);
+
+  useEffect(() => {
+    if (!selectedMeasureRange?.sectionId) {
+      lastSectionSyncSignatureRef.current = null;
+      return;
+    }
+
+    const sectionId = selectedMeasureRange.sectionId;
+    const track = sectionDrumTracks[sectionId];
+    if (!track) {
+      lastSectionSyncSignatureRef.current = null;
+      return;
+    }
+
+    const placement = activePlacementContext ?? fallbackPlacementContext;
+    if (!placement) {
+      return;
+    }
+
+    const noteCount = track.notes?.length ?? 0;
+    const lastNoteId = noteCount > 0 ? track.notes[noteCount - 1]?.id ?? `idx-${noteCount - 1}` : "none";
+    const placementKeyParts = [
+      placement.startMeasure ?? 0,
+      placement.endMeasure ?? 0,
+      placement.startTimeSec ?? 0,
+      Array.isArray(placement.tempos) ? placement.tempos.join(",") : "",
+      placement.timeSignature ? placement.timeSignature.join("/") : "",
+    ];
+    const signature = [
+      sectionId,
+      track.track_id ?? "track",
+      noteCount,
+      lastNoteId,
+      placementKeyParts.join("|"),
+    ].join(":");
+
+    if (lastSectionSyncSignatureRef.current === signature) {
+      return;
+    }
+
+    lastSectionSyncSignatureRef.current = signature;
+    syncSectionMidiNotes(sectionId, track, placement);
+  }, [selectedMeasureRange?.sectionId, sectionDrumTracks, activePlacementContext, fallbackPlacementContext, syncSectionMidiNotes]);
+
+  const ensureSectionSelection = useCallback(
+    (sectionId: string | null | undefined) => {
+      if (!sectionId) {
+        return;
+      }
+      setSelectedSectionIds((prev) => {
+        if (prev.size > 0) {
+          return prev;
+        }
+        return new Set([sectionId]);
+      });
+      setSelectedMeasureRange((prev) => {
+        if (prev) {
+          return prev;
+        }
+        const targetSection = sections.find((s) => s.id === sectionId);
+        return targetSection ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap) : prev;
+      });
+    },
+    [sections, bpm, timeSig, songMap],
+  );
+
+
+  const handleClearAudio = useCallback(() => {
+    if (!tracks.length) {
+      return;
+    }
+    const confirmed = window.confirm("Remove all uploaded audio, sections, and drum edits?");
+    if (!confirmed) {
+      return;
+    }
+    setTracks([]);
+    setSections([]);
+    setNotes([]);
+    setSectionDrumTracks({});
+    setSectionGrooveMaps({});
+    setSectionPlacementContexts({});
+    setSectionNoteIds({});
+    setSelectedSectionIds(new Set());
+    setSelectedMeasureRange(null);
+    setSongMap(null);
+    setArrangementSource(null);
+    setErr(null);
+  }, [tracks.length]);
+
+  const downloadJson = useCallback((data: unknown, filename: string) => {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (downloadErr) {
+      console.warn("[DebugExport] Failed to create JSON download", downloadErr);
+      alert("Unable to export debug payload; see console for details.");
+    }
+  }, []);
+
+  const exportActiveDrumDebug = useCallback(() => {
+    const sectionId = selectedMeasureRange?.sectionId ?? activeSectionId ?? null;
+    if (!sectionId) {
+      alert("Select a section before exporting drum debug data.");
+      return;
+    }
+    const track = sectionDrumTracks[sectionId];
+    if (!track) {
+      alert("No drum track data is available for the selected section yet.");
+      return;
+    }
+    const placement = sectionPlacementContexts[sectionId];
+    const selectedRange = selectedMeasureRange && selectedMeasureRange.sectionId === sectionId
+      ? selectedMeasureRange
+      : null;
+    const noteIds = new Set(sectionNoteIds[sectionId] ?? []);
+    const sectionNotes = noteIds.size ? notes.filter((note) => noteIds.has(note.id)) : [];
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      sectionId,
+      placement,
+      selectedRange,
+      track,
+      sectionNotes,
+      stats: {
+        trackNotes: track.notes?.length ?? 0,
+        sectionNotes: sectionNotes.length,
+      },
+    };
+    downloadJson(payload, `drum-debug-${sectionId}-${Date.now()}.json`);
+  }, [
+    selectedMeasureRange,
+    activeSectionId,
+    sectionDrumTracks,
+    sectionPlacementContexts,
+    sectionNoteIds,
+    notes,
+    downloadJson,
+  ]);
+  
+  const injectDebugTestGroove = useCallback(() => {
+    if (!selectedMeasureRange) {
+      console.warn("[DebugTestGroove] No section selected; select a section before injecting the pattern.");
+      return;
+    }
+
+    const baseBar = selectedMeasureRange.startMeasure ?? 0;
+    const targetSectionId = selectedMeasureRange.sectionId ?? "__debug__";
+    const beatsPerBarForSection = selectedMeasureRange.timeSignature?.[0] ?? timeSig[0] ?? 4;
+    const barsToCover = Math.max(1, Math.min(2, selectedMeasureRange.measureCount || 2));
+    const ticksPerBeat = 960;
+    const debugNotes: DrumNoteEvent[] = [];
+    const stamp = Date.now();
+
+    const addNote = (
+      barOffset: number,
+      beatIndex: number,
+      instrumentId: DrumInstrumentId,
+      velocity = 0.95,
+    ) => {
+      const barIndex = baseBar + barOffset;
+      const tickInBar = Math.max(0, Math.round(beatIndex * ticksPerBeat));
+      const tickLength = Math.max(60, Math.round(ticksPerBeat * 0.95));
+      const midiPitch = DRUM_INSTRUMENT_MIDI_MAP[instrumentId] ?? DRUM_INSTRUMENT_MIDI_MAP.snare_center;
+      const midiVelocity = Math.max(1, Math.min(127, Math.round(velocity * 127)));
+      const limbId = inferLimbFromInstrument(instrumentId) ?? inferLimbFromLane(instrumentId) ?? null;
+
+      debugNotes.push({
+        id: `debug-${targetSectionId}-${stamp}-${debugNotes.length}`,
+        barIndex,
+        tickInBar,
+        tickLength,
+        channel: 9,
+        midiPitch,
+        velocity: midiVelocity,
+        instrumentId,
+        limbId: limbId ?? undefined,
+        isGhost: midiVelocity <= 40,
+        isAccent: midiVelocity >= 110,
+        isFlam: false,
+        isDrag: false,
+      });
+    };
+
+    for (let barOffset = 0; barOffset < barsToCover; barOffset += 1) {
+      for (let beat = 0; beat < beatsPerBarForSection; beat += 1) {
+        addNote(barOffset, beat, "kick", 0.98);
+        addNote(barOffset, beat, "hihat_closed", 0.7);
+        if (beat === 1 || beat === 3) {
+          addNote(barOffset, beat, "snare_center", 0.9);
+        }
+      }
+    }
+
+    const debugTrack: DrumTrackForDCSM = {
+      track_id: `debug-${targetSectionId}-${stamp}`,
+      style_id: "debug",
+      resolution_ppq: ticksPerBeat,
+      notes: debugNotes,
+      performance_spec: {
+        styleId: "debug",
+        globalFeel: "straight",
+        quantizationBase: "16th",
+        phrases: [],
+      },
+    };
+
+    setSectionDrumTracks((prev) => ({
+      ...prev,
+      [targetSectionId]: debugTrack,
+    }));
+
+    const placement = activePlacementContext ?? fallbackPlacementContext;
+    if (placement) {
+      syncSectionMidiNotes(targetSectionId, debugTrack, placement);
+    } else {
+      syncSectionMidiNotes(targetSectionId, debugTrack);
+    }
+
+    applyTrackToMidiClip(debugTrack);
+    ensureSectionSelection(targetSectionId);
+    setDebugDrumGen({
+      payloadSectionId: targetSectionId,
+      hasDrumTrack: true,
+      drumTrackNotes: debugNotes.length,
+      hasLegacyNotes: false,
+      legacyNotesCount: 0,
+    });
+    console.log(
+      `[DebugTestGroove] Injected ${debugNotes.length} notes into section ${targetSectionId} starting at bar ${baseBar}`,
+    );
+  }, [
+    selectedMeasureRange,
+    timeSig,
+    activePlacementContext,
+    fallbackPlacementContext,
+    syncSectionMidiNotes,
+    applyTrackToMidiClip,
+    ensureSectionSelection,
+    setSectionDrumTracks,
+    setDebugDrumGen,
+  ]);
+  const sectionDebugSummaries = useMemo(() => {
+    return Object.entries(sectionDrumTracks ?? {}).map(([id, track]) => {
+      const summary = track ? summarizeDrumTrack(track) : summarizeDrumTrack({ notes: [] } as any);
+      return {
+        id,
+        noteCount: summary.noteCount,
+        minBar: summary.minBar,
+        maxBar: summary.maxBar,
+        instruments: summary.instruments,
+        barCount: typeof (track as any)?.barCount === "number" ? (track as any).barCount : null,
+        trackId: (track as any)?.track_id ?? null,
+      };
+    });
+  }, [sectionDrumTracks]);
+
+  useEffect(() => {
+    if (!fullSongStatus) {
+      setFullSongProgress({ completed: 0, total: 0 });
+      return;
+    }
+    if (fullSongStatus.type !== 'progress') {
+      const timer = window.setTimeout(() => setFullSongStatus(null), 6000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [fullSongStatus]);
   
   // Comprehensive drum options
   const [drumOptions, setDrumOptions] = useState<DrumOptions>({
@@ -128,6 +1918,66 @@ export default function WebDAWApp() {
     bass_line_mode: 'auto', bass_kick_sync: 0.7, bass_lock_downbeats: true,
     tom_usage: 0.3, crash_frequency: 0.2, ghost_note_density: 0.2, dynamic_range: 0.5
   });
+
+  useEffect(() => {
+    if (!selectedMeasureRange) {
+      return;
+    }
+    const normalizedLabel = selectedMeasureRange.sectionLabel
+      ?.toLowerCase()
+      ?.replace(/[^a-z]/g, "");
+    const derivedBpm = Math.round(selectedMeasureRange.avgTempo || bpm || 120);
+    const derivedBars = Math.max(1, selectedMeasureRange.measureCount);
+
+    setDrumOptions((prev) => {
+      const nextLabel = normalizedLabel && DRUM_SECTION_LABELS.has(normalizedLabel)
+        ? normalizedLabel
+        : prev.label;
+      if (prev.bpm === derivedBpm && prev.bars === derivedBars && prev.label === nextLabel) {
+        return prev;
+      }
+      return {
+        ...prev,
+        bpm: derivedBpm,
+        bars: derivedBars,
+        label: nextLabel,
+      };
+    });
+  }, [selectedMeasureRange?.sectionId, selectedMeasureRange?.avgTempo, selectedMeasureRange?.measureCount, selectedMeasureRange?.sectionLabel, bpm]);
+
+  useEffect(() => {
+    setDrumOptions((prev) => {
+      const nextBpm = Math.round(bpm || 120);
+      if (prev.bpm === nextBpm) {
+        return prev;
+      }
+      return { ...prev, bpm: nextBpm };
+    });
+  }, [bpm]);
+
+  useEffect(() => {
+    if (!activeSelectionId) {
+      setSelectedMeasureRange(null);
+      return;
+    }
+
+    if (selectedMeasureRange?.sectionId === "full-song") {
+      return;
+    }
+
+    const section = sections.find((s) => s.id === activeSelectionId);
+    if (!section) {
+      setSelectedMeasureRange(null);
+      return;
+    }
+
+    setSelectedMeasureRange((prev) => {
+      if (prev?.sectionId === activeSelectionId) {
+        return prev;
+      }
+      return sectionToMeasureRange(section, bpm, timeSig, songMap);
+    });
+  }, [activeSelectionId, sections, bpm, timeSig, songMap, selectedMeasureRange?.sectionId]);
   
   // Read URL parameters from Professional Tier page
   const [sourceInfo, setSourceInfo] = useState<{source?: string; filename?: string; drummer?: string; fileKey?: string}>({});
@@ -169,6 +2019,142 @@ export default function WebDAWApp() {
 
   const gridSec = useMemo(() => (60 / bpm) * (4 / timeSig[1]) / 16, [bpm, timeSig]); // 1/64
 
+  const timelineDurationSec = useMemo(() => {
+    const trackDurations = tracks.length ? tracks.map((t) => t.seconds || 0) : [0];
+    const waveformDuration = Math.max(...trackDurations, 0);
+    const sectionExtent = sections.length ? Math.max(...sections.map((s) => s.end || 0)) : 0;
+    const loopExtent = loop?.end ?? 0;
+    return Math.max(10, waveformDuration, sectionExtent, loopExtent);
+  }, [tracks, sections, loop]);
+
+  const totalSongBars = useMemo(() => {
+    const beatsPerMeasure = timeSig[0] || 4;
+    const secPerBeat = (60 / Math.max(1, bpm)) * (4 / (timeSig[1] || 4));
+    const secPerBar = secPerBeat * beatsPerMeasure;
+    if (!Number.isFinite(secPerBar) || secPerBar <= 0) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(timelineDurationSec / secPerBar));
+  }, [bpm, timeSig, timelineDurationSec]);
+
+  useEffect(() => {
+    // Ensure we have a midi track + clip set up
+    let ensuredTrackId = drumTrackId;
+    let ensuredClipId = drumClipId;
+
+    const drumsTrack = midiSong.tracks.find((t) => t.kind === "drums" || t.chan === 10);
+    if (drumsTrack) {
+      ensuredTrackId = drumsTrack.id;
+      if (drumsTrack.clips.length > 0) {
+        ensuredClipId = drumsTrack.clips[0].id;
+      }
+    }
+
+    if (!ensuredTrackId) {
+      ensuredTrackId = addMidiTrack({ name: "Drums", kind: "drums", chan: 10 });
+    }
+
+    if (!ensuredClipId && ensuredTrackId) {
+      const ppq = midiSong.ppq || 480;
+      const defaultBars = Math.max(4, totalSongBars ?? selectedMeasureRange?.measureCount ?? 4);
+      const clipEndTick = defaultBars * beatsPerBar * ppq;
+      ensuredClipId = addMidiClip(ensuredTrackId, {
+        name: "Main Groove",
+        startTick: 0,
+        endTick: clipEndTick,
+        notes: [],
+      });
+    }
+
+    if (ensuredTrackId && ensuredTrackId !== drumTrackId) {
+      setDrumTrackId(ensuredTrackId);
+    }
+    if (ensuredClipId && ensuredClipId !== drumClipId) {
+      setDrumClipId(ensuredClipId);
+    }
+  }, [
+    midiSong.tracks,
+    midiSong.ppq,
+    addMidiTrack,
+    addMidiClip,
+    drumTrackId,
+    drumClipId,
+    beatsPerBar,
+    selectedMeasureRange?.measureCount,
+    totalSongBars,
+  ]);
+
+  const pixelsPerSecond = useMemo(() => {
+    const beatsPerSecond = bpm > 0 ? bpm / 60 : 120 / 60;
+    return gridPixelsPerBeat * beatsPerSecond;
+  }, [bpm, gridPixelsPerBeat]);
+
+  const scrollTimelineTo = useCallback((targetPx: number) => {
+    const el = timelineScrollRef.current;
+    if (!el) return;
+    el.scrollLeft = Math.max(0, targetPx);
+  }, []);
+
+  const scrollToTime = useCallback((seconds: number) => {
+    if (!Number.isFinite(seconds)) return;
+    scrollTimelineTo(seconds * pixelsPerSecond);
+  }, [pixelsPerSecond, scrollTimelineTo]);
+
+  const scrollToSelectedSection = useCallback(() => {
+    if (!selectedSectionIds.size) return;
+    const firstId = Array.from(selectedSectionIds)[0];
+    const section = sections.find((s) => s.id === firstId);
+    if (!section) return;
+    const el = timelineScrollRef.current;
+    if (!el) {
+      scrollToTime(section.start);
+      return;
+    }
+    const startPx = section.start * pixelsPerSecond;
+    const sectionPx = Math.max(1, (section.end - section.start) * pixelsPerSecond);
+    const centered = Math.max(0, startPx - Math.max(0, (el.clientWidth - sectionPx) / 2));
+    scrollTimelineTo(centered);
+  }, [pixelsPerSecond, scrollTimelineTo, scrollToTime, sections, selectedSectionIds]);
+
+  const handleDebugJumpToSection = useCallback(
+    (sectionId: string) => {
+      if (!sectionId) {
+        return;
+      }
+
+      setSelectedSectionIds(new Set([sectionId]));
+
+      const targetSection = sections.find((s) => s.id === sectionId);
+      if (targetSection) {
+        const nextRange = sectionToMeasureRange(targetSection, bpm, timeSig, songMap);
+        setSelectedMeasureRange(nextRange);
+      } else {
+        console.warn("[DebugJump] No Section object found for", sectionId);
+      }
+
+      scrollToSelectedSection();
+    },
+    [sections, bpm, timeSig, songMap, scrollToSelectedSection, setSelectedSectionIds, setSelectedMeasureRange],
+  );
+
+  const scrollToPlayhead = useCallback(() => {
+    scrollToTime(playhead);
+  }, [playhead, scrollToTime]);
+
+  const handleScrollSlider = useCallback(
+    (percent: number) => {
+      const ratio = percent / 100;
+      setScrollRatio(ratio, null);
+      setScrollPercent(percent);
+    },
+    [setScrollRatio],
+  );
+
+  const onScrollSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const next = Number(event.target.value);
+    handleScrollSlider(next);
+  }, [handleScrollSlider]);
+
   useEffect(() => {
     let raf = 0; let last = performance.now();
     function tick(now: number) { const dt=(now-last)/1000; last=now; if (playing) setPlayhead(p=>p+dt); raf=requestAnimationFrame(tick);} 
@@ -178,10 +2164,79 @@ export default function WebDAWApp() {
   useEffect(() => { Engine.setBpm(bpm); }, [bpm]);
   useEffect(() => { Engine.setLoop(loop.start, loop.end, loop.enabled); }, [loop]);
   useEffect(() => {
-    const API_BASE = (window as any).__API_BASE__ || process.env.REACT_APP_API_BASE || "http://localhost:8000";
-    const urls = tracks.map(t => ({ key: t.key, url: `${String(API_BASE).replace(/\/$/, "")}/files/audio?key=${encodeURIComponent(t.key)}` }));
+    const apiBase = resolveApiBaseNormalized();
+    const urls = tracks.map(t => ({ key: t.key, url: `${apiBase}/files/audio?key=${encodeURIComponent(t.key)}` }));
     Engine.refreshTracks(urls);
   }, [tracks]);
+
+  useEffect(() => {
+    let attachRaf: number | null = null;
+    let scrollRaf: number | null = null;
+    let cleanup: (() => void) | null = null;
+
+    const ratioFor = (el: HTMLElement) => {
+      const max = getMaxScroll(el);
+      if (!Number.isFinite(max) || max <= 0) return 0;
+      return Math.min(1, Math.max(0, el.scrollLeft / max));
+    };
+
+    const updatePercentFrom = (el: HTMLElement) => {
+      const ratio = ratioFor(el);
+      const pct = ratio * 100;
+      setScrollPercent((prev) => (Math.abs(prev - pct) < 0.25 ? prev : pct));
+    };
+
+    const attachIfReady = () => {
+      const timelineEl = timelineScrollRef.current;
+      const pianoEl = pianoRollScrollRef.current;
+      if (!timelineEl || !pianoEl) {
+        attachRaf = window.requestAnimationFrame(attachIfReady);
+        return;
+      }
+      if (cleanup) {
+        return;
+      }
+
+      const onScroll = (source: HTMLElement) => {
+        if (scrollSyncStateRef.current.isSyncing) {
+          updatePercentFrom(source);
+          return;
+        }
+        if (scrollRaf) return;
+        scrollRaf = window.requestAnimationFrame(() => {
+          scrollRaf = null;
+          const ratio = ratioFor(source);
+          setScrollRatio(ratio, source);
+          updatePercentFrom(source);
+        });
+      };
+
+      const onTimeline = () => onScroll(timelineEl);
+      const onPiano = () => onScroll(pianoEl);
+
+      updatePercentFrom(timelineEl);
+
+      timelineEl.addEventListener("scroll", onTimeline, { passive: true });
+      pianoEl.addEventListener("scroll", onPiano, { passive: true });
+
+      cleanup = () => {
+        timelineEl.removeEventListener("scroll", onTimeline);
+        pianoEl.removeEventListener("scroll", onPiano);
+      };
+    };
+
+    attachIfReady();
+
+    return () => {
+      if (attachRaf) {
+        window.cancelAnimationFrame(attachRaf);
+      }
+      if (scrollRaf) {
+        window.cancelAnimationFrame(scrollRaf);
+      }
+      cleanup?.();
+    };
+  }, [getMaxScroll, setScrollRatio]);
   
   // CRITICAL FIX: Only seek when NOT playing (manual seek only)
   // Don't seek during playback - it causes audio distortion!
@@ -194,31 +2249,21 @@ export default function WebDAWApp() {
   async function addFile(file: File) {
     setBusy(true); setErr(null);
     try {
-      // Upload file and get waveform
+      // Upload file and request waveform metadata
       const { waveform } = await webdawApi.fullWorkflow(file);
-      const colorPool = ["#60a5fa", "#22d3ee", "#a78bfa", "#34d399", "#f59e0b", "#ef4444"];
-      const color = colorPool[tracks.length % colorPool.length];
-      const seconds = (waveform as any).duration ?? Math.max(1, waveform.peaks.length / 44_100);
-      
-      // Add track to display with stereo data if available
-      const trackData: any = { 
-        key: waveform.key, 
-        peaks: waveform.peaks, 
-        sr: waveform.sr, 
-        seconds, 
-        color, 
-        name: file.name 
-      };
-      
-      // Add stereo data if present
-      if (waveform.peaksL && waveform.peaksR) {
-        trackData.peaksL = waveform.peaksL;
-        trackData.peaksR = waveform.peaksR;
-      } else {
-        console.warn('⚠️ No stereo data in waveform response:', Object.keys(waveform));
+      if (!waveform?.key) {
+        throw new Error("Upload succeeded but waveform metadata was missing");
       }
-      
-      setTracks((t) => [...t, trackData]);
+
+      const hydratedTrack = await buildTrackFromWaveform({
+        key: waveform.key,
+        name: file.name,
+        color: pickTrackColor(tracks.length),
+        initialWaveform: waveform,
+        preferFreshWaveform: true,
+      });
+
+      setTracks((t) => [...t, hydratedTrack]);
       
       // Analyze tempo automatically
       try {
@@ -262,64 +2307,14 @@ export default function WebDAWApp() {
     try {
       console.log('Loading file from key:', fileKey);
       
-      // Fetch waveform data from backend using the file key
-      const API_BASE = (window as any).__API_BASE__ || process.env.REACT_APP_API_BASE || "http://localhost:8000";
-      const response = await fetch(`${API_BASE}/waveform?key=${encodeURIComponent(fileKey)}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to load waveform');
-      }
-      
-      const waveform = await response.json();
-      const colorPool = ["#60a5fa", "#22d3ee", "#a78bfa", "#34d399", "#f59e0b", "#ef4444"];
-      const color = colorPool[tracks.length % colorPool.length];
-      const seconds = (waveform as any).duration ?? Math.max(1, waveform.peaks.length / 44_100);
-      
-      // Add track to display - check again to prevent race condition
-      setTracks((t) => {
-        if (t.some(track => track.key === fileKey)) {
-          console.log('Track already in list, not adding');
-          return t;
-        }
-        // Include stereo peaks if available
-        const trackData: any = { 
-          key: fileKey, 
-          peaks: waveform.peaks, 
-          sr: waveform.sr, 
-          seconds, 
-          color, 
-          name: filename 
-        };
-        
-        // Add stereo data if present
-        if (waveform.peaksL && waveform.peaksR) {
-          trackData.peaksL = waveform.peaksL;
-          trackData.peaksR = waveform.peaksR;
-        } else {
-          console.warn('⚠️ No stereo data in waveform response:', Object.keys(waveform));
-        }
-        
-        
-        return [...t, trackData];
+      const hydratedTrack = await buildTrackFromWaveform({
+        key: fileKey,
+        name: filename,
+        color: pickTrackColor(tracks.length),
       });
-      
-      // Analyze tempo automatically
-      try {
-        const { analyzeTempo } = await import('../services/api');
-        const tempoResult = await analyzeTempo(fileKey);
-        if (tempoResult.tempo && tempoResult.tempo > 0) {
-          setBpm(Math.round(tempoResult.tempo));
-          console.log(`Detected tempo: ${tempoResult.tempo} BPM`);
-        }
-      } catch (tempoError: any) {
-        console.warn('Tempo detection failed:', tempoError);
-      }
-      
-      // Auto-sectionize
-      if (fileKey) {
-        setTimeout(() => handleAutoSectionize(fileKey), 500);
-      }
-    } catch (e: any) { 
+
+      setTracks((existing) => [...existing, hydratedTrack]);
+    } catch (e: any) {
       setErr(e?.message || "Failed to load file");
       console.error('Load file error:', e);
     } finally { 
@@ -330,83 +2325,6 @@ export default function WebDAWApp() {
   }
   
   function onDropFiles(list: FileList) { Array.from(list).forEach((f) => addFile(f)); }
-
-  // Generate drum patterns using new DCSM backend with Rust integration
-  async function handleGenerate(s: Section) {
-    setBusy(true);
-    try {
-      // If drummer is selected, use drummer-specific generation
-      if (selectedDrummer) {
-        const response = await fetch('/api/generate_with_drummer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            drummer_id: selectedDrummer.id,
-            bpm,
-            sections: [{
-              start: s.start,
-              end: s.end,
-              fill_in: s.fillIn,
-              fill_out: s.fillOut,
-              label: s.label || 'verse',
-              density: s.density
-            }],
-            song_analysis: {}
-          })
-        });
-        
-        if (!response.ok) {
-          throw new Error('Drummer generation failed');
-        }
-        
-        const result = await response.json();
-        
-        // Convert backend notes to MidiNote format
-        const newNotes: MidiNote[] = result.notes.map((note: any) => ({
-          time: note.time,
-          lane: note.lane,
-          vel: note.vel
-        }));
-        
-        setNotes(n => [...n, ...newNotes]);
-        console.log(`Generated with ${selectedDrummer.display_name}:`, result.params_used);
-      } else {
-        // Fallback to generic generation
-        const result = await generateDrumPattern({
-          bpm,
-          density: s.density,
-          swing: 0.0,
-          humanize: 0.1,
-          seed: Math.floor(Math.random() * 10000),
-          sections: [{
-            start: s.start,
-            end: s.end,
-            fill_in: s.fillIn,
-            fill_out: s.fillOut,
-            density: s.density
-          }]
-        });
-        
-        // Convert backend notes to MidiNote format
-        const newNotes: MidiNote[] = result.notes.map(note => ({
-          time: note.time,
-          lane: note.lane,
-          vel: note.vel
-        }));
-        
-        setNotes(n => [...n, ...newNotes]);
-        
-        // Optional: Handle MIDI export
-        if (result.midi_base64) {
-          console.log("Generated MIDI (Base64):", result.midi_base64);
-        }
-      }
-    } catch (e: any) {
-      setErr(`Generation failed: ${e.message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   // Align selected sections to a track's beats
   async function alignTo(trackKey: string) {
@@ -522,6 +2440,8 @@ export default function WebDAWApp() {
     }
     
     setSections(newSections);
+    setSelectedSectionIds(new Set());
+    setSelectedMeasureRange(null);
     setArrangementSource(sourceName);
     if (newBpm) setBpm(newBpm);
     setErr(null);
@@ -591,39 +2511,117 @@ export default function WebDAWApp() {
   function handleSongLookup(songInfo: SongInfo) {
     console.log('🌐 Song info from internet:', songInfo);
     
-    // Apply song info if sections available
-    if (songInfo.sections && songInfo.sections.length > 0) {
-      const uiSections: Section[] = songInfo.sections.map((s, i) => ({
-        id: `lookup-${Date.now()}-${i}`,
-        start: s.startTime,
-        end: s.endTime,
-        label: s.label,
+    const sanitizedSections = (songInfo.sections || []).filter((section) =>
+      typeof section.startTime === 'number' &&
+      typeof section.endTime === 'number' &&
+      section.endTime > section.startTime
+    );
+
+    const primaryTrackDuration = tracks[0]?.seconds;
+    const lookupDuration = sanitizedSections.length > 0
+      ? sanitizedSections[sanitizedSections.length - 1].endTime
+      : undefined;
+
+    let timelineScale = 1;
+    if (primaryTrackDuration && lookupDuration && lookupDuration > 0) {
+      const diff = Math.abs(primaryTrackDuration - lookupDuration);
+      if (diff > 1.5) {
+        timelineScale = primaryTrackDuration / lookupDuration;
+        console.log(`⚖️ Scaling lookup sections by ${timelineScale.toFixed(3)} to match uploaded audio (${primaryTrackDuration.toFixed(2)}s)`);
+      }
+    }
+
+    if (sanitizedSections.length > 0) {
+      const timestamp = Date.now();
+      const uiSections: Section[] = sanitizedSections.map((section, idx) => ({
+        id: `lookup-${timestamp}-${idx}`,
+        start: section.startTime * timelineScale,
+        end: section.endTime * timelineScale,
+        label: section.label,
         tempo: songInfo.tempo,
         density: 0.7,
-        fillIn: i > 0,
-        fillOut: i < songInfo.sections.length - 1,
-        confidence: 1.0,
-        energy: 0.5,
+        fillIn: idx > 0,
+        fillOut: idx < sanitizedSections.length - 1,
+        confidence: 0.95,
+        energy: 0.6,
       }));
-      
-      applyArrangement(uiSections, `"${songInfo.title}" by ${songInfo.artist}`, songInfo.tempo);
+
+      const applied = applyArrangement(
+        uiSections,
+        `Well Known Song • ${songInfo.title}`,
+        songInfo.tempo
+      );
+
+      if (applied) {
+        const derivedDuration = uiSections[uiSections.length - 1]?.end ?? primaryTrackDuration ?? 0;
+        setSongMap({
+          duration: derivedDuration,
+          globalBpmEstimate: songInfo.tempo,
+          meter: songInfo.timeSignature || [4, 4],
+          sections: uiSections,
+          bars: [],
+          beatTimes: [],
+          source: songInfo.source,
+          title: songInfo.title,
+          artist: songInfo.artist,
+        });
+      }
     } else {
-      // No sections, just apply tempo
+      // No sections, just apply tempo and update map for tempo panel
       setBpm(songInfo.tempo);
+      setSongMap({
+        duration: primaryTrackDuration ?? 0,
+        globalBpmEstimate: songInfo.tempo,
+        meter: songInfo.timeSignature || [4, 4],
+        sections: [],
+        bars: [],
+        beatTimes: [],
+        source: songInfo.source,
+        title: songInfo.title,
+        artist: songInfo.artist,
+      });
       console.log(`✅ Applied tempo from ${songInfo.title}: ${songInfo.tempo} BPM`);
     }
   }
 
-  // NEW: Generate drums for selected measure range
-  async function handleGenerateDrums(config: DrumGenerationConfig) {
-    setGeneratingDrums(true);
+  async function executeDrumGeneration(
+    config: DrumGenerationConfig,
+    options: { suppressSpinner?: boolean } = {}
+  ): Promise<boolean> {
+    const { suppressSpinner = false } = options;
+    if (!suppressSpinner) {
+      setGeneratingDrums(true);
+    }
+    let appliedHighRes = false;
     try {
-      console.log('🥁 Generating drums:', config);
-      
-      const response = await fetch('/api/generate-drums', {
+      let payload: DrumGenerationConfig = config;
+      if (config.sectionId) {
+        try {
+          const brainStore = useBrainPanelStore.getState();
+          const ensuredConfig = await brainStore.ensureSectionConfig(config.sectionId);
+          if (ensuredConfig) {
+            payload = { ...config, brainConfig: ensuredConfig };
+          }
+        } catch (brainErr) {
+          console.warn('Brain config unavailable, continuing without overrides', brainErr);
+        }
+      }
+
+      payload = { ...payload, midiMapName };
+      payload = {
+        ...payload,
+        grooveSource: grooveSource === "egmd_phrases" ? "egmd_phrases" : undefined,
+        styleGroup: grooveSource === "egmd_phrases" ? styleGroup : undefined,
+      };
+      console.log('🥁 Generating drums:', payload);
+
+      const apiBase = resolveApiBaseNormalized();
+      const url = `${apiBase}/api/generate-drums`;
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
+        body: JSON.stringify(payload)
       });
       
       if (!response.ok) {
@@ -633,26 +2631,268 @@ export default function WebDAWApp() {
       
       const result = await response.json();
       console.log(`✅ Drums generated in ${result.metadata.generation_time_ms}ms`);
-      
-      // Add generated MIDI notes to piano roll
-      const newNotes: MidiNote[] = result.midi_notes.map((note: any) => ({
-        id: note.id,
-        time: note.time,
-        duration: note.duration || 0.1,
-        note: note.note,
-        velocity: note.velocity,
-        channel: 9 // Drum channel
-      }));
-      
-      setNotes(prevNotes => [...prevNotes, ...newNotes]);
-      
-      console.log(`🎵 Added ${newNotes.length} drum notes to piano roll`);
+
+      setLastEgmdPhraseInfo(result?.metadata?.egmdPhrase ?? null);
+
+      if (typeof result?.midi_base64 === "string" && result.midi_base64.length > 0) {
+        setLastGeneratedMidiBase64(result.midi_base64);
+        const label = payload.sectionId ? `Drums-${payload.sectionId}` : "Drums";
+        setLastGeneratedMidiLabel(label);
+      }
+
+      let placementContext: DrumTrackPlacementContext | undefined;
+      const sectionId = payload.sectionId;
+      if (sectionId) {
+        const targetSection = sections.find((s) => s.id === sectionId) || null;
+        const currentRange =
+          selectedMeasureRange && selectedMeasureRange.sectionId === sectionId
+            ? selectedMeasureRange
+            : targetSection
+              ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap)
+              : null;
+        const startTimeSec = currentRange?.startTime ?? targetSection?.start ?? 0;
+        placementContext = {
+          startMeasure: payload.startMeasure,
+          endMeasure: payload.endMeasure,
+          tempos: payload.tempos,
+          timeSignature: payload.timeSignature,
+          startTimeSec,
+        };
+        setSectionPlacementContexts((prev) => ({
+          ...prev,
+          [sectionId]: placementContext!,
+        }));
+      }
+      const applied = applyDrumGenerationResult(
+        result,
+        payload,
+        {
+          bpm,
+          timeSig,
+          setSectionDrumTracks,
+          setSectionGrooveMaps,
+          setNotes,
+          syncSectionMidiNotes,
+          ensureSectionSelection,
+          applyTrackToMidiClip,
+          setDebugDrumGen,
+        },
+        {
+          placementContext,
+          convertTrackToMidiNotes,
+          gridSec,
+          hydrateLegacyNote,
+          synthesizeLegacyTrack: (legacyNotes, derivedSectionId, config, fallbackBpmValue) =>
+            synthesizeDrumTrackFromLegacyNotes(
+              legacyNotes,
+              derivedSectionId,
+              config,
+              typeof fallbackBpmValue === "number" && fallbackBpmValue > 0
+                ? fallbackBpmValue
+                : bpm,
+            ),
+        },
+      );
+      appliedHighRes = applied || appliedHighRes;
       
     } catch (e: any) {
       console.error('❌ Drum generation failed:', e);
       setErr(`Drum generation failed: ${e.message}`);
+      throw e;
     } finally {
-      setGeneratingDrums(false);
+      if (!suppressSpinner) {
+        setGeneratingDrums(false);
+      }
+    }
+    return appliedHighRes;
+  }
+
+  async function handleGenerateDrums(config: DrumGenerationConfig) {
+    try {
+      await executeDrumGeneration(config);
+    } catch {
+      // Error already handled inside executeDrumGeneration
+    }
+  }
+
+  function downloadMidiBase64(base64Midi: string, filenameBase: string) {
+    const binStr = window.atob(base64Midi);
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+
+    const blob = new Blob([bytes], { type: "audio/midi" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filenameBase}.mid`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  const buildAutoConfigForSection = (section: Section): DrumGenerationConfig | null => {
+    const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap);
+    if (!measureRange) {
+      return null;
+    }
+
+    const normalizedLabel = section.label?.toLowerCase() ?? 'default';
+    const profile = SECTION_AUTOGEN_PRESETS[normalizedLabel] || SECTION_AUTOGEN_PRESETS.default;
+    const energy = typeof section.energy === 'number' ? section.energy : 0.6;
+
+    const baseIntensity = clamp01(drumOptions.density);
+    const intensity = clamp01(baseIntensity * 0.6 + profile.intensity * 0.4 + (energy - 0.5) * 0.3);
+    const baseVariation = clamp01(drumOptions.dynamic_range ?? drumOptions.humanize ?? 0.5);
+    const variation = clamp01(baseVariation * 0.5 + profile.variation * 0.5);
+    const fillDensity = clamp01(profile.fillDensity ?? drumOptions.fill_density);
+    const fillType = profile.fillType ?? drumOptions.fill_preset ?? 'auto';
+    const swingAmount = clamp01((drumOptions.swing ?? 0) + (profile.swingBoost ?? 0));
+    const ghostAmount = clamp01((drumOptions.ghost_note_density ?? 0.3) + (profile.ghostBoost ?? 0));
+    const fillLocations = (profile.enforceFill || section.fillOut)
+      ? [Math.max(0, measureRange.measureCount - 1)]
+      : [];
+
+    const rudimentControls = profile.preferRudiments
+      ? {
+          enabled: true,
+          preferredFamilies: [],
+          preferredRudiments: [],
+          density: clamp01(drumOptions.ghost_note_density ?? 0.4),
+          ensureDownbeatKick: true,
+          preserveHatTail: true,
+          handLead: 'auto' as const,
+        }
+      : undefined;
+
+    const drummerId = selectedDrummer?.id || 'jeff_porcaro';
+    const resolvedStyle = selectedDrummer?.style || drumOptions.style || 'rock';
+
+    return {
+      sectionId: section.id,
+      startMeasure: measureRange.startMeasure,
+      endMeasure: measureRange.endMeasure,
+      tempos: measureRange.tempos,
+      timeSignature: measureRange.timeSignature,
+      style: resolvedStyle,
+      drummer: drummerId,
+      intensity,
+      variation,
+      generationMode: profile.mode,
+      humanize: true,
+      fillLocations,
+      fillType,
+      fillDensity,
+      humanizeAmount: clamp01(drumOptions.humanize),
+      ghostNoteAmount: ghostAmount,
+      swingAmount,
+      buildScope: 'selected_section',
+      guideEnabled: false,
+      fillControls: {
+        fillType,
+        density: fillDensity,
+        frequency: fillLocations.length ? 'section_transitions' : 'none',
+      },
+      rudimentControls,
+    };
+  };
+
+  async function handleGenerateFullSong() {
+    if (!sections.length) {
+      setErr('No sections available to build drums for yet.');
+      return;
+    }
+    if (bulkGenerating || generatingDrums) {
+      return;
+    }
+    const generationQueue = sections
+      .map((section) => {
+        const config = buildAutoConfigForSection(section);
+        return config ? { section, config } : null;
+      })
+      .filter((entry): entry is { section: Section; config: DrumGenerationConfig } => Boolean(entry));
+
+    if (!generationQueue.length) {
+      const warning = 'No sections are eligible for automated drum building yet.';
+      setErr(warning);
+      setFullSongStatus({ type: 'error', message: warning });
+      return;
+    }
+
+    setBulkGenerating(true);
+    setFullSongProgress({ completed: 0, total: generationQueue.length });
+    setFullSongStatus({
+      type: 'progress',
+      message: `Building drums for ${generationQueue.length} section${generationQueue.length === 1 ? '' : 's'}…`,
+    });
+    try {
+      const primaryTrackKey = tracks[0]?.key;
+      if (primaryTrackKey) {
+        try {
+          await analyzeSectionTempos(primaryTrackKey, sections);
+        } catch (tempoErr) {
+          console.warn('Tempo analysis during full-song generation failed', tempoErr);
+        }
+      }
+
+      let firstAppliedSectionId: string | null = null;
+      let completedCount = 0;
+      const sectionsMissingTracks: string[] = [];
+      for (const { config, section } of generationQueue) {
+        const applied = await executeDrumGeneration(config, { suppressSpinner: true });
+        completedCount += 1;
+        if (applied && !firstAppliedSectionId) {
+          firstAppliedSectionId = section.id;
+        }
+        if (!applied) {
+          sectionsMissingTracks.push(section.label || section.id);
+        }
+        setFullSongProgress({ completed: completedCount, total: generationQueue.length });
+        console.log(`✅ Section ${section.label || section.id} drums generated (${completedCount}/${generationQueue.length})`);
+      }
+
+      setSelectedMeasureRange({
+        sectionId: "full-song",
+        sectionLabel: "Full Song",
+        startMeasure: 0,
+        endMeasure: Math.max(0, totalSongBars - 1),
+        measureCount: Math.max(1, totalSongBars),
+        tempos: Array(Math.max(1, totalSongBars)).fill(bpm),
+        avgTempo: bpm,
+        timeSignature: timeSig,
+        startTime: 0,
+        endTime: timelineDurationSec,
+      });
+
+      if (!selectedMeasureRange && firstAppliedSectionId) {
+        setSelectedSectionIds(new Set([firstAppliedSectionId]));
+        const targetSection = sections.find((s) => s.id === firstAppliedSectionId);
+        if (targetSection) {
+          setSelectedMeasureRange(sectionToMeasureRange(targetSection, bpm, timeSig, songMap));
+        }
+      }
+
+      console.log('✅ Completed auto drum generation for entire song');
+      if (sectionsMissingTracks.length) {
+        const preview = sectionsMissingTracks.slice(0, 3).join(', ');
+        const suffix = sectionsMissingTracks.length > 3 ? '…' : '';
+        setFullSongStatus({
+          type: 'error',
+          message: `Finished, but ${sectionsMissingTracks.length} section${sectionsMissingTracks.length === 1 ? '' : 's'} returned no drum data (${preview}${suffix}).`,
+        });
+      } else {
+        setFullSongStatus({
+          type: 'success',
+          message: `🥁 Completed drum build for ${generationQueue.length} section${generationQueue.length === 1 ? '' : 's'}.`,
+        });
+      }
+    } catch (fullSongError: any) {
+      console.error('❌ Full-song drum generation failed:', fullSongError);
+      const errorMessage = `Full-song drum generation failed: ${fullSongError?.message || fullSongError}`;
+      setErr(errorMessage);
+      setFullSongStatus({ type: 'error', message: errorMessage });
+    } finally {
+      setBulkGenerating(false);
     }
   }
 
@@ -706,7 +2946,7 @@ export default function WebDAWApp() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3">
-          <div className="font-semibold">DrumTracKAI v1.1.16 – Enhanced DCSM</div>
+          <div className="font-semibold">DrumTracKAI v1.1.17 – Enhanced DCSM</div>
           <div className="flex items-center gap-3">
             <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await Engine.play(playhead); setPlaying(true); }}>Play</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.pause(); setPlaying(false); }}>Pause</button>
@@ -721,48 +2961,139 @@ export default function WebDAWApp() {
             <div className="text-sm text-slate-300 w-20 text-right">{secToBarsBeats(playhead, bpm, timeSig)}</div>
             <button className="px-3 py-1 rounded bg-indigo-600" onClick={() => fileRef.current?.click()} disabled={busy}>{busy?"Uploading…":"Upload Audio"}</button>
             <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={(e)=>{ const f=e.target.files?.[0]; if (f) addFile(f); e.currentTarget.value=""; }} />
+            <button className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600" onClick={() => setShowDrumPlayer(true)}>
+              Drum Player
+            </button>
+            <button
+              className={`px-3 py-1 rounded ${debugMode ? "bg-emerald-600" : "bg-slate-700"}`}
+              onClick={() => setDebugMode((prev) => !prev)}
+            >
+              {debugMode ? "Close Debug" : "Debug"}
+            </button>
+            <button
+              className="px-3 py-1 rounded bg-slate-700"
+              onClick={exportActiveDrumDebug}
+            >
+              Export Drum Debug
+            </button>
             <button className="px-3 py-1 rounded bg-slate-700" onClick={save}>Save</button>
             <button className="px-3 py-1 rounded bg-slate-700" onClick={load}>Load</button>
+            {tracks.length > 0 && (
+              <button
+                className="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600"
+                onClick={handleClearAudio}
+                disabled={busy}
+              >
+                Clear Audio
+              </button>
+            )}
             {tracks.length>0 && <button className="px-3 py-1 rounded bg-slate-700" onClick={()=>alignTo(tracks[0].key)}>Align to {tracks[0].name?.split("/").pop()}</button>}
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden flex">
-          {/* Left Column: Mixer + Drummer Selection + Drum Creation Module */}
-          <div className="flex flex-col">
-            {/* Mixer - Drum volume and meters */}
-            <Mixer tracks={[...tracks.map(t=>({ key:t.key, name:t.name||t.key.split("/").pop()!, color:t.color })), { key:"__drums__", name:"Drums", color:"#f59e0b" }]} />
-            
-            {/* Drum Track Creation Module */}
-            <div className="w-80 bg-slate-900 border-r border-slate-800 overflow-y-auto flex-1">
-              {/* Drummer Selector - MOVED from right sidebar */}
-              <div className="p-4 border-b border-slate-800">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3">Select Drummer</h3>
-                <DrummerSelector
-                  onSelect={(drummer) => {
-                    setSelectedDrummer(drummer);
-                    console.log('Selected drummer:', drummer.display_name);
-                  }}
-                  selectedDrummer={selectedDrummer}
-                />
-              </div>
-              
-              <div className="p-4 border-b border-slate-800">
-                <h2 className="text-lg font-bold text-white mb-1">🥁 Drum Track Creation Module</h2>
-                <p className="text-xs text-slate-400">Configure all drum generation parameters</p>
-              </div>
-              <DrumOptionsPanel 
-                options={drumOptions} 
-                onChange={setDrumOptions}
-                drummerType={drumOptions.style}
-              />
-            </div>
-          </div>
-          
+        <div className="flex-1 min-w-0 overflow-hidden flex">
           {/* Center Column: Timeline + Piano Roll */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {/* Timeline & Musical Arrangement - Unified Container */}
             <div className="border-b border-slate-800 bg-slate-900">
+              <div className="px-4 py-3 border-b border-slate-800/70 bg-slate-900/70">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex-1 min-w-[220px]">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                        Waveform &amp; Drum Grid Zoom
+                      </p>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className="text-[11px] text-slate-500 w-12">Tight</span>
+                        <input
+                          type="range"
+                          min={10}
+                          max={240}
+                          step={5}
+                          value={gridPixelsPerBeat}
+                          onChange={(e) => setGridPixelsPerBeat(Number(e.target.value))}
+                          className="flex-1 accent-cyan-400"
+                        />
+                        <span className="text-[11px] text-slate-500 w-12 text-right">Wide</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-[220px]">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                        Linked Scroll Position
+                      </p>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className="text-[11px] text-slate-500 w-12">Start</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={scrollPercent}
+                          onChange={onScrollSliderChange}
+                          className="flex-1 accent-fuchsia-500"
+                        />
+                        <span className="text-[11px] text-slate-500 w-12 text-right">End</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 text-xs text-slate-300">
+                      <span className="text-[11px] uppercase tracking-wide text-slate-400">
+                        Scroll Shortcuts (Synced)
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => scrollToTime(0)}
+                          className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500"
+                        >
+                          ⏮ Start
+                        </button>
+                        <button
+                          type="button"
+                          onClick={scrollToPlayhead}
+                          disabled={!tracks.length}
+                          className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500"
+                        >
+                          ▶ Playhead
+                        </button>
+                        <button
+                          type="button"
+                          onClick={scrollToSelectedSection}
+                          disabled={!hasSectionSelection}
+                          className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500"
+                        >
+                          🎯 Section
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Drag horizontally on any panel or use the shortcuts above — the timeline, drum piano roll, and limb grid stay locked together.
+                  </p>
+
+                  {debugMode && (
+                    <div className="mt-2 text-[11px] text-slate-300 bg-slate-950/60 border border-slate-800 rounded px-2 py-1">
+                      {(() => {
+                        const t = timelineScrollRef.current;
+                        const p = pianoRollScrollRef.current;
+                        const fmt = (el: HTMLDivElement | null) =>
+                          el
+                            ? {
+                                left: Math.round(el.scrollLeft),
+                                w: el.scrollWidth,
+                                cw: el.clientWidth,
+                              }
+                            : null;
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <div>timelineRef: {t ? "set" : "null"} {t ? JSON.stringify(fmt(t)) : ""}</div>
+                            <div>pianoRef: {p ? "set" : "null"} {p ? JSON.stringify(fmt(p)) : ""}</div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </div>
               {/* Timeline / Waveform */}
               <div className="p-4">
                 {err && <div className="mb-3 text-rose-400 text-sm">Error: {err}</div>}
@@ -775,11 +3106,13 @@ export default function WebDAWApp() {
                   setPlayhead={setPlayhead}
                   playing={playing}
                   onDropFiles={(fs)=>onDropFiles(fs)}
-                  onGenerate={handleGenerate}
                   loop={loop}
                   setLoop={setLoop}
                   gridSec={gridSec}
                   onAutoSectionize={handleAutoSectionize}
+                  pixelsPerBeat={gridPixelsPerBeat}
+                  timeSignature={timeSig}
+                  scrollSyncRef={timelineScrollRef}
                   selectedSectionIds={selectedSectionIds}
                   onSelectSection={(sectionId: string, multi: boolean) => {
                     if (!sectionId) {
@@ -806,7 +3139,7 @@ export default function WebDAWApp() {
                       // Set measure range for drum builder
                       const section = sections.find(s => s.id === sectionId);
                       if (section) {
-                        const measureRange = sectionToMeasureRange(section, bpm, timeSig);
+                        const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap);
                         setSelectedMeasureRange(measureRange);
                         console.log('🎯 Selected measure range:', measureRange);
                       }
@@ -816,7 +3149,7 @@ export default function WebDAWApp() {
               </div>
 
               {/* Musical Arrangement - Nested Below Waveform */}
-              {tracks.length > 0 && (
+              {sections.length > 0 && (
                 <div className="border-t border-slate-800">
                   <SectionControls
                     sections={selectedSectionIds.size > 0 
@@ -825,22 +3158,196 @@ export default function WebDAWApp() {
                     }
                     onSectionsChange={setSections}
                     bpm={bpm}
+                    timeSignature={timeSig}
                     currentTime={playhead}
                     trackKey={tracks[0]?.key}
-                    onAnalyzeTempos={(sections) => analyzeSectionTempos(tracks[0]?.key, sections)}
+                    onAnalyzeTempos={
+                      tracks.length > 0
+                        ? (sections) => analyzeSectionTempos(tracks[0]?.key, sections)
+                        : undefined
+                    }
                   />
                 </div>
               )}
             </div>
             
-            {/* Piano Roll */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <PianoRoll bpm={bpm} gridSec={gridSec} notes={notes} onChange={setNotes} />
+            {/* Drum Editor + Limb Grid */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3 text-sm text-slate-300">
+                  <div className="font-semibold text-white">Drum Performance Editor</div>
+                  {selectedMeasureRange && (
+                    <div className="text-xs text-slate-400">
+                      {selectedMeasureRange.sectionLabel} · {selectedMeasureRange.measureCount} bars
+                    </div>
+                  )}
+                </div>
+                {selectedMeasureRange ? (
+                  activeDrumTrack ? (
+                    <>
+                      <div className="h-[520px]">
+                        <DrumEditorPane
+                          drumTrack={activeDrumTrack}
+                          timeSignature={selectedMeasureRange.timeSignature ?? timeSig}
+                          grooveWeights={activeGrooveMap}
+                          gridResolution={gridResolution}
+                          onGridResolutionChange={setGridResolution}
+                          pixelsPerBeat={gridPixelsPerBeat}
+                          visibleStartMeasure={selectedMeasureRange.startMeasure}
+                          visibleMeasureCount={selectedMeasureRange.measureCount}
+                          totalSongBars={totalSongBars}
+                          onUpdateTrack={(updatedTrack) => {
+                            if (!activeSectionId || activeSectionId === "full-song") return;
+                            setSectionDrumTracks((prev) => ({
+                              ...prev,
+                              [activeSectionId]: updatedTrack,
+                            }));
+                            syncSectionMidiNotes(activeSectionId, updatedTrack, activePlacementContext);
+                          }}
+                          pianoRollScrollRef={pianoRollScrollRef}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-[200px] text-sm text-slate-400 flex flex-col items-center justify-center text-center px-4">
+                      <div className="text-base text-slate-200 font-semibold mb-1">No drum data yet</div>
+                      <p>
+                        Run the Drum Builder for this section to unlock high-resolution editing, expressive
+                        attributes, and limb-aware controls.
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <div className="h-[200px] text-sm text-slate-400 flex items-center justify-center text-center px-4">
+                    Select a section in the timeline to focus the editor.
+                  </div>
+                )}
+              </div>
+
+              {sections.length > 0 && (
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Drum Builder Console</p>
+                      <p className="text-base font-semibold text-white">Dial in the virtual drummer before generating</p>
+                    </div>
+                    {selectedDrummer && (
+                      <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+                        {selectedDrummer.style?.toUpperCase() || "CUSTOM"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Virtual Drummer</p>
+                        <p className="text-sm font-semibold text-white">
+                          {selectedDrummer?.display_name || 'No drummer selected'}
+                        </p>
+                      </div>
+                    </div>
+                    <DrummerSelector
+                      onSelect={(drummer) => {
+                        setSelectedDrummer(drummer);
+                        console.log('Selected drummer:', drummer.display_name);
+                      }}
+                      selectedDrummer={selectedDrummer}
+                    />
+                  </div>
+
+                  <DrumOptionsPanel
+                    options={drumOptions}
+                    onChange={setDrumOptions}
+                    drummerType={drumOptions.style}
+                  />
+                </div>
+              )}
+
+              {sections.length > 0 && (
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">Section Drum Track Builder</h3>
+                      <p className="text-xs text-slate-400">Uses the selected section or range to author limb-aware grooves.</p>
+                    </div>
+                    {selectedMeasureRange && (
+                      <div className="text-xs text-slate-400">
+                        {selectedMeasureRange.sectionLabel} · {selectedMeasureRange.measureCount} bars
+                      </div>
+                    )}
+                  </div>
+                  <DrumBuilderPanelV2
+                    selectedRange={selectedMeasureRange}
+                    onGenerate={handleGenerateDrums}
+                    busy={generatingDrums}
+                  />
+
+                  <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-slate-400">MIDI Map</div>
+                      <select
+                        className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                        value={midiMapName}
+                        onChange={(e) => setMidiMapName(e.target.value)}
+                      >
+                        <option value="Mixosaurus_EZ_Drummer">Mixosaurus (EZD/SD3)</option>
+                        <option value="gm">GM</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-slate-400">Groove</div>
+                      <select
+                        className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                        value={grooveSource}
+                        onChange={(e) => setGrooveSource(e.target.value)}
+                      >
+                        <option value="pattern">Built-in</option>
+                        <option value="egmd_phrases">E-GMD Phrases</option>
+                      </select>
+                      {grooveSource === "egmd_phrases" && (
+                        <select
+                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                          value={styleGroup}
+                          onChange={(e) => setStyleGroup(e.target.value)}
+                        >
+                          <option value="rock">Rock</option>
+                          <option value="funk">Funk</option>
+                          <option value="jazz">Jazz</option>
+                          <option value="metal">Metal</option>
+                          <option value="blues">Blues</option>
+                          <option value="pop">Pop</option>
+                          <option value="latin">Latin</option>
+                          <option value="hiphop">Hip-Hop</option>
+                          <option value="soul">Soul</option>
+                        </select>
+                      )}
+                    </div>
+                    <button
+                      className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!lastGeneratedMidiBase64}
+                      onClick={() => {
+                        if (!lastGeneratedMidiBase64) return;
+                        downloadMidiBase64(lastGeneratedMidiBase64, lastGeneratedMidiLabel || "DrumTracKAI-Drums");
+                      }}
+                      title={!lastGeneratedMidiBase64 ? "Generate drums first to enable MIDI download" : undefined}
+                    >
+                      Download MIDI
+                    </button>
+                  </div>
+
+                  {grooveSource === "egmd_phrases" && lastEgmdPhraseInfo && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      Selected phrase: #{String(lastEgmdPhraseInfo.phrase_id)} · {String(lastEgmdPhraseInfo.midi_path || '').split('\\').pop()}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Musical Arrangement Manager - Right Sidebar */}
-          <div className="w-80 bg-slate-900 border-l border-slate-800 overflow-y-auto">
+          {/* Arrangement + Builder Console - Right Sidebar */}
+          <div className="w-[360px] bg-slate-900 border-l border-slate-800 overflow-y-auto">
               {/* Header */}
               <div className="p-4 border-b border-slate-800 bg-indigo-900/20">
                 <h2 className="text-lg font-bold text-white mb-1">🎼 Musical Arrangement Manager</h2>
@@ -906,8 +3413,10 @@ export default function WebDAWApp() {
                   
                   {/* Option 3: Well Known Song */}
                   <button 
-                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 font-semibold text-white shadow-lg transition-all mb-2"
+                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 font-semibold text-white shadow-lg transition-all mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={() => setShowLookupModal(true)}
+                    disabled={tracks.length === 0 || busy}
+                    title={tracks.length === 0 ? 'Upload audio before running a Well Known Song lookup' : undefined}
                   >
                     🌐 Well Known Song
                   </button>
@@ -940,36 +3449,194 @@ export default function WebDAWApp() {
                   )}
                 </div>
               )}
-              
-              {/* NEW: Drum Builder Panel */}
-              {tracks.length > 0 && sections.length > 0 && (
+
+              {sections.length > 0 && (
+                <div className="p-4 border-b border-slate-800 space-y-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100">AI Full-Song Drummer</h3>
+                    <p className="text-xs text-slate-400">
+                      Generates a cohesive drum track across every detected section using the current drummer style
+                      and macro settings.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleGenerateFullSong}
+                    disabled={bulkGenerating || generatingDrums}
+                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {bulkGenerating ? '⏳ Building Entire Song…' : '🥁 Generate Entire Song'}
+                  </button>
+                  {fullSongStatus && (
+                    <div
+                      className={`text-xs px-3 py-2 rounded border ${
+                        fullSongStatus.type === 'success'
+                          ? 'bg-emerald-900/10 text-emerald-200 border-emerald-400/40'
+                          : fullSongStatus.type === 'error'
+                            ? 'bg-rose-900/10 text-rose-200 border-rose-400/40'
+                            : 'bg-cyan-900/10 text-cyan-200 border-cyan-400/40'
+                      }`}
+                    >
+                      <span>{fullSongStatus.message}</span>
+                      {fullSongStatus.type === 'progress' && fullSongProgress.total > 0 && (
+                        <span className="ml-2 text-slate-200">
+                          {fullSongProgress.completed}/{fullSongProgress.total} sections
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-slate-500">
+                    We run sections one-by-one, so keep this tab open until the confirmation log appears.
+                  </p>
+                </div>
+              )}
+
+              {/* Brain Panel UI */}
+              {sections.length > 0 && (
                 <div className="p-4 border-b border-slate-800">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">🥁 Drum Track Builder</h3>
-                  <DrumBuilderPanel
-                    selectedRange={selectedMeasureRange}
-                    onGenerate={handleGenerateDrums}
-                    busy={generatingDrums}
+                  <h3 className="text-sm font-semibold text-slate-300 mb-3">🧠 Brain Panel</h3>
+                  <BrainPanel
+                    sectionId={selectedMeasureRange?.sectionId}
+                    sectionLabel={selectedMeasureRange?.sectionLabel}
+                    styleHint={drumOptions.style}
+                    locked={false}
                   />
                 </div>
               )}
               
               {/* Upload prompt if no tracks */}
               {tracks.length === 0 && (
-                <div className="p-4 bg-yellow-900/20 border-b border-yellow-500/30">
-                  <div className="text-sm text-yellow-300 mb-2">⚠️ No audio loaded</div>
-                  <div className="text-xs text-yellow-200/70 mb-3">
-                    Click "Upload Audio" button above to load your track
-                  </div>
-                  {sourceInfo.filename && (
-                    <div className="text-xs text-yellow-400">
-                      Expected file: {sourceInfo.filename}
+                <div className="p-4 border-b border-slate-800 space-y-3">
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+                    <div className="text-sm font-semibold text-slate-100">Create Drumtrack From Scratch</div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      Set tempo, time signature, and an arrangement to generate drums without uploading audio.
                     </div>
-                  )}
+
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[11px] text-slate-400 mb-1">Tempo (BPM)</div>
+                        <input
+                          type="number"
+                          min={40}
+                          max={240}
+                          value={bpm}
+                          onChange={(e) => setBpm(Math.max(40, Math.min(240, Number(e.target.value) || 120)))}
+                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-slate-400 mb-1">Time Signature</div>
+                        <select
+                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                          value={`${timeSig[0]}/${timeSig[1]}`}
+                          onChange={(e) => {
+                            const [n, d] = e.target.value.split("/").map((v) => Number(v));
+                            if (Number.isFinite(n) && Number.isFinite(d)) {
+                              setTimeSig([n, d] as [number, number]);
+                            }
+                          }}
+                        >
+                          <option value="4/4">4/4</option>
+                          <option value="3/4">3/4</option>
+                          <option value="6/8">6/8</option>
+                          <option value="5/4">5/4</option>
+                          <option value="7/8">7/8</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-[11px] text-slate-400 mb-1">Style</div>
+                      <select
+                        className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                        value={scratchStyle}
+                        onChange={(e) => setScratchStyle(e.target.value)}
+                      >
+                        <option value="rock">Rock</option>
+                        <option value="funk">Funk</option>
+                        <option value="jazz">Jazz</option>
+                        <option value="metal">Metal</option>
+                        <option value="blues">Blues</option>
+                        <option value="pop">Pop</option>
+                        <option value="latin">Latin</option>
+                      </select>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] text-slate-400">Arrangement (Section + Bars)</div>
+                        <button
+                          className="px-2 py-1 text-[11px] rounded bg-slate-800 border border-slate-700 text-slate-200"
+                          onClick={() => setScratchArrangement((prev) => [...prev, { label: "verse", bars: 8 }])}
+                        >
+                          Add
+                        </button>
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {scratchArrangement.map((row, idx) => (
+                          <div key={`${idx}-${row.label}`} className="grid grid-cols-[1fr_72px_28px] gap-2 items-center">
+                            <select
+                              className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={row.label}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setScratchArrangement((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, label: v } : r)),
+                                );
+                              }}
+                            >
+                              <option value="intro">Intro</option>
+                              <option value="verse">Verse</option>
+                              <option value="chorus">Chorus</option>
+                              <option value="bridge">Bridge</option>
+                              <option value="break">Break</option>
+                              <option value="solo">Solo</option>
+                              <option value="outro">Outro</option>
+                            </select>
+                            <input
+                              type="number"
+                              min={1}
+                              max={64}
+                              value={row.bars}
+                              onChange={(e) => {
+                                const v = Math.max(1, Math.min(64, Number(e.target.value) || 1));
+                                setScratchArrangement((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, bars: v } : r)),
+                                );
+                              }}
+                              className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                            />
+                            <button
+                              className="h-7 rounded bg-rose-900/40 border border-rose-800 text-rose-200"
+                              onClick={() => setScratchArrangement((prev) => prev.filter((_, i) => i !== idx))}
+                              title="Remove"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      className="mt-3 w-full px-3 py-2 rounded bg-emerald-700 hover:bg-emerald-600 text-sm font-semibold"
+                      onClick={() => {
+                        setDrumOptions((prev) => ({ ...prev, bpm, style: scratchStyle }));
+                        buildScratchSong();
+                      }}
+                    >
+                      Create Arrangement
+                    </button>
+
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      After creating the arrangement, click a section in the timeline and use the Drum Builder.
+                    </div>
+                  </div>
                 </div>
               )}
               
               
-              {tracks.length > 0 && (
+              {sections.length > 0 && (
                 <div>
                   {/* Selection Info & Actions */}
                   {selectedSectionIds.size > 0 ? (
@@ -977,19 +3644,14 @@ export default function WebDAWApp() {
                       <div className="text-sm text-indigo-200 font-semibold mb-3">
                         ✨ {selectedSectionIds.size} section{selectedSectionIds.size > 1 ? 's' : ''} selected
                       </div>
-                      <div className="flex flex-col gap-2">
+                      <div className="space-y-2 text-xs text-slate-200">
+                        <p className="leading-relaxed">
+                          Use the Drum Builder panel in the center column to generate patterns for the highlighted
+                          sections. The older quick-generate path has been removed so there is a single source of
+                          truth for drum creation.
+                        </p>
                         <button
-                          className="w-full px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-semibold rounded-lg shadow-lg transition-all"
-                          onClick={() => {
-                            // Generate for all selected sections
-                            const selected = sections.filter(s => selectedSectionIds.has(s.id));
-                            selected.forEach(section => handleGenerate(section));
-                          }}
-                        >
-                          🥁 Generate Drums for Selected
-                        </button>
-                        <button
-                          className="text-xs text-indigo-300 hover:text-indigo-200 underline"
+                          className="text-indigo-300 hover:text-indigo-100 underline"
                           onClick={() => setSelectedSectionIds(new Set())}
                         >
                           Clear selection (show all)
@@ -1010,6 +3672,77 @@ export default function WebDAWApp() {
             </div>
         </div>
       </div>
+      {debugMode && (
+        <div className="fixed bottom-3 right-3 max-w-md text-xs bg-slate-900/95 border border-emerald-500/40 rounded-lg p-3 shadow-xl z-50 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-emerald-300">DrumGen Debug</span>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-2 py-[1px] text-[10px] border border-emerald-500/60 rounded hover:bg-emerald-600/20"
+                onClick={injectDebugTestGroove}
+              >
+                Inject Test Groove
+              </button>
+              <button
+                className="text-slate-400 hover:text-slate-100"
+                onClick={() => setDebugMode(false)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="border border-slate-800/60 rounded p-2">
+            <div className="font-semibold text-slate-200 mb-1">Last Generation</div>
+            {debugDrumGen ? (
+              <div className="space-y-1">
+                <div>sectionId: <span className="text-emerald-200">{debugDrumGen.payloadSectionId ?? "∅"}</span></div>
+                <div>drum_track: {debugDrumGen.hasDrumTrack ? "yes" : "no"}</div>
+                <div>drum_track notes: {debugDrumGen.drumTrackNotes}</div>
+                <div>legacy midi_notes: {debugDrumGen.hasLegacyNotes ? "yes" : "no"}</div>
+                <div>legacy note count: {debugDrumGen.legacyNotesCount}</div>
+              </div>
+            ) : (
+              <div className="text-slate-500">No generation run yet.</div>
+            )}
+          </div>
+          <div>
+            <div className="font-semibold text-slate-200 mb-1">Section Tracks</div>
+            {sectionDebugSummaries.length === 0 ? (
+              <div className="text-slate-500">No sectionDrumTracks yet.</div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                {sectionDebugSummaries.map((summary) => (
+                  <div
+                    key={summary.id}
+                    className="border border-slate-700/70 rounded px-2 py-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-emerald-200">{summary.id}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400">{summary.noteCount} notes</span>
+                        <button
+                          className="px-1 py-[1px] text-[10px] border border-emerald-500/60 rounded hover:bg-emerald-600/20"
+                          onClick={() => handleDebugJumpToSection(summary.id)}
+                        >
+                          Jump
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-slate-400">
+                      bars: {summary.minBar === null || summary.maxBar === null ? "–" : `${summary.minBar} → ${summary.maxBar}`}
+                    </div>
+                    {summary.instruments.length > 0 && (
+                      <div className="text-slate-500 truncate">
+                        inst: {summary.instruments.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       
       {/* Modals */}
       <ManualArrangementModal
@@ -1024,6 +3757,8 @@ export default function WebDAWApp() {
         onClose={() => setShowLookupModal(false)}
         onSelect={handleSongLookup}
       />
+
+      <DrumPlayerModal isOpen={showDrumPlayer} onClose={() => setShowDrumPlayer(false)} />
     </div>
   );
 }

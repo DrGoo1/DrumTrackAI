@@ -1,7 +1,7 @@
 /**
  * Groove Weight Types
  * ===================
- * Types for Jamstix-style groove weight system
+ * Types for the limb-aware groove weight system
  * Groove weights emphasize certain subdivisions for feel
  */
 

@@ -1,5 +1,7 @@
 // Simple API client for DAW backend
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000'
+import { resolveApiBase } from '../../utils/apiBase'
+
+const API_BASE = process.env.REACT_APP_API_BASE || process.env.REACT_APP_API_URL || resolveApiBase()
 
 export const api = {
   async get(path: string) {

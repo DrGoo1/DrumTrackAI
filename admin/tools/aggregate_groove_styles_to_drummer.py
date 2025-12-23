@@ -28,6 +28,9 @@ METRIC_COLUMNS = [
     "snare_density",
     "cymbal_density",
     "dynamics_spread",
+    "ride_density",
+    "ride_mean_velocity",
+    "ride_bell_ratio",
 ]
 
 

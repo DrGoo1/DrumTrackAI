@@ -133,17 +133,18 @@ class EGMDMIDIExtractor:
             
             # Extract drum hits
             hits = []
-            tempo = 120.0  # Default BPM
-            current_time = 0.0
+            tempo_us = 500000  # Default 120 BPM in microseconds per beat
+            tempo_bpm = float(mido.tempo2bpm(tempo_us))
             
             # Process all tracks
             for track in midi.tracks:
                 track_time = 0.0
                 for msg in track:
-                    track_time += mido.tick2second(msg.time, midi.ticks_per_beat, tempo)
+                    track_time += mido.tick2second(msg.time, midi.ticks_per_beat, tempo_us)
                     
                     if msg.type == 'set_tempo':
-                        tempo = mido.tempo2bpm(msg.tempo)
+                        tempo_us = int(msg.tempo)
+                        tempo_bpm = float(mido.tempo2bpm(tempo_us))
                     
                     elif msg.type == 'note_on' and msg.velocity > 0:
                         # Check if it's a drum note (channel 10 in MIDI = channel 9 in 0-indexed)
@@ -233,7 +234,7 @@ class EGMDMIDIExtractor:
                 source_file=str(midi_path),
                 total_hits=len(hits),
                 duration=duration,
-                tempo=tempo,
+                tempo=tempo_bpm,
                 time_signature=time_signature,
                 drum_counts=dict(drum_counts),
                 velocity_stats=velocity_stats,

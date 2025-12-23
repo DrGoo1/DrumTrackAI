@@ -1,5 +1,7 @@
-# drumtrackai_api_server_clean.py
-import os, asyncio, logging, mimetypes, time, shutil, json, subprocess
+ # drumtrackai_api_server_clean.py
+import os, asyncio, logging, mimetypes, time, shutil, json, subprocess, math
+import sqlite3
+from typing import Optional
 from pathlib import Path
 
 # DISABLED: numpy causes heap corruption (exit code 3221226356) on Windows
@@ -8,7 +10,16 @@ np = None
 
 from aiohttp import web
 import aiohttp_cors
-from pydantic import BaseModel
+
+# Pydantic is only used for a couple of lightweight request models. On some
+# Windows/Python combos the pydantic_core wheel may not be available, which
+# would otherwise prevent the whole backend from starting. Make this import
+# optional and fall back to a no-op BaseModel so the API can still run.
+try:
+    from pydantic import BaseModel  # type: ignore
+except Exception:  # pragma: no cover - defensive fallback
+    class BaseModel:  # type: ignore
+        pass
 
 # DISABLED: These libraries cause heap corruption - use Rust audio-core instead
 # try:
@@ -34,6 +45,30 @@ from song_lookup_service import search_song
 
 # Import drum generation API (Drum Builder v2.0 integrated)
 from drum_generation_api import generate_drums, DrumGenerationConfig
+from backend.drum_generation.brain_elements import get_brain_elements
+from backend.drum_generation.drum_generation_config import (
+    DrumBrainConfig,
+    BrainElementSetting,
+)
+
+from backend.beatbox_translator import (
+    BeatboxTranslationOptions,
+    translate_beatbox,
+    taps_to_translation,
+)
+from backend.beatprompt_engine import (
+    normalize_sections,
+    render_sections_to_hits,
+    serialize_sections,
+)
+
+# Admin DB service for drummer personas (optional; fail-soft if unavailable)
+try:
+    from admin.services.central_database_service import get_database_service as get_admin_db_service
+    ADMIN_DB_AVAILABLE = True
+except Exception:
+    ADMIN_DB_AVAILABLE = False
+    LOG.warning("CentralDatabaseService not available; /api/drummer-personas will be empty.")
 
 # Import Jamstix brain system
 try:
@@ -47,6 +82,183 @@ try:
 except ImportError:
     JAMSTIX_BRAIN_AVAILABLE = False
 
+JAMSTIX_INSTRUMENT_MAP = {
+    "kick": "kick",
+    "bd": "kick",
+    "sn": "snare_center",
+    "snare": "snare_center",
+    "snare_center": "snare_center",
+    "snare_rim": "snare_rim",
+    "rim": "snare_rim",
+    "ghost": "snare_ghost",
+    "hihat": "hihat_closed",
+    "hh": "hihat_closed",
+    "hat": "hihat_closed",
+    "ride": "ride_bow",
+    "perc": "tom_mid",
+    "tom": "tom_mid",
+    "tom1": "tom_high",
+    "tom2": "tom_mid",
+    "tom3": "tom_low",
+    "floor": "tom_floor",
+    "crash": "crash_1",
+    "crash2": "crash_2",
+    "china": "crash_china",
+}
+
+def _section_attr(section, attr, default=None):
+    if hasattr(section, attr):
+        return getattr(section, attr)
+    if isinstance(section, dict):
+        return section.get(attr, default)
+    return default
+
+def _normalize_time_signature(meter):
+    meter = str(meter or "4/4").strip()
+    if "/" in meter:
+        parts = meter.split("/")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            denom = int(parts[1]) or 4
+            return f"{int(parts[0])}/{denom}"
+    return "4/4"
+
+def _beats_per_bar_from_signature(time_signature):
+    try:
+        num, denom = time_signature.split("/")
+        denom_val = int(denom) or 4
+        return int(num) * (4 / denom_val)
+    except Exception:
+        return 4.0
+
+def _map_instrument_for_jamstix(raw):
+    key = str(raw or "snare").strip().lower()
+    return JAMSTIX_INSTRUMENT_MAP.get(key, key if key in JAMSTIX_INSTRUMENT_MAP.values() else "snare_center")
+
+def _estimate_total_bars_from_hits(hits, beats_per_bar):
+    if not hits:
+        return 1
+    beat_values = []
+    for hit in hits:
+        beat_values.append(float(hit.get("beat_position") or hit.get("beat") or 0.0))
+    if not beat_values:
+        return 1
+    min_beat = min(beat_values)
+    max_beat = max(beat_values)
+    span = max_beat - min_beat
+    approx_beats = span + beats_per_bar
+    bars = int(math.ceil(max(approx_beats, beats_per_bar) / max(beats_per_bar, 1e-6)))
+    return max(1, bars)
+
+def _collect_section_modifiers(sections):
+    mods = []
+    for section in sections or []:
+        section_mods = _section_attr(section, "modifiers", []) or []
+        mods.extend(str(m).lower() for m in section_mods if isinstance(m, str))
+    return mods
+
+def _build_songmap_sections(sections, default_total_bars):
+    """Convert prompt sections into Jamstix-friendly SongMap entries."""
+    songmap = []
+    cursor = 0
+    for section in sections or []:
+        bars = int(_section_attr(section, "bars", 4) or 4)
+        if bars <= 0:
+            continue
+        label = _section_attr(section, "label", f"Section {len(songmap)+1}") or f"Section {len(songmap)+1}"
+        songmap.append({
+            "type": label,
+            "startBar": cursor,
+            "endBar": cursor + bars,
+            "personaId": _section_attr(section, "persona_id"),
+            "stylePack": _section_attr(section, "style_pack"),
+            "modifiers": list(_section_attr(section, "modifiers", []) or []),
+        })
+        cursor += bars
+    if songmap:
+        return songmap
+    return [{"type": "Main", "startBar": 0, "endBar": max(1, default_total_bars)}]
+
+def _hits_to_pattern_events_for_jamstix(hits, tempo, beats_per_bar):
+    """Translate simple hit dictionaries into Jamstix pattern events."""
+    if not hits:
+        return []
+    seconds_per_beat = 60.0 / max(float(tempo) if tempo else 1.0, 1e-6)
+    beat_values = [float(hit.get("beat_position") or hit.get("beat") or 0.0) for hit in hits]
+    min_beat = min(beat_values) if beat_values else 0.0
+    events = []
+    for hit, beat_value in zip(hits, beat_values):
+        relative_beat = beat_value - min_beat
+        bar_index = int(math.floor(relative_beat / max(beats_per_bar, 1e-6)))
+        bar_start_time = bar_index * beats_per_bar * seconds_per_beat
+        bar_end_time = bar_start_time + beats_per_bar * seconds_per_beat
+        events.append({
+            "time_sec": relative_beat * seconds_per_beat,
+            "instrument_id": _map_instrument_for_jamstix(hit.get("instrument")),
+            "velocity": int(hit.get("velocity") or 96),
+            "barIndex": bar_index,
+            "barStartTime": bar_start_time,
+            "barEndTime": bar_end_time,
+        })
+    return events
+
+def _derive_performance_spec(tempo, persona_id=None, style_pack=None, modifiers=None, feel_hint=None):
+    """Create a lightweight performance spec so Jamstix brain has musical context."""
+    modifiers = modifiers or []
+    feel = feel_hint or ("laid_back" if tempo and tempo < 92 else "pushed" if tempo and tempo > 135 else "on_the_beat")
+    swing = 0.0
+    if any("triplet" in m or "swing" in m for m in modifiers):
+        feel = "swing"
+        swing = 0.55
+    hat_open = 0.25
+    if any("wide hat" in m or "open hat" in m for m in modifiers):
+        hat_open = 0.5
+    if persona_id and "funk" in persona_id:
+        feel = "laid_back"
+        hat_open = max(hat_open, 0.35)
+    if persona_id and "metal" in persona_id:
+        feel = "pushed"
+        hat_open = min(hat_open, 0.2)
+    if style_pack and "brush" in style_pack.lower():
+        hat_open = 0.1
+    ghost_amount = 0.35
+    if any("ghost" in m for m in modifiers):
+        ghost_amount = 0.7
+    intensity = min(1.0, max(0.3, (tempo or 100.0) / 180.0))
+    return {
+        "feel": feel,
+        "swing": swing,
+        "intensity": intensity,
+        "hatOpenness": hat_open,
+        "fillStyle": "linear" if feel == "swing" else "tom_run",
+        "ghostNoteAmount": ghost_amount,
+    }
+
+def auto_generate_jamstix_track(hits, tempo, sections=None, persona_hint=None, style_pack_hint=None, feel_hint=None, meter_hint=None):
+    """Best-effort Jamstix automation that runs alongside BeatPrompt/beatbox flows."""
+    if not JAMSTIX_BRAIN_AVAILABLE:
+        return None, "jamstix_unavailable"
+    if not hits:
+        return None, "no_hits"
+    time_signature = _normalize_time_signature(meter_hint or (_section_attr(sections[0], "meter") if sections else None))
+    beats_per_bar = _beats_per_bar_from_signature(time_signature)
+    total_bars = _estimate_total_bars_from_hits(hits, beats_per_bar)
+    songmap_sections = _build_songmap_sections(sections, total_bars)
+    modifiers = _collect_section_modifiers(sections)
+    persona = persona_hint or (_section_attr(sections[0], "persona_id") if sections else None)
+    style_pack = style_pack_hint or (_section_attr(sections[0], "style_pack") if sections else None)
+    pattern_events = _hits_to_pattern_events_for_jamstix(hits, tempo, beats_per_bar)
+    if not pattern_events:
+        return None, "no_events"
+    perf_spec = _derive_performance_spec(tempo, persona_id=persona, style_pack=style_pack, modifiers=modifiers, feel_hint=feel_hint)
+    builder = DCSMDrumTrackBuilder(tempo=tempo, time_signature=time_signature)
+    track = builder.build_from_pattern_and_spec(pattern_events, songmap_sections, perf_spec)
+    return {
+        "track": track.to_dict(),
+        "sections": songmap_sections,
+        "performanceSpec": perf_spec,
+        "timeSignature": time_signature,
+    }, None
+
 # ---------- Config ----------
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("API_PORT", "8000"))
@@ -56,8 +268,240 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR = BASE_DIR / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
 
+# Sample DB + sample library configuration (Docker/cloud friendly)
+# - DB path can be mounted at /data/db/drumtrackai.db
+# - Samples can be mounted at /data/samples
+SAMPLE_DB_PATH = Path(os.getenv("SAMPLE_DB_PATH", os.getenv("DRUMTRACKAI_DB_PATH", str((BASE_DIR / "admin" / "drumtrackai.db").resolve()))))
+SAMPLES_ROOT = Path(os.getenv("SAMPLES_ROOT", "/data/samples"))
+SAMPLE_PATH_MAP_FROM = os.getenv("SAMPLE_PATH_MAP_FROM")
+SAMPLE_PATH_MAP_TO = os.getenv("SAMPLE_PATH_MAP_TO")
+
+BRAIN_CONFIG_DIR = BASE_DIR / "brain_configs"
+BRAIN_CONFIG_DIR.mkdir(exist_ok=True)
+
+
+def _brain_config_file(section_id: str) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in section_id or "section")
+    if not safe:
+        safe = "section"
+    return BRAIN_CONFIG_DIR / f"{safe}.json"
+
+
+def _default_brain_config(style_hint: Optional[str] = None) -> DrumBrainConfig:
+    definitions = get_brain_elements(style_hint)
+    settings = [
+        BrainElementSetting(
+            elementId=definition.id,
+            value=definition.default_value,
+            frozen=False,
+            disabled=False,
+        )
+        for definition in definitions
+    ]
+    return DrumBrainConfig(mode="normal", randomizeSeed=None, elementSettings=settings)
+
+
+def _load_brain_config(section_id: str, style_hint: Optional[str] = None) -> DrumBrainConfig:
+    path = _brain_config_file(section_id)
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return DrumBrainConfig.from_dict(data)
+        except Exception as exc:  # pragma: no cover - defensive log only
+            LOG.warning("Failed to load brain config for %s: %s", section_id, exc)
+    return _default_brain_config(style_hint)
+
+
+def _save_brain_config(section_id: str, config: DrumBrainConfig) -> None:
+    path = _brain_config_file(section_id)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(config.to_dict(), handle, indent=2)
+
+
+def _serialize_brain_definition(defn) -> dict:
+    return {
+        "id": defn.id,
+        "label": defn.label,
+        "description": defn.description,
+        "minValue": defn.min_value,
+        "maxValue": defn.max_value,
+        "defaultValue": defn.default_value,
+        "supportsFreeze": defn.supports_freeze,
+        "supportsDisable": defn.supports_disable,
+        "grouping": defn.grouping,
+    }
+
 # Rust integration configuration
 AUDIO_CORE_BIN = os.getenv("AUDIO_CORE_BIN", "audio-core")
+
+
+def _samples_db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(SAMPLE_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _resolve_sample_file_path(db_path_value: str) -> Path:
+    """Resolve a DB file_path to an on-disk path.
+
+    Preferred: DB stores relative POSIX paths (e.g. 'kits/kit1/kick/in.wav'),
+    resolved under SAMPLES_ROOT.
+
+    Backward compatible: if DB stores Windows absolute paths, apply optional
+    prefix mapping SAMPLE_PATH_MAP_FROM -> SAMPLE_PATH_MAP_TO.
+    """
+    raw = str(db_path_value or "")
+    if not raw:
+        return Path("")
+
+    # If it's a relative path, treat as relative to SAMPLES_ROOT.
+    # Normalize Windows-style backslashes to POSIX separators for Docker/Linux.
+    raw_rel = raw.replace("\\", "/")
+    p = Path(raw_rel)
+    if not p.is_absolute() and ":" not in raw:
+        return (SAMPLES_ROOT / Path(raw_rel)).resolve()
+
+    # Optional legacy prefix remap (e.g. E:\Drum Samples -> /data/samples)
+    if SAMPLE_PATH_MAP_FROM and SAMPLE_PATH_MAP_TO:
+        try:
+            from_norm = str(SAMPLE_PATH_MAP_FROM).rstrip("\\/")
+            to_norm = str(SAMPLE_PATH_MAP_TO).rstrip("\\/")
+            if raw.lower().startswith(from_norm.lower()):
+                mapped = to_norm + raw[len(from_norm):]
+                mapped = mapped.replace("\\", "/")
+                return Path(mapped).resolve()
+        except Exception:
+            pass
+
+    # As a last resort, try to open the path as-is
+    return Path(raw)
+
+
+def _is_under_root(path: Path, root: Path) -> bool:
+    try:
+        rp = path.resolve()
+        rr = root.resolve()
+        return rp == rr or rr in rp.parents
+    except Exception:
+        return False
+
+
+async def api_sample_collections(request: web.Request) -> web.Response:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+    try:
+        conn = _samples_db_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, collection_name, description, manufacturer, category, folder_path, sample_count, created_at "
+                "FROM sample_collections ORDER BY id"
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            return web.json_response({
+                "db": str(SAMPLE_DB_PATH),
+                "samplesRoot": str(SAMPLES_ROOT),
+                "collections": rows,
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"api_sample_collections failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_drum_samples(request: web.Request) -> web.Response:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+
+    collection_id = request.query.get("collection_id")
+    drum_type = request.query.get("drum_type")
+    limit = request.query.get("limit")
+    offset = request.query.get("offset")
+
+    try:
+        limit_n = int(limit) if limit is not None else 200
+    except Exception:
+        limit_n = 200
+    try:
+        offset_n = int(offset) if offset is not None else 0
+    except Exception:
+        offset_n = 0
+
+    try:
+        conn = _samples_db_connect()
+        try:
+            cur = conn.cursor()
+            where = []
+            params: list[object] = []
+
+            join = ""
+            if collection_id:
+                join = " JOIN collection_samples cs ON cs.sample_id = ds.id "
+                where.append("cs.collection_id = ?")
+                params.append(collection_id)
+            if drum_type:
+                where.append("ds.drum_type = ?")
+                params.append(drum_type)
+
+            where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+            sql = (
+                "SELECT ds.id, ds.file_path, ds.file_name, ds.file_size, ds.drum_type, ds.variation, ds.format, ds.kit_name "
+                "FROM drum_samples ds" + join + where_sql + " ORDER BY ds.id LIMIT ? OFFSET ?"
+            )
+            params.extend([limit_n, offset_n])
+            cur.execute(sql, params)
+            rows = [dict(r) for r in cur.fetchall()]
+            return web.json_response({
+                "db": str(SAMPLE_DB_PATH),
+                "samplesRoot": str(SAMPLES_ROOT),
+                "samples": rows,
+                "limit": limit_n,
+                "offset": offset_n,
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"api_drum_samples failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_drum_sample_audio(request: web.Request) -> web.StreamResponse:
+    if not SAMPLE_DB_PATH.exists():
+        return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
+    sample_id = request.match_info.get("sample_id")
+    if not sample_id:
+        return web.json_response({"error": "sample_id required"}, status=400)
+
+    try:
+        conn = _samples_db_connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT file_path FROM drum_samples WHERE id = ?", (sample_id,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return web.json_response({"error": "sample not found"}, status=404)
+
+            path = _resolve_sample_file_path(str(row[0]))
+            if not path or not path.exists() or not path.is_file():
+                return web.json_response({"error": "file not found", "file_path": str(path)}, status=404)
+
+            # If DB stores relative paths, enforce root jail under SAMPLES_ROOT
+            raw = str(row[0])
+            is_relative = (not Path(raw).is_absolute()) and (":" not in raw)
+            if is_relative and not _is_under_root(path, SAMPLES_ROOT):
+                return web.json_response({"error": "file path not allowed"}, status=403)
+
+            ctype, _ = mimetypes.guess_type(str(path))
+            if not ctype:
+                ctype = "application/octet-stream"
+            return web.FileResponse(path=str(path), headers={"Content-Type": ctype})
+        finally:
+            conn.close()
+    except Exception as e:
+        LOG.error(f"api_drum_sample_audio failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 # Auto-detect Rust binary if environment variable not explicitly set
 if os.getenv("USE_RUST") is not None:
@@ -508,6 +952,96 @@ async def waveform(request: web.Request):
         }
         return web.json_response(mock_wf)
 
+async def beatbox_translate(request: web.Request):
+    """Translate a beatbox/vocal percussion recording into a drum groove."""
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"success": False, "error": "invalid json"}, status=400)
+
+    file_id = data.get("file_id")
+    if not file_id:
+        return web.json_response({"success": False, "error": "missing file_id"}, status=400)
+
+    file_path = (UPLOAD_DIR / safe_name(file_id)).resolve()
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve())):
+        return web.json_response({"success": False, "error": "invalid file_id"}, status=400)
+    if not file_path.exists():
+        return web.json_response({"success": False, "error": "file not found"}, status=404)
+
+    options_payload = data.get("options", {}) or {}
+    plugin = str(data.get("plugin") or options_payload.get("plugin") or "jamstix")
+    try:
+        options = BeatboxTranslationOptions(
+            swing=float(options_payload.get("swing", 0.0) or 0.0),
+            quantization=str(options_payload.get("quantization", "1/16")),
+            confidence_threshold=float(options_payload.get("confidence_threshold", 0.35) or 0.35),
+            plugin=plugin,
+        )
+    except (TypeError, ValueError):
+        return web.json_response({"success": False, "error": "invalid options"}, status=400)
+
+    loop = asyncio.get_event_loop()
+    try:
+        translator_result = await loop.run_in_executor(
+            None,
+            lambda: translate_beatbox(file_path, options),
+        )
+    except FileNotFoundError:
+        return web.json_response({"success": False, "error": "file not found"}, status=404)
+    except Exception as exc:
+        LOG.exception("Beatbox translation failed")
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+    job_id = f"beatbox_{safe_name(file_id)}"
+    ANALYSIS_CACHE[job_id] = {
+        "job_id": job_id,
+        "file_id": file_id,
+        "tempo": translator_result.get("tempo"),
+        "beats": translator_result.get("hits", []),
+        "summary": translator_result.get("summary", {}),
+        "status": "complete",
+        "preview_midi": translator_result.get("preview_midi"),
+    }
+
+    response_payload = {
+        "success": True,
+        "job_id": job_id,
+        "tempo": translator_result.get("tempo"),
+        "hits": translator_result.get("hits", []),
+        "summary": translator_result.get("summary", {}),
+        "preview_midi": translator_result.get("preview_midi"),
+        "plugin": translator_result.get("plugin"),
+        "ticks_per_beat": translator_result.get("ticks_per_beat"),
+    }
+
+    persona_id = data.get("persona_id")
+    style_pack = data.get("style_pack")
+    if persona_id:
+        response_payload["persona_id"] = persona_id
+    if style_pack:
+        response_payload["style_pack"] = style_pack
+
+    if translator_result.get("hits"):
+        jamstix_result, jamstix_error = auto_generate_jamstix_track(
+            translator_result.get("hits", []),
+            translator_result.get("tempo"),
+            persona_hint=persona_id,
+            style_pack_hint=style_pack,
+        )
+        if jamstix_result:
+            response_payload["jamstix_track"] = jamstix_result["track"]
+            response_payload["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            response_payload["jamstix_sections"] = jamstix_result["sections"]
+            response_payload["jamstix_time_signature"] = jamstix_result["timeSignature"]
+            ANALYSIS_CACHE[job_id]["jamstix_track"] = jamstix_result["track"]
+            ANALYSIS_CACHE[job_id]["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            ANALYSIS_CACHE[job_id]["jamstix_sections"] = jamstix_result["sections"]
+        elif jamstix_error and jamstix_error != "jamstix_unavailable":
+            response_payload["jamstix_error"] = jamstix_error
+
+    return web.json_response(response_payload)
+
 async def audio_file(request: web.Request):
     # Serve audio files with CORS for Web Audio API MediaElementSource
     key = request.query.get("key")
@@ -650,6 +1184,179 @@ async def get_analysis_results(request: web.Request):
             "drummer_style": "Unknown"
         })
 
+
+async def list_drummer_personas(request: web.Request):
+    """Return persona metadata for frontend visualizations.
+
+    Response shape:
+        {
+            "source": "admin_db" | "static",
+            "personas": [ ... ]
+        }
+    """
+
+    personas = []
+    source = "static"
+
+    if ADMIN_DB_AVAILABLE:
+        try:
+            db = get_admin_db_service()
+            db.initialize()
+            personas = db.get_all_drummer_personas()
+            if personas:
+                source = "admin_db"
+        except Exception as exc:  # pragma: no cover - defensive guard
+            LOG.warning(f"Falling back to static personas: {exc}")
+            personas = []
+
+    if not personas:
+        try:
+            service = get_drummer_service()
+            personas = service.list_drummers()
+        except Exception as exc:
+            LOG.error(f"Unable to provide fallback personas: {exc}")
+            return web.json_response({"error": "persona registry unavailable"}, status=500)
+
+    return web.json_response({"source": source, "personas": personas})
+
+
+async def beatbox_tap_input(request: web.Request):
+    """Accept structured pad hits from the frontend and render a groove."""
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"success": False, "error": "invalid json"}, status=400)
+
+    hits = data.get("hits")
+    if not isinstance(hits, list) or not hits:
+        return web.json_response({"success": False, "error": "missing hits"}, status=400)
+
+    try:
+        tempo = float(data.get("tempo", 100.0))
+    except (TypeError, ValueError):
+        tempo = 100.0
+
+    plugin = str(data.get("plugin") or data.get("options", {}).get("plugin") or "jamstix")
+
+    try:
+        translation = taps_to_translation(hits, tempo=tempo, plugin=plugin)
+    except Exception as exc:
+        LOG.exception("Tap input translation failed")
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+    job_id = f"tap_{int(time.time()*1000)}"
+    ANALYSIS_CACHE[job_id] = {
+        "job_id": job_id,
+        "tempo": translation.get("tempo"),
+        "beats": translation.get("hits", []),
+        "summary": translation.get("summary", {}),
+        "status": "complete",
+        "preview_midi": translation.get("preview_midi"),
+    }
+
+    response_payload = {
+        "success": True,
+        "job_id": job_id,
+        **translation,
+    }
+
+    persona_id = data.get("persona_id")
+    style_pack = data.get("style_pack")
+    if persona_id:
+        response_payload["persona_id"] = persona_id
+    if style_pack:
+        response_payload["style_pack"] = style_pack
+
+    if translation.get("hits"):
+        jamstix_result, jamstix_error = auto_generate_jamstix_track(
+            translation.get("hits", []),
+            translation.get("tempo"),
+            persona_hint=persona_id,
+            style_pack_hint=style_pack,
+        )
+        if jamstix_result:
+            response_payload["jamstix_track"] = jamstix_result["track"]
+            response_payload["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            response_payload["jamstix_sections"] = jamstix_result["sections"]
+            response_payload["jamstix_time_signature"] = jamstix_result["timeSignature"]
+            ANALYSIS_CACHE[job_id]["jamstix_track"] = jamstix_result["track"]
+            ANALYSIS_CACHE[job_id]["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            ANALYSIS_CACHE[job_id]["jamstix_sections"] = jamstix_result["sections"]
+        elif jamstix_error and jamstix_error != "jamstix_unavailable":
+            response_payload["jamstix_error"] = jamstix_error
+
+    return web.json_response(response_payload)
+
+
+async def beatprompt_render(request: web.Request):
+    """Map natural-language prompts or structured sections to tap hits."""
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"success": False, "error": "invalid json"}, status=400)
+
+    prompt_text = str(data.get("prompt") or "")
+    sections_payload = data.get("sections") if isinstance(data.get("sections"), list) else None
+    sections, warnings = normalize_sections(prompt_text, sections_payload)
+
+    if not sections:
+        return web.json_response({"success": False, "error": "no sections detected"}, status=400)
+
+    hits, tempo = render_sections_to_hits(sections)
+    if not hits:
+        return web.json_response({"success": False, "error": "unable to build hits"}, status=400)
+
+    plugin = str(data.get("plugin") or "jamstix")
+
+    try:
+        translation = taps_to_translation(hits, tempo=tempo, plugin=plugin)
+    except Exception as exc:
+        LOG.exception("BeatPrompt render failed")
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+    job_id = f"beatprompt_{int(time.time()*1000)}"
+    ANALYSIS_CACHE[job_id] = {
+        "job_id": job_id,
+        "tempo": translation.get("tempo"),
+        "beats": translation.get("hits", []),
+        "summary": translation.get("summary", {}),
+        "status": "complete",
+        "preview_midi": translation.get("preview_midi"),
+    }
+
+    top_section = sections[0]
+    response_payload = {
+        "success": True,
+        "job_id": job_id,
+        **translation,
+        "persona_id": top_section.persona_id,
+        "style_pack": top_section.style_pack,
+        "sections": serialize_sections(sections),
+        "warnings": warnings,
+    }
+
+    if translation.get("hits"):
+        jamstix_result, jamstix_error = auto_generate_jamstix_track(
+            translation.get("hits", []),
+            translation.get("tempo", tempo),
+            sections=sections,
+            persona_hint=top_section.persona_id,
+            style_pack_hint=top_section.style_pack,
+            meter_hint=top_section.meter,
+        )
+        if jamstix_result:
+            response_payload["jamstix_track"] = jamstix_result["track"]
+            response_payload["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            response_payload["jamstix_sections"] = jamstix_result["sections"]
+            response_payload["jamstix_time_signature"] = jamstix_result["timeSignature"]
+            ANALYSIS_CACHE[job_id]["jamstix_track"] = jamstix_result["track"]
+            ANALYSIS_CACHE[job_id]["jamstix_performance_spec"] = jamstix_result["performanceSpec"]
+            ANALYSIS_CACHE[job_id]["jamstix_sections"] = jamstix_result["sections"]
+        elif jamstix_error and jamstix_error != "jamstix_unavailable":
+            response_payload["jamstix_error"] = jamstix_error
+
+        return web.json_response(response_payload)
+
 def make_app() -> web.Application:
     app = web.Application()
     app.add_routes([
@@ -682,11 +1389,19 @@ def make_app() -> web.Application:
         web.get("/dcsm/analyze_full", dcsm_analyze_full),
         web.post("/dcsm/generate", dcsm_generate),
         web.post("/analyze/tempo_sections", analyze_tempo_sections),
+        web.get("/dcsm/brain-elements", list_brain_elements),
+        web.get("/dcsm/brain-config/{section_id}", get_brain_config),
+        web.patch("/dcsm/brain-config/{section_id}", patch_brain_config),
         # Drummer profile endpoints
         web.get("/api/drummers", list_drummers),
         web.get("/api/drummers/{drummer_id}", get_drummer_details),
         web.post("/api/generate_with_drummer", generate_with_drummer),
         web.post("/api/sectionize_smart", api_sectionize_smart),
+        # Drummer personas (analysis/brain visualization)
+        web.get("/api/drummer-personas", list_drummer_personas),
+        web.post("/api/beatbox/translate", beatbox_translate),
+        web.post("/api/beatbox/tap-input", beatbox_tap_input),
+        web.post("/api/beatprompt/render", beatprompt_render),
         # Song lookup endpoint
         web.get("/api/song-lookup", song_lookup),
         # Drum generation endpoint
@@ -695,6 +1410,11 @@ def make_app() -> web.Application:
         web.post("/api/jamstix/enrich", jamstix_enrich_pattern),
         web.post("/api/jamstix/build-track", jamstix_build_track),
         web.get("/api/jamstix/status", jamstix_status),
+
+        # Sample DB endpoints (Docker/cloud friendly)
+        web.get("/api/sample-collections", api_sample_collections),
+        web.get("/api/drum-samples", api_drum_samples),
+        web.get("/api/drum-samples/{sample_id}/audio", api_drum_sample_audio),
     ])
 
     # Initialize AI system and register AI routes
@@ -888,14 +1608,13 @@ async def analyze_onsets(request):
     if not path.exists() or not str(path).startswith(str(UPLOAD_DIR)):
         return web.json_response({"error": "audio not found"}, status=404)
     
-    if not sf or not librosa:
-        return web.json_response({"error": "audio analysis libraries not available"}, status=500)
-    
+    if not USE_RUST:
+        return web.json_response({"error": "Rust audio-core required"}, status=503)
+
     try:
-        y, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        if y.ndim == 2:
-            y = y.mean(axis=1)
-        onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time")
+        result = run_audio_core(["analyze", str(path)])
+        sr = int(result.get("sample_rate") or result.get("sr") or 44100)
+        onsets = result.get("onsets", []) or []
         return web.json_response({"sr": sr, "onsets": [float(t) for t in onsets]})
     except Exception as e:
         LOG.error(f"Onset analysis failed: {e}")
@@ -910,16 +1629,14 @@ async def analyze_tempo(request):
     if not path.exists() or not str(path).startswith(str(UPLOAD_DIR)):
         return web.json_response({"error": "audio not found"}, status=404)
     
-    if not sf or not librosa:
-        return web.json_response({"error": "audio analysis libraries not available"}, status=500)
-    
+    if not USE_RUST:
+        return web.json_response({"error": "Rust audio-core required"}, status=503)
+
     try:
-        y, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        if y.ndim == 2:
-            y = y.mean(axis=1)
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        times = librosa.frames_to_time(beats, sr=sr)
-        return web.json_response({"tempo": float(tempo), "beats": [float(t) for t in times]})
+        result = run_audio_core(["analyze", str(path)])
+        tempo = float(result.get("tempo", 0.0) or 0.0)
+        beats = result.get("beats", []) or []
+        return web.json_response({"tempo": tempo, "beats": [float(t) for t in beats]})
     except Exception as e:
         LOG.error(f"Tempo analysis failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -939,29 +1656,30 @@ async def align_sections(request):
     if not path.exists() or not str(path).startswith(str(UPLOAD_DIR)):
         return web.json_response({"error": "audio not found"}, status=404)
     
-    if not sf or not librosa:
-        return web.json_response({"error": "audio analysis libraries not available"}, status=500)
-    
+    if not USE_RUST:
+        return web.json_response({"error": "Rust audio-core required"}, status=503)
+
     try:
-        y, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        if y.ndim == 2:
-            y = y.mean(axis=1)
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        times = librosa.frames_to_time(beats, sr=sr)
-        
-        def snap(v: float):
-            if len(times) == 0:
-                return v
-            idx = int(np.argmin(np.abs(times - v)))
-            return float(times[idx])
-        
+        result = run_audio_core(["analyze", str(path)])
+        tempo = float(result.get("tempo", 0.0) or 0.0)
+        beat_times = result.get("beats", []) or []
+
+        def snap(value: float) -> float:
+            if not beat_times:
+                return value
+            closest = min(beat_times, key=lambda t: abs(t - value))
+            return float(closest)
+
         aligned = []
         for s in sections:
-            start = snap(s.get("start", 0))
-            end = max(snap(s.get("end", start + 1)), start + 0.25)
+            start_raw = float(s.get("start", 0.0) or 0.0)
+            end_raw = float(s.get("end", start_raw + 1.0) or (start_raw + 1.0))
+            start = snap(start_raw)
+            snapped_end = snap(end_raw)
+            end = max(snapped_end, start + 0.25)
             aligned.append({"start": start, "end": end})
-        
-        return web.json_response({"tempo": float(tempo), "sections": aligned})
+
+        return web.json_response({"tempo": tempo, "sections": aligned})
     except Exception as e:
         LOG.error(f"Section alignment failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -1635,13 +2353,28 @@ async def handle_generate_drums(request):
     """
     try:
         data = await request.json()
-        LOG.info(f"Drum generation request: {data.get('sectionId')} ({data.get('measureCount')} measures)")
+        section_id = data.get('sectionId')
+        build_scope = (data.get('buildScope') or data.get('mode') or '').lower()
+        LOG.info(f"Drum generation request: {section_id} ({data.get('measureCount')} measures)")
+
+        if build_scope in {"selected_section", "section", "per_section"} and not section_id:
+            return web.json_response(
+                {"error": "sectionId is required when buildScope=selected_section"},
+                status=400,
+            )
+
+        if not section_id:
+            LOG.warning("/api/generate-drums received payload without sectionId; continuing in global mode")
         
         # Create config object
         config = DrumGenerationConfig(data)
         
         # Generate drums using integrated system
         result = generate_drums(config)
+
+        metadata = result.get('metadata') or {}
+        metadata['sectionId'] = section_id or None
+        result['metadata'] = metadata
         
         LOG.info(f"✅ Generated drums in {result['metadata']['generation_time_ms']}ms")
         
@@ -1652,6 +2385,57 @@ async def handle_generate_drums(request):
         import traceback
         traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================================
+# BRAIN PANEL ENDPOINTS
+# ============================================================================
+
+
+async def list_brain_elements(request: web.Request):
+    """Return Jamstix-style brain element metadata."""
+
+    style_hint = request.query.get("style")
+    definitions = get_brain_elements(style_hint)
+    payload = [_serialize_brain_definition(defn) for defn in definitions]
+    return web.json_response(payload)
+
+
+async def get_brain_config(request: web.Request):
+    section_id = request.match_info.get("section_id")
+    if not section_id:
+        return web.json_response({"error": "section_id required"}, status=400)
+
+    style_hint = request.query.get("style")
+    config = _load_brain_config(section_id, style_hint)
+    return web.json_response(config.to_dict())
+
+
+async def patch_brain_config(request: web.Request):
+    section_id = request.match_info.get("section_id")
+    if not section_id:
+        return web.json_response({"error": "section_id required"}, status=400)
+
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+    except Exception as exc:
+        return web.json_response({"error": f"invalid JSON: {exc}"}, status=400)
+
+    baseline = _load_brain_config(section_id)
+    baseline_dict = baseline.to_dict()
+    for key in ("mode", "randomizeSeed", "elementSettings"):
+        if key in payload:
+            baseline_dict[key] = payload[key]
+
+    try:
+        updated = DrumBrainConfig.from_dict(baseline_dict)
+    except Exception as exc:
+        return web.json_response({"error": f"invalid brain config: {exc}"}, status=400)
+
+    _save_brain_config(section_id, updated)
+    return web.json_response(updated.to_dict())
 
 
 # ============================================================================

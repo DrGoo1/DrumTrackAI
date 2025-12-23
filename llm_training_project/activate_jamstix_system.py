@@ -28,6 +28,7 @@ def check_reaper():
     reaper_paths = [
         Path("C:/Program Files/REAPER/reaper.exe"),
         Path("C:/Program Files (x86)/REAPER/reaper.exe"),
+        Path("C:/Program Files/REAPER (x64)/reaper.exe"),
     ]
     
     for path in reaper_paths:

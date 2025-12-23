@@ -1,18 +1,24 @@
 // frontend/src/components/drums/DrumPianoRoll.tsx
 
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useEffect, useState, useRef } from "react";
 import {
   DrumTrackForDCSM,
   DrumNoteEvent,
   NoteAspect,
   DrumInstrumentId,
 } from "../../types/drumTrack";
+import { getMidiPitchForInstrument } from "../../utils/drumTrackUtils";
 import {
   GridResolution,
   getSubdivisionsPerBar,
   getTicksPerSubdivision,
 } from "../../utils/pianoRollGrid";
 import { GrooveWeightMap } from "../../types/grooveWeight";
+import { LIMB_CONFIG, inferLimbFromInstrument, type LimbId } from "../../constants/limbs";
+import { BAR_GRID_THEME } from "../../constants/barGrid";
+import { getInstrumentForMidiPitch } from "../../utils/drumTrackUtils";
+
+const SUPPORTED_LIMBS: readonly LimbId[] = ["RH", "LH", "RF", "LF"];
 
 interface DrumPianoRollProps {
   drumTrack: DrumTrackForDCSM | null;
@@ -23,6 +29,11 @@ interface DrumPianoRollProps {
   onNoteChange?: (notes: DrumNoteEvent[]) => void;
   onNoteSelect?: (noteIds: string[]) => void;
   selectedNoteIds?: string[];
+  scrollContainerRef?: React.RefObject<HTMLDivElement>;
+  pixelsPerBeat: number;
+  visibleStartMeasure?: number;
+  visibleMeasureCount?: number;
+  totalSongBars?: number;
 }
 
 const instrumentOrder: DrumInstrumentId[] = [
@@ -43,6 +54,30 @@ const instrumentOrder: DrumInstrumentId[] = [
   "crash_2",
 ];
 
+const limbLaneOrder: readonly LimbId[] = ["RH", "LH", "RF", "LF"] as const;
+
+const DEFAULT_LIMB_INSTRUMENT: Record<(typeof limbLaneOrder)[number], DrumInstrumentId> = {
+  RH: "hihat_closed",
+  LH: "snare_center",
+  RF: "kick",
+  LF: "hihat_pedal",
+};
+
+const inferLimbFromMidiPitch = (pitch?: number | null): LimbId | null => {
+  if (typeof pitch !== "number" || !Number.isFinite(pitch)) {
+    return null;
+  }
+  const p = Math.round(pitch);
+  // Common GM drum pitches
+  if (p === 36 || p === 35) return "RF"; // kick
+  if (p === 38 || p === 40 || p === 37) return "LH"; // snare / rim
+  if (p === 44) return "LF"; // pedal hat
+  if (p === 42 || p === 46 || p === 45) return "RH"; // hats
+  if (p === 49 || p === 57 || p === 51 || p === 59 || p === 55 || p === 52) return "RH"; // cymbals
+  if (p === 41 || p === 43 || p === 47 || p === 48 || p === 50) return "LH"; // toms
+  return null;
+};
+
 export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   drumTrack,
   timeSignature,
@@ -52,6 +87,11 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   onNoteChange,
   onNoteSelect,
   selectedNoteIds = [],
+  scrollContainerRef,
+  pixelsPerBeat,
+  visibleStartMeasure,
+  visibleMeasureCount,
+  totalSongBars,
 }) => {
   if (!drumTrack) {
     return (
@@ -61,10 +101,13 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
     );
   }
 
+  const headerScrollRef = useRef<HTMLDivElement | null>(null);
+  const laneScrollRef = useRef<HTMLDivElement | null>(null);
+
   const { resolution_ppq, notes } = drumTrack;
 
-  const barCount = useMemo(
-    () => (notes.length ? 1 + Math.max(...notes.map((n) => n.barIndex)) : 0),
+  const trackBarCount = useMemo(
+    () => (notes.length ? 1 + Math.max(...notes.map((n) => n.barIndex ?? 0)) : 0),
     [notes]
   );
 
@@ -74,6 +117,35 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
     timeSignature,
     gridResolution
   );
+  const beatsPerBar = timeSignature[0];
+  const ticksPerBar = resolution_ppq * beatsPerBar;
+  const barWidthPx = pixelsPerBeat * beatsPerBar;
+
+  const [scrollLeft, setScrollLeft] = useState(0);
+
+  const totalBarsSpan = totalSongBars ?? Math.max(trackBarCount || 1, 1);
+  const totalWidth = Math.max(1, totalBarsSpan * barWidthPx);
+
+  const fallbackStartBar = Math.max(0, visibleStartMeasure ?? 0);
+  const viewStartBar = useMemo(() => {
+    const derived = barWidthPx > 0 ? Math.floor(scrollLeft / barWidthPx) : 0;
+    return Math.max(0, Number.isFinite(derived) ? derived : fallbackStartBar);
+  }, [barWidthPx, fallbackStartBar, scrollLeft]);
+
+  const viewBarCount = useMemo(() => {
+    const viewportPx = laneScrollRef.current?.clientWidth ?? 0;
+    if (!Number.isFinite(viewportPx) || viewportPx <= 0 || !Number.isFinite(barWidthPx) || barWidthPx <= 0) {
+      const available = Math.max(1, trackBarCount - fallbackStartBar);
+      return Math.max(1, visibleMeasureCount ?? available);
+    }
+    const barsInView = Math.ceil(viewportPx / barWidthPx) + 2;
+    const desired = Math.max(1, barsInView);
+    return Number.isFinite(visibleMeasureCount) ? Math.max(desired, visibleMeasureCount!) : desired;
+  }, [barWidthPx, fallbackStartBar, trackBarCount, visibleMeasureCount]);
+
+  const windowStartBar = viewStartBar;
+  const renderStartBar = Math.max(0, windowStartBar - 1);
+  const renderEndBar = windowStartBar + viewBarCount + 1;
 
   const filteredNotes = useMemo(() => {
     if (currentAspect === "all") return notes;
@@ -94,8 +166,147 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   );
 
   const laneHeight = 20;
-  const barWidthPx = 320; // you can make this zoomable
-  const totalWidth = barCount * barWidthPx;
+  const limbLaneHeight = 18;
+  const limbAccentForInstrument = useCallback((instrumentId: string): { limb: LimbId | null; accent?: string } => {
+    const limb = inferLimbFromInstrument(instrumentId);
+    return {
+      limb,
+      accent: limb ? LIMB_CONFIG[limb].accentColor : undefined,
+    };
+  }, []);
+
+  const supportedLimb = useCallback((raw?: DrumNoteEvent["limbId"] | null): LimbId | null => {
+    if (!raw) return null;
+    return SUPPORTED_LIMBS.includes(raw as LimbId) ? (raw as LimbId) : null;
+  }, []);
+
+  const limbAccentForNote = useCallback((note: DrumNoteEvent): { limb: LimbId | null; accent?: string } => {
+    const direct = supportedLimb(note.limbId);
+    const pitchFallback = inferLimbFromMidiPitch(note.midiPitch);
+    const inferredInstrument = note.instrumentId
+      ? note.instrumentId
+      : typeof note.midiPitch === "number"
+        ? getInstrumentForMidiPitch(note.midiPitch)
+        : null;
+    const fallback = inferredInstrument ? inferLimbFromInstrument(inferredInstrument) : null;
+    const limb = direct ?? fallback ?? pitchFallback;
+    return {
+      limb,
+      accent: limb ? LIMB_CONFIG[limb].accentColor : undefined,
+    };
+  }, [supportedLimb]);
+
+  const limbForNote = useCallback(
+    (note: DrumNoteEvent): LimbId | null => {
+      const direct = supportedLimb(note.limbId);
+      if (direct) return direct;
+
+      const pitchFallback = inferLimbFromMidiPitch(note.midiPitch);
+      if (pitchFallback && limbLaneOrder.includes(pitchFallback)) {
+        return pitchFallback;
+      }
+
+      const inferredInstrument = note.instrumentId
+        ? note.instrumentId
+        : typeof note.midiPitch === "number"
+          ? getInstrumentForMidiPitch(note.midiPitch)
+          : null;
+      if (inferredInstrument) {
+        const inferred = inferLimbFromInstrument(inferredInstrument);
+        if (inferred && limbLaneOrder.includes(inferred)) {
+          return inferred;
+        }
+      }
+      return null;
+    },
+    [supportedLimb],
+  );
+
+  const limbNotesByLimb: Record<LimbId, DrumNoteEvent[]> = useMemo(() => {
+    const map: Record<string, DrumNoteEvent[]> = {};
+    for (const limb of limbLaneOrder) {
+      map[limb] = [];
+    }
+    for (const n of filteredNotes) {
+      const limb = limbForNote(n);
+      if (!limb || !limbLaneOrder.includes(limb)) {
+        continue;
+      }
+      map[limb].push(n);
+    }
+    return map as Record<LimbId, DrumNoteEvent[]>;
+  }, [filteredNotes, limbForNote]);
+
+  const toggleLimbHit = useCallback(
+    (limb: LimbId, ev: React.MouseEvent) => {
+      if (!onNoteChange) return;
+      const laneEl = laneScrollRef.current;
+      if (!laneEl) return;
+
+      const rect = laneEl.getBoundingClientRect();
+      const xPx = ev.clientX - rect.left + laneEl.scrollLeft;
+      if (!Number.isFinite(xPx) || xPx < 0) return;
+
+      const barIndex = Math.max(0, Math.floor(xPx / Math.max(1, barWidthPx)));
+      const inBarPx = xPx - barIndex * barWidthPx;
+      const cellPx = barWidthPx / Math.max(1, subdivisionsPerBar);
+      const subIdx = Math.max(0, Math.min(subdivisionsPerBar - 1, Math.floor(inBarPx / Math.max(1, cellPx))));
+      const tickInBar = Math.max(0, Math.round(subIdx * ticksPerSubdivision));
+      const tickTolerance = Math.max(1, Math.floor(ticksPerSubdivision / 2));
+
+      const existingIdx = notes.findIndex((n) => {
+        const nLimb = limbForNote(n);
+        if (nLimb !== limb) return false;
+        if ((n.barIndex ?? 0) !== barIndex) return false;
+        return Math.abs((n.tickInBar ?? 0) - tickInBar) <= tickTolerance;
+      });
+
+      if (existingIdx >= 0) {
+        const next = notes.filter((_, idx) => idx !== existingIdx);
+        onNoteChange(next);
+        return;
+      }
+
+      const instrumentId = DEFAULT_LIMB_INSTRUMENT[limb] ?? "snare_center";
+      const midiPitch = getMidiPitchForInstrument(instrumentId);
+      const id = `limb-${limb}-${barIndex}-${tickInBar}-${Math.random().toString(36).slice(2, 7)}`;
+      const velocity = 100;
+      const aspect = currentAspect === "all" ? "groove" : (currentAspect as NoteAspect);
+
+      const newNote: DrumNoteEvent = {
+        id,
+        barIndex,
+        tickInBar,
+        tickLength: Math.max(1, Math.round(ticksPerSubdivision * 0.95)),
+        channel: 9,
+        midiPitch,
+        velocity,
+        instrumentId,
+        aspect,
+        limbId: limb,
+        isGhost: false,
+        isAccent: false,
+        isFlam: false,
+        isDrag: false,
+      };
+
+      onNoteChange([...notes, newNote]);
+      if (onNoteSelect) {
+        onNoteSelect([id]);
+      }
+    },
+    [
+      barWidthPx,
+      currentAspect,
+      limbForNote,
+      notes,
+      onNoteChange,
+      onNoteSelect,
+      subdivisionsPerBar,
+      supportedLimb,
+      ticksPerSubdivision,
+    ],
+  );
 
   const notesByInstrument: Record<DrumInstrumentId, DrumNoteEvent[]> = useMemo(
     () => {
@@ -110,35 +321,72 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
     [filteredNotes]
   );
 
+  React.useEffect(() => {
+    const headerEl = headerScrollRef.current;
+    const laneEl = laneScrollRef.current;
+    if (!laneEl || !headerEl) {
+      return;
+    }
+    const syncHeader = () => {
+      headerEl.scrollLeft = laneEl.scrollLeft;
+    };
+    laneEl.addEventListener("scroll", syncHeader, { passive: true });
+    return () => {
+      laneEl.removeEventListener("scroll", syncHeader);
+    };
+  }, [totalBarsSpan]);
+
+  useEffect(() => {
+    const laneEl = laneScrollRef.current;
+    if (!laneEl) return;
+    const update = () => setScrollLeft(laneEl.scrollLeft);
+    update();
+    laneEl.addEventListener("scroll", update, { passive: true });
+    return () => laneEl.removeEventListener("scroll", update);
+  }, [drumTrack?.track_id, barWidthPx]);
+
+  React.useEffect(() => {
+    if (scrollContainerRef) {
+      scrollContainerRef.current = laneScrollRef.current;
+    }
+    return () => {
+      if (scrollContainerRef && scrollContainerRef.current === laneScrollRef.current) {
+        scrollContainerRef.current = null;
+      }
+    };
+  }, [scrollContainerRef, drumTrack?.track_id]);
+
   return (
-    <div className="flex-1 flex flex-col bg-slate-900 text-xs overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col bg-slate-900 text-xs overflow-hidden">
       {/* Header row */}
-      <div className="flex flex-row border-b border-slate-700">
+      <div className="flex flex-row border-b border-slate-700 min-w-0">
         <div className="w-36 flex-shrink-0 border-r border-slate-700 bg-slate-950 px-2 py-1 text-slate-400">
           Instrument
         </div>
-        <div className="flex-1 relative overflow-x-auto">
+        <div className="flex-1 min-w-0 relative overflow-x-auto" ref={headerScrollRef}>
           <div
             className="relative"
             style={{ width: `${totalWidth}px`, height: 24 }}
           >
             {/* Bar labels */}
-            {Array.from({ length: barCount }).map((_, barIdx) => (
+            {Array.from({ length: totalBarsSpan }).map((_, barIdx) => (
               <div
-                key={barIdx}
-                className="absolute top-0 h-full border-r border-slate-700 text-[10px] text-slate-400 flex items-center"
+                key={`bar-label-${barIdx}`}
+                className="absolute top-0 h-full flex items-center text-[10px]"
                 style={{
                   left: barIdx * barWidthPx,
                   width: barWidthPx,
                   paddingLeft: 4,
+                  borderRight: `1px solid ${BAR_GRID_THEME.bar}`,
+                  color: BAR_GRID_THEME.label,
                 }}
               >
-                Bar {barIdx + 1}
+                {barIdx + 1}
               </div>
             ))}
 
             {/* Subdivision grid + groove weights */}
-            {Array.from({ length: barCount }).map((_, barIdx) =>
+            {Array.from({ length: totalBarsSpan }).map((_, barIdx) =>
               Array.from({ length: subdivisionsPerBar }).map((__, subIdx) => {
                 const left =
                   barIdx * barWidthPx +
@@ -146,22 +394,25 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
                 const weight =
                   grooveWeights?.[barIdx]?.[subIdx]?.weight ?? "neutral";
-
-                let lineClass = "border-slate-800";
-                if (subIdx % (subdivisionsPerBar / 4) === 0) {
-                  lineClass = "border-slate-600";
+                let color = BAR_GRID_THEME.subdivision;
+                if (subIdx % (subdivisionsPerBar / 4 || 1) === 0) {
+                  color = BAR_GRID_THEME.beat;
                 }
                 if (weight === "heavy") {
-                  lineClass = "border-slate-400";
+                  color = BAR_GRID_THEME.bar;
                 } else if (weight === "syncopated") {
-                  lineClass = "border-amber-500/80";
+                  color = BAR_GRID_THEME.accent;
                 }
 
                 return (
                   <div
                     key={`${barIdx}-${subIdx}`}
-                    className={`absolute top-0 bottom-0 border-l ${lineClass}`}
-                    style={{ left }}
+                    className="absolute top-0 bottom-0"
+                    style={{
+                      left,
+                      borderLeft: `1px solid ${color}`,
+                      opacity: 0.8,
+                    }}
                   />
                 );
               })
@@ -171,28 +422,82 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
       </div>
 
       {/* Main content */}
-      <div className="flex flex-row flex-1 overflow-hidden">
+      <div className="flex flex-row flex-1 overflow-hidden min-w-0">
         {/* Instrument labels */}
         <div className="w-36 flex-shrink-0 bg-slate-950 border-r border-slate-700">
-          {instrumentOrder.map((instId) => (
+          {instrumentOrder.map((instId) => {
+            const { accent } = limbAccentForInstrument(instId);
+            return (
+              <div
+                key={instId}
+                className="h-5 flex items-center px-2 text-[11px] font-semibold border-b border-transparent"
+                style={{
+                  color: accent || "#e2e8f0",
+                  backgroundColor: accent ? `${accent}1a` : undefined,
+                  borderColor: accent ? `${accent}66` : undefined,
+                }}
+              >
+                {instId.replace("_", " ")}
+              </div>
+            );
+          })}
+
+          <div className="h-1" />
+          {limbLaneOrder.map((limb) => (
             <div
-              key={instId}
-              className="h-5 flex items-center px-2 text-[11px] text-slate-200 border-b border-slate-800"
+              key={`limb-label-${limb}`}
+              className="flex items-center px-2 text-[11px] font-semibold border-t border-slate-800"
+              style={{ height: limbLaneHeight, color: LIMB_CONFIG[limb].accentColor }}
             >
-              {instId.replace("_", " ")}
+              {LIMB_CONFIG[limb].label}
             </div>
           ))}
         </div>
 
         {/* Note lanes */}
-        <div className="flex-1 relative overflow-x-auto overflow-y-hidden">
+        <div
+          className="flex-1 min-w-0 relative overflow-x-auto overflow-y-hidden"
+          ref={laneScrollRef}
+        >
           <div
             className="relative"
             style={{
               width: `${totalWidth}px`,
-              height: instrumentOrder.length * laneHeight,
+              height: instrumentOrder.length * laneHeight + limbLaneOrder.length * limbLaneHeight,
             }}
           >
+            {Array.from({ length: totalBarsSpan + 1 }).map((_, barIdx) => (
+              <div
+                key={`lane-grid-bar-${barIdx}`}
+                className="absolute top-0 bottom-0"
+                style={{
+                  left: barIdx * barWidthPx,
+                  borderLeft: `1px solid ${BAR_GRID_THEME.bar}`,
+                  opacity: 0.7,
+                  pointerEvents: "none",
+                }}
+              />
+            ))}
+            {Array.from({ length: totalBarsSpan }).flatMap((_, barIdx) =>
+              Array.from({ length: subdivisionsPerBar }).map((__, subIdx) => {
+                const left = barIdx * barWidthPx + (barWidthPx * subIdx) / subdivisionsPerBar;
+                const isBeat = subIdx % (subdivisionsPerBar / 4 || 1) === 0;
+                const color = isBeat ? BAR_GRID_THEME.beat : BAR_GRID_THEME.subdivision;
+                return (
+                  <div
+                    key={`lane-grid-sub-${barIdx}-${subIdx}`}
+                    className="absolute top-0 bottom-0"
+                    style={{
+                      left,
+                      borderLeft: `1px solid ${color}`,
+                      opacity: 0.35,
+                      pointerEvents: "none",
+                    }}
+                  />
+                );
+              }),
+            )}
+
             {/* Horizontal lines */}
             {instrumentOrder.map((instId, laneIdx) => (
               <div
@@ -202,41 +507,107 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
               />
             ))}
 
+            {limbLaneOrder.map((limb, idx) => (
+              <div
+                key={`limb-row-${limb}`}
+                className="absolute left-0 right-0 border-t border-slate-800"
+                style={{
+                  top: instrumentOrder.length * laneHeight + idx * limbLaneHeight,
+                  height: limbLaneHeight,
+                }}
+              />
+            ))}
+
             {/* Notes */}
             {instrumentOrder.map((instId, laneIdx) => {
               const laneNotes = notesByInstrument[instId] || [];
               return laneNotes.map((n) => {
-                const barX = n.barIndex * barWidthPx;
-                const fracInBar =
-                  n.tickInBar / (resolution_ppq * timeSignature[0]);
-                const x = barX + fracInBar * barWidthPx;
+                const noteBar = n.barIndex ?? 0;
+                if (noteBar < renderStartBar || noteBar > renderEndBar) {
+                  return null;
+                }
+
+                const fracInBar = (n.tickInBar ?? 0) / ticksPerBar;
+                const x = noteBar * barWidthPx + fracInBar * barWidthPx;
                 const w = Math.max(
                   4,
-                  (barWidthPx * (n.tickLength / (resolution_ppq * timeSignature[0])))
+                  barWidthPx * ((n.tickLength ?? ticksPerSubdivision) / ticksPerBar)
                 );
                 const y = laneIdx * laneHeight + 2;
                 const h = laneHeight - 4;
 
                 const selected = selectedNoteIds.includes(n.id);
-
-                let bgClass = "bg-slate-500";
-                if (n.isGhost) bgClass = "bg-slate-500/70";
-                if (n.isAccent) bgClass = "bg-amber-500";
-                if (n.aspect === "fill") bgClass = "bg-purple-500";
-                if (n.locked) bgClass += " ring-2 ring-emerald-400/80";
-
+                const { accent, limb } = limbAccentForNote(n);
+                let backgroundColor = accent ? `${accent}d0` : "#64748b";
+                if (n.isGhost) backgroundColor = accent ? `${accent}66` : "#94a3b8";
+                else if (n.isAccent) backgroundColor = accent ? `${accent}ff` : "#fbbf24";
+                else if (n.aspect === "fill") backgroundColor = accent ? `${accent}b3` : "#a855f7";
+                const borderColor = accent ? `${accent}a0` : "transparent";
+                const limbLabel = limb ? LIMB_CONFIG[limb].label : "Unassigned";
                 return (
                   <div
                     key={n.id}
-                    className={`absolute rounded-sm cursor-pointer ${bgClass} ${
+                    className={`absolute rounded-sm cursor-pointer border ${
                       selected ? "outline outline-1 outline-white" : ""
-                    }`}
-                    style={{ left: x, top: y, width: w, height: h }}
+                    } ${n.locked ? "ring-2 ring-emerald-400/80" : ""}`}
+                    style={{
+                      left: x,
+                      top: y,
+                      width: w,
+                      height: h,
+                      backgroundColor,
+                      borderColor,
+                      color: accent ? "#0f172a" : undefined,
+                    }}
                     onClick={(ev) => handleNoteClick(n, ev)}
-                    title={`${instId} @ bar ${n.barIndex + 1}`}
+                    title={`${instId} · ${limbLabel} @ bar ${noteBar + 1}`}
                   />
                 );
               });
+            })}
+
+            {limbLaneOrder.map((limb, limbIdx) => {
+              const laneNotes = limbNotesByLimb[limb] || [];
+              const y = 1;
+              const h = limbLaneHeight - 2;
+              const accent = LIMB_CONFIG[limb].accentColor;
+              return (
+                <div
+                  key={`limb-lane-${limb}`}
+                  className="absolute left-0 right-0"
+                  style={{
+                    top: instrumentOrder.length * laneHeight + limbIdx * limbLaneHeight,
+                    height: limbLaneHeight,
+                  }}
+                  onClick={(ev) => toggleLimbHit(limb, ev)}
+                >
+                  {laneNotes.map((n) => {
+                    const noteBar = n.barIndex ?? 0;
+                    if (noteBar < renderStartBar || noteBar > renderEndBar) {
+                      return null;
+                    }
+                    const fracInBar = (n.tickInBar ?? 0) / ticksPerBar;
+                    const x = noteBar * barWidthPx + fracInBar * barWidthPx;
+                    const w = Math.max(4, barWidthPx * ((n.tickLength ?? ticksPerSubdivision) / ticksPerBar));
+                    const selected = selectedNoteIds.includes(n.id);
+                    return (
+                      <div
+                        key={`limb-hit-${n.id}`}
+                        className={`absolute rounded-sm border ${selected ? "outline outline-1 outline-white" : ""}`}
+                        style={{
+                          left: x,
+                          top: y,
+                          width: w,
+                          height: h,
+                          backgroundColor: `${accent}cc`,
+                          borderColor: `${accent}aa`,
+                          pointerEvents: "none",
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              );
             })}
           </div>
         </div>

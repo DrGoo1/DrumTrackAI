@@ -7,18 +7,43 @@ export default function Mixer({ tracks }: { tracks: MixerTrack[] }) {
   const [meters, setMeters] = useState<Record<string, number>>({});
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [solo, setSolo] = useState<Record<string, boolean>>({});
-  const raf = useRef(0);
+  const tracksRef = useRef<MixerTrack[]>(tracks);
 
   useEffect(() => {
-    function tick(){
-      const next: Record<string, number> = {};
-      for (const t of tracks) next[t.key] = Engine.getMeter(t.key);
-      setMeters(next);
-      raf.current = requestAnimationFrame(tick);
-    }
-    raf.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf.current);
-  }, [tracks.length]);
+    tracksRef.current = tracks;
+  }, [tracks]);
+
+  useEffect(() => {
+    const metersEqual = (a: Record<string, number>, b: Record<string, number>) => {
+      const aKeys = Object.keys(a);
+      const bKeys = Object.keys(b);
+      if (aKeys.length !== bKeys.length) {
+        return false;
+      }
+      for (const key of aKeys) {
+        if (a[key] !== b[key]) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const interval = window.setInterval(() => {
+      const nextMeters: Record<string, number> = {};
+      for (const t of tracksRef.current) {
+        try {
+          nextMeters[t.key] = Engine.getMeter(t.key);
+        } catch {
+          nextMeters[t.key] = 0;
+        }
+      }
+      setMeters((prev) => (metersEqual(prev, nextMeters) ? prev : nextMeters));
+    }, 33);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const toggleMute = (key: string) => {
     const newMuted = !muted[key];

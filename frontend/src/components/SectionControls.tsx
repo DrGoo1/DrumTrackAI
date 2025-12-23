@@ -3,11 +3,13 @@
  */
 import React, { useState } from 'react';
 import { Section } from './WebDAWApp';
+import { useRudimentBlockStore } from '../state/useRudimentBlockStore';
 
 interface SectionControlsProps {
   sections: Section[];
   onSectionsChange: (sections: Section[]) => void;
   bpm: number;
+  timeSignature?: [number, number];
   currentTime: number;
   trackKey?: string;
   onAnalyzeTempos?: (sections: Section[]) => Promise<void>;
@@ -17,6 +19,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
   sections,
   onSectionsChange,
   bpm,
+  timeSignature,
   currentTime,
   trackKey,
   onAnalyzeTempos
@@ -25,6 +28,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState<string>('');
   const [isExpanded, setIsExpanded] = useState(false); // Default collapsed
+  const blocksBySection = useRudimentBlockStore((state) => state.blocksBySection);
 
   const formatTime = (seconds: number) => {
     const min = Math.floor(seconds / 60);
@@ -34,7 +38,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
 
   const getBars = (section: Section) => {
     const duration = section.end - section.start;
-    const beatsPerBar = 4;
+    const beatsPerBar = timeSignature?.[0] ?? 4;
     const secPerBeat = 60 / bpm;
     return Math.round(duration / (secPerBeat * beatsPerBar));
   };
@@ -182,6 +186,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
           const isSelected = section.id === selectedSectionId;
           const isEditing = section.id === editingId;
           const bars = getBars(section);
+          const blockCount = blocksBySection[section.id]?.length ?? 0;
 
           return (
             <div
@@ -220,6 +225,11 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                       {section.label?.toUpperCase() || 'SECTION'}
                     </span>
                     <span className="text-slate-500 text-xs">({bars}b)</span>
+                    {blockCount > 0 && (
+                      <span className="ml-1 flex items-center gap-1 rounded bg-purple-900/30 px-2 py-0.5 text-[10px] font-semibold text-purple-200">
+                        🧱 {blockCount}
+                      </span>
+                    )}
                   </div>
                 )}
                 <div className="flex gap-0.5">
@@ -246,6 +256,12 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                 {formatTime(section.start)} - {formatTime(section.end)}
                 {section.tempo && ` • ${section.tempo.toFixed(0)} BPM`}
               </div>
+
+              {blockCount > 0 && (
+                <div className="mt-1 text-[11px] text-purple-300">
+                  🎯 {blockCount} pinned rudiment block{blockCount > 1 ? 's' : ''}
+                </div>
+              )}
 
               {/* Hide expanded controls to save space - only show for selected */}
               {false && isSelected && (

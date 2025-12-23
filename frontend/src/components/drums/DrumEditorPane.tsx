@@ -1,6 +1,6 @@
 // frontend/src/components/drums/DrumEditorPane.tsx
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   DrumTrackForDCSM,
   DrumNoteEvent,
@@ -15,23 +15,39 @@ interface DrumEditorPaneProps {
   drumTrack: DrumTrackForDCSM | null;
   timeSignature: [number, number];
   grooveWeights?: GrooveWeightMap;
+  gridResolution: GridResolution;
+  onGridResolutionChange: (resolution: GridResolution) => void;
   onUpdateTrack?: (track: DrumTrackForDCSM) => void;
+  pianoRollScrollRef?: React.RefObject<HTMLDivElement>;
+  pixelsPerBeat: number;
+  visibleStartMeasure?: number;
+  visibleMeasureCount?: number;
+  totalSongBars?: number;
 }
 
 export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   drumTrack,
   timeSignature,
   grooveWeights,
+  gridResolution,
+  onGridResolutionChange,
   onUpdateTrack,
+  pianoRollScrollRef,
+  pixelsPerBeat,
+  visibleStartMeasure,
+  visibleMeasureCount,
+  totalSongBars,
 }) => {
-  const [gridResolution, setGridResolution] =
-    useState<GridResolution>("16th");
   const [currentAspect, setCurrentAspect] =
     useState<NoteAspect | "all">("all");
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
 
   const selectedNotes: DrumNoteEvent[] =
     drumTrack?.notes.filter((n) => selectedNoteIds.includes(n.id)) ?? [];
+
+  useEffect(() => {
+    setSelectedNoteIds([]);
+  }, [drumTrack?.track_id]);
 
   const handleNoteChange = (patch: Partial<DrumNoteEvent>) => {
     if (!drumTrack || !onUpdateTrack || selectedNoteIds.length === 0) return;
@@ -42,8 +58,8 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   };
 
   return (
-    <div className="flex flex-row h-full">
-      <div className="flex-1 flex flex-col">
+    <div className="flex flex-row h-full min-w-0 overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col">
         {/* Aspect + Grid controls */}
         <div className="flex items-center justify-between px-2 py-1 bg-slate-950 border-b border-slate-800 text-[11px] text-slate-200">
           <div className="flex items-center gap-2">
@@ -74,7 +90,7 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
               <button
                 key={res}
                 type="button"
-                onClick={() => setGridResolution(res)}
+                onClick={() => onGridResolutionChange(res)}
                 className={`px-2 py-0.5 rounded border ${
                   gridResolution === res
                     ? "bg-slate-700 border-slate-500"
@@ -99,6 +115,11 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
             if (!drumTrack || !onUpdateTrack) return;
             onUpdateTrack({ ...drumTrack, notes });
           }}
+          scrollContainerRef={pianoRollScrollRef}
+          pixelsPerBeat={pixelsPerBeat}
+          visibleStartMeasure={visibleStartMeasure}
+          visibleMeasureCount={visibleMeasureCount}
+          totalSongBars={totalSongBars}
         />
       </div>
 

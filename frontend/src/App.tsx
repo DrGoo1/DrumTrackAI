@@ -13,7 +13,7 @@ function App() {
         <nav className="bg-slate-900 border-b border-slate-800 px-4 py-2">
           <div className="flex items-center justify-between max-w-6xl mx-auto">
             <div className="flex items-center space-x-6">
-              <h1 className="text-xl font-bold text-slate-100">DrumTracKAI v1.1.16</h1>
+              <h1 className="text-xl font-bold text-slate-100">DrumTracKAI v1.1.17</h1>
               <div className="flex space-x-4">
                 <Link 
                   to="/upload" 
@@ -41,8 +41,13 @@ function App() {
                 </Link>
               </div>
             </div>
-            <div className="text-xs text-slate-400">
-              Advanced Groove • Fill Library • Rust Performance
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-200 bg-emerald-900/20">
+                Use ver 1.1.17
+              </span>
+              <div className="text-xs text-slate-400">
+                Advanced Groove • Fill Library • Rust Performance
+              </div>
             </div>
           </div>
         </nav>

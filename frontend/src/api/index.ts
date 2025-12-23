@@ -1,9 +1,8 @@
 // src/api/index.ts
 import axios from "axios";
+import { resolveApiBaseNormalized } from "../utils/apiBase";
 
-const API_BASE =
-  (window as any).__API_BASE__?.replace(/\/$/, "") ||
-  (process.env.REACT_APP_API_BASE || "http://localhost:8000").replace(/\/$/, "");
+const API_BASE = resolveApiBaseNormalized();
 
 export const api = axios.create({ baseURL: API_BASE, withCredentials: false });
 
