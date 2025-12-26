@@ -7,6 +7,7 @@ import {
   NoteAspect,
   DrumInstrumentId,
 } from "../../types/drumTrack";
+import type { DrumPlayerChannelId, DrumPlayerEngine } from "../../audio/drumPlayerEngine";
 import { getMidiPitchForInstrument } from "../../utils/drumTrackUtils";
 import {
   GridResolution,
@@ -23,6 +24,9 @@ const SUPPORTED_LIMBS: readonly LimbId[] = ["RH", "LH", "RF", "LF"];
 interface DrumPianoRollProps {
   drumTrack: DrumTrackForDCSM | null;
   timeSignature: [number, number];
+  bpm?: number;
+  playheadSeconds?: number;
+  playing?: boolean;
   gridResolution: GridResolution;
   currentAspect: NoteAspect | "all";
   grooveWeights?: GrooveWeightMap;
@@ -34,6 +38,37 @@ interface DrumPianoRollProps {
   visibleStartMeasure?: number;
   visibleMeasureCount?: number;
   totalSongBars?: number;
+  drumEngine?: DrumPlayerEngine | null;
+}
+
+function mapInstrumentToChannel(instId: DrumInstrumentId): DrumPlayerChannelId | null {
+  switch (instId) {
+    case "kick":
+      return "kick";
+    case "snare_center":
+    case "snare_ghost":
+    case "snare_rim":
+      return "snare_top";
+    case "hihat_closed":
+    case "hihat_open":
+    case "hihat_pedal":
+      return "hat";
+    case "ride_bow":
+    case "ride_bell":
+    case "ride_edge":
+      return "ride";
+    case "tom_high":
+      return "tom1";
+    case "tom_mid":
+      return "tom3";
+    case "tom_floor":
+      return "tom5";
+    case "crash_1":
+    case "crash_2":
+      return "crash";
+    default:
+      return null;
+  }
 }
 
 const instrumentOrder: DrumInstrumentId[] = [
@@ -81,6 +116,9 @@ const inferLimbFromMidiPitch = (pitch?: number | null): LimbId | null => {
 export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   drumTrack,
   timeSignature,
+  bpm,
+  playheadSeconds,
+  playing,
   gridResolution,
   currentAspect,
   grooveWeights,
@@ -92,6 +130,7 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   visibleStartMeasure,
   visibleMeasureCount,
   totalSongBars,
+  drumEngine,
 }) => {
   if (!drumTrack) {
     return (
@@ -103,6 +142,36 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
   const headerScrollRef = useRef<HTMLDivElement | null>(null);
   const laneScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const [laneChannelState, setLaneChannelState] = useState<
+    Record<string, { mute: boolean; solo: boolean }>
+  >({});
+
+  useEffect(() => {
+    if (!drumEngine) {
+      setLaneChannelState({});
+      return;
+    }
+
+    const update = () => {
+      try {
+        const next: Record<string, { mute: boolean; solo: boolean }> = {};
+        for (const instId of instrumentOrder) {
+          const channelId = mapInstrumentToChannel(instId);
+          if (!channelId) continue;
+          const p = drumEngine.getChannelParams(channelId);
+          next[instId] = { mute: Boolean(p.mute), solo: Boolean(p.solo) };
+        }
+        setLaneChannelState(next);
+      } catch {
+        setLaneChannelState({});
+      }
+    };
+
+    update();
+    const interval = window.setInterval(update, 200);
+    return () => window.clearInterval(interval);
+  }, [drumEngine]);
 
   const { resolution_ppq, notes } = drumTrack;
 
@@ -125,6 +194,37 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
   const totalBarsSpan = totalSongBars ?? Math.max(trackBarCount || 1, 1);
   const totalWidth = Math.max(1, totalBarsSpan * barWidthPx);
+
+  const playheadX = useMemo(() => {
+    const playSec = typeof playheadSeconds === "number" && Number.isFinite(playheadSeconds) ? playheadSeconds : null;
+    const tempo = typeof bpm === "number" && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+    if (playSec === null || tempo === null) return null;
+    const beats = (playSec * tempo) / 60;
+    if (!Number.isFinite(beats) || beats < 0) return null;
+    return beats * pixelsPerBeat;
+  }, [bpm, pixelsPerBeat, playheadSeconds]);
+
+  const clampedPlayheadX = useMemo(() => {
+    if (playheadX === null) return null;
+    const maxX = Math.max(0, totalWidth - 2);
+    return Math.max(0, Math.min(maxX, playheadX));
+  }, [playheadX, totalWidth]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (clampedPlayheadX === null) return;
+    const laneEl = laneScrollRef.current;
+    if (!laneEl) return;
+
+    const viewLeft = laneEl.scrollLeft;
+    const viewRight = viewLeft + laneEl.clientWidth;
+    const margin = Math.max(32, laneEl.clientWidth * 0.2);
+
+    if (clampedPlayheadX < viewLeft + margin || clampedPlayheadX > viewRight - margin) {
+      const target = Math.max(0, clampedPlayheadX - laneEl.clientWidth * 0.35);
+      laneEl.scrollLeft = target;
+    }
+  }, [clampedPlayheadX, playing]);
 
   const fallbackStartBar = Math.max(0, visibleStartMeasure ?? 0);
   const viewStartBar = useMemo(() => {
@@ -427,17 +527,63 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
         <div className="w-36 flex-shrink-0 bg-slate-950 border-r border-slate-700">
           {instrumentOrder.map((instId) => {
             const { accent } = limbAccentForInstrument(instId);
+            const channelId = mapInstrumentToChannel(instId);
+            const chState = laneChannelState[instId] || { mute: false, solo: false };
             return (
               <div
                 key={instId}
-                className="h-5 flex items-center px-2 text-[11px] font-semibold border-b border-transparent"
+                className="h-5 flex items-center justify-between gap-2 px-2 text-[11px] font-semibold border-b border-transparent"
                 style={{
                   color: accent || "#e2e8f0",
                   backgroundColor: accent ? `${accent}1a` : undefined,
                   borderColor: accent ? `${accent}66` : undefined,
                 }}
               >
-                {instId.replace("_", " ")}
+                <span className="min-w-0 flex-1 truncate">{instId.replace("_", " ")}</span>
+                {drumEngine && channelId && (
+                  <span className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      className={
+                        "w-5 h-4 rounded border text-[9px] leading-none " +
+                        (chState.solo
+                          ? "bg-yellow-500/80 border-yellow-300 text-black"
+                          : "bg-slate-900 border-slate-700 text-slate-300")
+                      }
+                      onClick={() => {
+                        const next = !chState.solo;
+                        drumEngine.setChannelParams(channelId, { solo: next });
+                        setLaneChannelState((prev) => ({
+                          ...prev,
+                          [instId]: { ...chState, solo: next },
+                        }));
+                      }}
+                      title="Solo"
+                    >
+                      S
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        "w-5 h-4 rounded border text-[9px] leading-none " +
+                        (chState.mute
+                          ? "bg-red-600/80 border-red-300 text-white"
+                          : "bg-slate-900 border-slate-700 text-slate-300")
+                      }
+                      onClick={() => {
+                        const next = !chState.mute;
+                        drumEngine.setChannelParams(channelId, { mute: next });
+                        setLaneChannelState((prev) => ({
+                          ...prev,
+                          [instId]: { ...chState, mute: next },
+                        }));
+                      }}
+                      title="Mute"
+                    >
+                      M
+                    </button>
+                  </span>
+                )}
               </div>
             );
           })}
@@ -466,6 +612,19 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
               height: instrumentOrder.length * laneHeight + limbLaneOrder.length * limbLaneHeight,
             }}
           >
+            {clampedPlayheadX !== null && (
+              <div
+                className="absolute top-0 bottom-0"
+                style={{
+                  left: clampedPlayheadX,
+                  width: 2,
+                  background: "rgba(34, 211, 238, 0.8)",
+                  boxShadow: "0 0 8px rgba(34, 211, 238, 0.6)",
+                  pointerEvents: "none",
+                  zIndex: 20,
+                }}
+              />
+            )}
             {Array.from({ length: totalBarsSpan + 1 }).map((_, barIdx) => (
               <div
                 key={`lane-grid-bar-${barIdx}`}

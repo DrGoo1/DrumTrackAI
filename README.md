@@ -4,6 +4,14 @@
 
 DrumTracKAI v1.1.17 builds on v1.1.16 by introducing a **new AppDAW-based DCSM page** that unifies all drum-creation workflows (classic, AI, Euclidean) in a single React DAW, fully wired to the Drum Builder v2.0 backend.
 
+## Recent Progress (Dec 26, 2025)
+
+- **MicroTempo Meter**: Prominent realtime BPM/deviation meter driven by `songMap.beatTimes` + playhead.
+- **Drum Tempo Mode**: Generation can **Lock** to constant tempo (tight by default) or **Follow** the detected tempo map.
+- **Full Song Generation**: "Generate Entire Song" now uses a **single song-aware generation call** with `buildScope: "full_song"` and `songSections` (snake_case labels + bar counts).
+- **Section Generation Rename**: Per-section generator button is now labeled **"Generate Section Specific Track"**.
+- **Mixer/Metering**: Drum engine strip meters tap **post-pan/post-fader** for more accurate visual levels.
+
 Key additions in v1.1.17:
 
 - **New DCSM DAW page at `/`** powered by `AppDAW.tsx`

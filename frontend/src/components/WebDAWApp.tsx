@@ -3,10 +3,12 @@ import webdawApi, { alignSections, loadSession, saveSession, sectionizeAudio, dc
 import Timeline from "./Timeline";
 import { Engine } from "../audio/engine";
 import DrumPlayerModal from "./drums/DrumPlayerModal";
+import { getSharedDrumPlayerEngine, type DrumPlayerChannelId } from "../audio/drumPlayerEngine";
 import type { MidiNote as PianoRollNote } from "./PianoRoll";
 import { SectionControls } from "./SectionControls";
 import { DrummerSelector, Drummer } from "./DrummerSelector";
 import DrumOptionsPanel, { DrumOptions } from "./DrumOptionsPanel";
+import MicroTempoMeter from "./MicroTempoMeter";
 import { ManualArrangementModal, ManualArrangement } from "./ManualArrangementModal";
 import { InternetSongLookupModal, SongInfo } from "./InternetSongLookupModal";
 import DrumBuilderPanelV2 from "./DrumBuilderPanelV2";
@@ -802,6 +804,8 @@ function sectionToMeasureRange(
   bpm: number,
   defaultTimeSig: [number, number],
   songMap?: SongMapSummary | null,
+  tempoFlattenToleranceBpm: number = 2.0,
+  tempoMode: "lock" | "follow" = "follow",
 ): MeasureRange {
   const resolvedTimeSig = section.timeSignature || songMap?.meter || defaultTimeSig;
   const beatsPerMeasure = resolvedTimeSig[0];
@@ -890,6 +894,22 @@ function sectionToMeasureRange(
       const fallback = section.tempo || bpm;
       return typeof bar?.tempo_bpm === "number" && bar.tempo_bpm > 0 ? bar.tempo_bpm : fallback;
     });
+
+    if (tempos.length && !section.tempoLocked) {
+      const clean = tempos.filter((t) => typeof t === "number" && Number.isFinite(t) && t > 0);
+      if (clean.length >= 2) {
+        const minT = Math.min(...clean);
+        const maxT = Math.max(...clean);
+        const range = maxT - minT;
+        const avg = clean.reduce((a, b) => a + b, 0) / clean.length;
+        const rounded = Math.round(avg * 10) / 10;
+
+        const RANGE_TOL_BPM = Math.max(0, Number(tempoFlattenToleranceBpm) || 0);
+        if (Number.isFinite(range) && range > RANGE_TOL_BPM) {
+          tempos = Array(tempos.length).fill(rounded);
+        }
+      }
+    }
     if (tempos.length) {
       measureCount = tempos.length;
     }
@@ -898,6 +918,14 @@ function sectionToMeasureRange(
   if (!tempos.length) {
     const tempo = section.tempo || bpm;
     tempos = Array(measureCount).fill(tempo);
+  }
+
+  if (tempoMode === "lock") {
+    const clean = tempos.filter((t) => typeof t === "number" && Number.isFinite(t) && t > 0);
+    const base = clean.length
+      ? Math.round((clean.reduce((a, b) => a + b, 0) / clean.length) * 10) / 10
+      : (section.tempo || bpm);
+    tempos = Array(measureCount).fill(base);
   }
 
   const endMeasure = startMeasure + measureCount - 1;
@@ -1028,6 +1056,74 @@ export default function WebDAWApp() {
   const [gridResolution, setGridResolution] = useState<GridResolution>("16th");
   const [gridPixelsPerBeat, setGridPixelsPerBeat] = useState(80);
   const [scrollPercent, setScrollPercent] = useState(0);
+
+  const [tempoFlattenToleranceBpm, setTempoFlattenToleranceBpm] = useState<number>(() => {
+    const raw = window.localStorage.getItem("dtk.drumGen.tempoFlattenToleranceBpm");
+    const parsed = raw ? Number(raw) : 2.0;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2.0;
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "dtk.drumGen.tempoFlattenToleranceBpm",
+      String(Number.isFinite(tempoFlattenToleranceBpm) ? tempoFlattenToleranceBpm : 2.0),
+    );
+  }, [tempoFlattenToleranceBpm]);
+
+  const [drumTempoMode, setDrumTempoMode] = useState<"lock" | "follow">(() => {
+    const raw = window.localStorage.getItem("dtk.drumGen.tempoMode");
+    return raw === "lock" || raw === "follow" ? raw : "lock";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem("dtk.drumGen.tempoMode", drumTempoMode);
+  }, [drumTempoMode]);
+
+  const drumEngineRef = useRef<ReturnType<typeof getSharedDrumPlayerEngine> | null>(null);
+  const drumLoadedRef = useRef<Record<string, number>>({});
+  const activeDrumTrackRef = useRef<DrumTrackForDCSM | null>(null);
+  const lastDrumScheduleSecRef = useRef<number>(0);
+
+  const instrumentToChannel = useCallback(
+    (instrumentId: DrumInstrumentId | string | undefined | null): DrumPlayerChannelId | null => {
+      const id = String(instrumentId || "");
+      if (!id) return null;
+      if (id === "kick") return "kick";
+      if (id.startsWith("snare")) return "snare_top";
+      if (id.startsWith("hihat")) return "hat";
+      if (id.startsWith("ride")) return "ride";
+      if (id.startsWith("tom_high")) return "tom1";
+      if (id.startsWith("tom_mid")) return "tom3";
+      if (id.startsWith("tom_floor")) return "tom5";
+      if (id.startsWith("crash")) return "crash";
+      return null;
+    },
+    [],
+  );
+
+  const getAudioUrlForSample = useCallback((sampleId: number) => `/api/drum-samples/${sampleId}/audio`, []);
+
+  const ensureDrumEngineReady = useCallback(async () => {
+    const eng = getSharedDrumPlayerEngine();
+    drumEngineRef.current = eng;
+    await eng.ensureRunning();
+
+    const raw = window.localStorage.getItem("dtk.drumPlayer.channelSampleId");
+    let map: Record<string, number> = {};
+    try {
+      map = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      map = {};
+    }
+
+    for (const [ch, sid] of Object.entries(map)) {
+      const sampleId = Number(sid);
+      if (!Number.isFinite(sampleId)) continue;
+      if (drumLoadedRef.current[ch] === sampleId) continue;
+      await eng.loadSampleForChannel(ch as DrumPlayerChannelId, getAudioUrlForSample(sampleId));
+      drumLoadedRef.current[ch] = sampleId;
+    }
+  }, [getAudioUrlForSample]);
 
   const convertTrackToMidiNotes = useCallback(
     (track: DrumTrackForDCSM, placement?: DrumTrackPlacementContext): PianoRollNote[] => {
@@ -1469,7 +1565,7 @@ export default function WebDAWApp() {
           meter: timeSig,
           bars,
           beatTimes,
-        }),
+        }, tempoFlattenToleranceBpm, drumTempoMode),
       );
     }
   }, [bpm, scratchArrangement, timeSig]);
@@ -1505,6 +1601,37 @@ export default function WebDAWApp() {
       notes: tracksToMerge.flatMap((t) => t.notes ?? []),
     } satisfies DrumTrackForDCSM;
   }, [sectionDrumTracks]);
+
+  useEffect(() => {
+    activeDrumTrackRef.current = fullSongDrumTrack;
+  }, [fullSongDrumTrack]);
+
+  const scheduleDrumsBetween = useCallback(
+    async (fromSec: number, toSec: number) => {
+      const eng = drumEngineRef.current;
+      const track = activeDrumTrackRef.current;
+      if (!eng || !track) return;
+      if (!Array.isArray(track.notes) || track.notes.length === 0) return;
+      if (!(bpm > 0)) return;
+
+      const beatsPerBarLocal = (timeSig?.[0] ?? 4) || 4;
+      const ticksPerBeat = track.resolution_ppq || 960;
+      const ticksPerBarLocal = ticksPerBeat * beatsPerBarLocal;
+
+      for (const n of track.notes) {
+        const bar = n.barIndex ?? 0;
+        const tick = n.tickInBar ?? 0;
+        const totalTicks = bar * ticksPerBarLocal + tick;
+        const beats = totalTicks / ticksPerBeat;
+        const tSec = (beats * 60) / bpm;
+        if (tSec < fromSec || tSec >= toSec) continue;
+        const ch = instrumentToChannel(n.instrumentId as any);
+        if (!ch) continue;
+        eng.playChannelOneShot(ch, { gain: Math.max(0.2, Math.min(1.5, (n.velocity ?? 100) / 100)) });
+      }
+    },
+    [bpm, instrumentToChannel, timeSig],
+  );
   const activeSectionId =
     selectedMeasureRange?.sectionId === "full-song"
       ? "full-song"
@@ -1691,10 +1818,10 @@ export default function WebDAWApp() {
           return prev;
         }
         const targetSection = sections.find((s) => s.id === sectionId);
-        return targetSection ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap) : prev;
+        return targetSection ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode) : prev;
       });
     },
-    [sections, bpm, timeSig, songMap],
+    [sections, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode],
   );
 
 
@@ -1975,9 +2102,9 @@ export default function WebDAWApp() {
       if (prev?.sectionId === activeSelectionId) {
         return prev;
       }
-      return sectionToMeasureRange(section, bpm, timeSig, songMap);
+      return sectionToMeasureRange(section, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
     });
-  }, [activeSelectionId, sections, bpm, timeSig, songMap, selectedMeasureRange?.sectionId]);
+  }, [activeSelectionId, sections, bpm, timeSig, songMap, selectedMeasureRange?.sectionId, tempoFlattenToleranceBpm, drumTempoMode]);
   
   // Read URL parameters from Professional Tier page
   const [sourceInfo, setSourceInfo] = useState<{source?: string; filename?: string; drummer?: string; fileKey?: string}>({});
@@ -2126,7 +2253,7 @@ export default function WebDAWApp() {
 
       const targetSection = sections.find((s) => s.id === sectionId);
       if (targetSection) {
-        const nextRange = sectionToMeasureRange(targetSection, bpm, timeSig, songMap);
+        const nextRange = sectionToMeasureRange(targetSection, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
         setSelectedMeasureRange(nextRange);
       } else {
         console.warn("[DebugJump] No Section object found for", sectionId);
@@ -2157,9 +2284,20 @@ export default function WebDAWApp() {
 
   useEffect(() => {
     let raf = 0; let last = performance.now();
-    function tick(now: number) { const dt=(now-last)/1000; last=now; if (playing) setPlayhead(p=>p+dt); raf=requestAnimationFrame(tick);} 
+    function tick(now: number) {
+      const dt=(now-last)/1000; last=now;
+      if (playing) {
+        setPlayhead((p) => {
+          const next = p + dt;
+          void scheduleDrumsBetween(lastDrumScheduleSecRef.current, next);
+          lastDrumScheduleSecRef.current = next;
+          return next;
+        });
+      }
+      raf=requestAnimationFrame(tick);
+    }
     raf = requestAnimationFrame(tick); return ()=>cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, scheduleDrumsBetween]);
 
   useEffect(() => { Engine.setBpm(bpm); }, [bpm]);
   useEffect(() => { Engine.setLoop(loop.start, loop.end, loop.enabled); }, [loop]);
@@ -2648,7 +2786,7 @@ export default function WebDAWApp() {
           selectedMeasureRange && selectedMeasureRange.sectionId === sectionId
             ? selectedMeasureRange
             : targetSection
-              ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap)
+              ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode)
               : null;
         const startTimeSec = currentRange?.startTime ?? targetSection?.start ?? 0;
         placementContext = {
@@ -2732,7 +2870,7 @@ export default function WebDAWApp() {
   }
 
   const buildAutoConfigForSection = (section: Section): DrumGenerationConfig | null => {
-    const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap);
+    const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
     if (!measureRange) {
       return null;
     }
@@ -2805,25 +2943,11 @@ export default function WebDAWApp() {
     if (bulkGenerating || generatingDrums) {
       return;
     }
-    const generationQueue = sections
-      .map((section) => {
-        const config = buildAutoConfigForSection(section);
-        return config ? { section, config } : null;
-      })
-      .filter((entry): entry is { section: Section; config: DrumGenerationConfig } => Boolean(entry));
-
-    if (!generationQueue.length) {
-      const warning = 'No sections are eligible for automated drum building yet.';
-      setErr(warning);
-      setFullSongStatus({ type: 'error', message: warning });
-      return;
-    }
-
     setBulkGenerating(true);
-    setFullSongProgress({ completed: 0, total: generationQueue.length });
+    setFullSongProgress({ completed: 0, total: 1 });
     setFullSongStatus({
       type: 'progress',
-      message: `Building drums for ${generationQueue.length} section${generationQueue.length === 1 ? '' : 's'}…`,
+      message: `Building drums for full song…`,
     });
     try {
       const primaryTrackKey = tracks[0]?.key;
@@ -2835,23 +2959,7 @@ export default function WebDAWApp() {
         }
       }
 
-      let firstAppliedSectionId: string | null = null;
-      let completedCount = 0;
-      const sectionsMissingTracks: string[] = [];
-      for (const { config, section } of generationQueue) {
-        const applied = await executeDrumGeneration(config, { suppressSpinner: true });
-        completedCount += 1;
-        if (applied && !firstAppliedSectionId) {
-          firstAppliedSectionId = section.id;
-        }
-        if (!applied) {
-          sectionsMissingTracks.push(section.label || section.id);
-        }
-        setFullSongProgress({ completed: completedCount, total: generationQueue.length });
-        console.log(`✅ Section ${section.label || section.id} drums generated (${completedCount}/${generationQueue.length})`);
-      }
-
-      setSelectedMeasureRange({
+      const fullRange: MeasureRange = {
         sectionId: "full-song",
         sectionLabel: "Full Song",
         startMeasure: 0,
@@ -2862,28 +2970,67 @@ export default function WebDAWApp() {
         timeSignature: timeSig,
         startTime: 0,
         endTime: timelineDurationSec,
-      });
+      };
 
-      if (!selectedMeasureRange && firstAppliedSectionId) {
-        setSelectedSectionIds(new Set([firstAppliedSectionId]));
-        const targetSection = sections.find((s) => s.id === firstAppliedSectionId);
-        if (targetSection) {
-          setSelectedMeasureRange(sectionToMeasureRange(targetSection, bpm, timeSig, songMap));
-        }
-      }
+      const songSections = sections
+        .map((section) => {
+          const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
+          const bars = Math.max(1, measureRange.measureCount);
+          const name = (section.label || "section")
+            .toLowerCase()
+            .replace(/\s+/g, "_")
+            .replace(/[^a-z0-9_]/g, "")
+            .replace(/^_+|_+$/g, "");
+          return { name: name || "section", bars };
+        })
+        .filter((s) => s.bars > 0);
 
-      console.log('✅ Completed auto drum generation for entire song');
-      if (sectionsMissingTracks.length) {
-        const preview = sectionsMissingTracks.slice(0, 3).join(', ');
-        const suffix = sectionsMissingTracks.length > 3 ? '…' : '';
+      const derivedSongStyle = (drumOptions.style || "rock") as DrumGenerationConfig["songStyle"];
+
+      setSelectedMeasureRange(fullRange);
+      setSelectedSectionIds(new Set(["full-song"]));
+
+      const fullSongConfig: DrumGenerationConfig = {
+        sectionId: "full-song",
+        startMeasure: fullRange.startMeasure,
+        endMeasure: fullRange.endMeasure,
+        tempos: fullRange.tempos,
+        timeSignature: fullRange.timeSignature,
+        style: drumOptions.style || "rock",
+        drummer: selectedDrummer?.id || "jeff_porcaro",
+        intensity: clamp01(drumOptions.density ?? 0.6),
+        variation: clamp01(drumOptions.dynamic_range ?? drumOptions.humanize ?? 0.5),
+        generationMode: "full_ai",
+        humanize: true,
+        fillLocations: [],
+        fillType: drumOptions.fill_preset ?? "auto",
+        fillDensity: clamp01(drumOptions.fill_density ?? 0.4),
+        humanizeAmount: clamp01(drumOptions.humanize ?? 0.6),
+        ghostNoteAmount: clamp01(drumOptions.ghost_note_density ?? 0.35),
+        swingAmount: clamp01(drumOptions.swing ?? 0),
+        buildScope: "full_song",
+        guideEnabled: false,
+        songStyle: derivedSongStyle,
+        songSections,
+        fillControls: {
+          fillType: drumOptions.fill_preset ?? "auto",
+          density: clamp01(drumOptions.fill_density ?? 0.4),
+          frequency: "all_transitions",
+        },
+      };
+
+      const applied = await executeDrumGeneration(fullSongConfig, { suppressSpinner: true });
+      setFullSongProgress({ completed: 1, total: 1 });
+
+      if (!applied) {
         setFullSongStatus({
           type: 'error',
-          message: `Finished, but ${sectionsMissingTracks.length} section${sectionsMissingTracks.length === 1 ? '' : 's'} returned no drum data (${preview}${suffix}).`,
+          message: 'Finished, but the generator returned no drum data for the full song.',
         });
       } else {
         setFullSongStatus({
           type: 'success',
-          message: `🥁 Completed drum build for ${generationQueue.length} section${generationQueue.length === 1 ? '' : 's'}.`,
+          message: '🥁 Completed drum build for the full song.',
         });
       }
     } catch (fullSongError: any) {
@@ -2948,7 +3095,7 @@ export default function WebDAWApp() {
         <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3">
           <div className="font-semibold">DrumTracKAI v1.1.17 – Enhanced DCSM</div>
           <div className="flex items-center gap-3">
-            <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await Engine.play(playhead); setPlaying(true); }}>Play</button>
+            <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await ensureDrumEngineReady(); lastDrumScheduleSecRef.current = playhead; await Engine.play(playhead); setPlaying(true); }}>Play</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.pause(); setPlaying(false); }}>Pause</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.stop(); setPlaying(false); setPlayhead(0); }}>Stop</button>
             <div className="flex items-center gap-1">
@@ -2958,6 +3105,15 @@ export default function WebDAWApp() {
             <label className="flex items-center gap-1 ml-4">
               <input type="checkbox" checked={loop.enabled} onChange={(e)=>setLoop({ ...loop, enabled: e.target.checked })} /> Loop
             </label>
+            <div className="ml-4 w-[520px] max-w-[45vw]">
+              <MicroTempoMeter
+                beatTimes={Array.isArray(songMap?.beatTimes) ? songMap!.beatTimes! : []}
+                playheadSec={playhead}
+                sessionBpm={bpm}
+                playing={playing}
+                heightPx={72}
+              />
+            </div>
             <div className="text-sm text-slate-300 w-20 text-right">{secToBarsBeats(playhead, bpm, timeSig)}</div>
             <button className="px-3 py-1 rounded bg-indigo-600" onClick={() => fileRef.current?.click()} disabled={busy}>{busy?"Uploading…":"Upload Audio"}</button>
             <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={(e)=>{ const f=e.target.files?.[0]; if (f) addFile(f); e.currentTarget.value=""; }} />
@@ -3139,7 +3295,7 @@ export default function WebDAWApp() {
                       // Set measure range for drum builder
                       const section = sections.find(s => s.id === sectionId);
                       if (section) {
-                        const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap);
+                        const measureRange = sectionToMeasureRange(section, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
                         setSelectedMeasureRange(measureRange);
                         console.log('🎯 Selected measure range:', measureRange);
                       }
@@ -3192,6 +3348,10 @@ export default function WebDAWApp() {
                           grooveWeights={activeGrooveMap}
                           gridResolution={gridResolution}
                           onGridResolutionChange={setGridResolution}
+                          bpm={bpm}
+                          playheadSeconds={playhead}
+                          playing={playing}
+                          drumEngine={drumEngineRef.current}
                           pixelsPerBeat={gridPixelsPerBeat}
                           visibleStartMeasure={selectedMeasureRange.startMeasure}
                           visibleMeasureCount={selectedMeasureRange.measureCount}
@@ -3261,6 +3421,61 @@ export default function WebDAWApp() {
                     onChange={setDrumOptions}
                     drummerType={drumOptions.style}
                   />
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Tempo Flatten</p>
+                        <p className="text-xs text-slate-400">Bar tempo range tolerance (BPM)</p>
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={tempoFlattenToleranceBpm}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          setTempoFlattenToleranceBpm(Number.isFinite(next) && next >= 0 ? next : 0);
+                        }}
+                        className="w-24 px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Drum Tempo Mode</p>
+                        <p className="text-xs text-slate-400">Lock for steady tempo, Follow to use the detected tempo map.</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className={
+                            "px-2.5 py-1 rounded border text-xs " +
+                            (drumTempoMode === "lock"
+                              ? "bg-cyan-700/40 border-cyan-400/40 text-cyan-100"
+                              : "bg-slate-900 border-slate-700 text-slate-300")
+                          }
+                          onClick={() => setDrumTempoMode("lock")}
+                        >
+                          Lock
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            "px-2.5 py-1 rounded border text-xs " +
+                            (drumTempoMode === "follow"
+                              ? "bg-indigo-700/40 border-indigo-400/40 text-indigo-100"
+                              : "bg-slate-900 border-slate-700 text-slate-300")
+                          }
+                          onClick={() => setDrumTempoMode("follow")}
+                        >
+                          Follow
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -3485,7 +3700,7 @@ export default function WebDAWApp() {
                     </div>
                   )}
                   <p className="text-[11px] text-slate-500">
-                    We run sections one-by-one, so keep this tab open until the confirmation log appears.
+                    This builds a single cohesive performance using the full song arrangement.
                   </p>
                 </div>
               )}

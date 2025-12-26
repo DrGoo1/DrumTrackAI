@@ -1007,7 +1007,7 @@ export const DrumBuilderPanelV2: React.FC<DrumBuilderPanelV2Props> = ({
         ) : (
           <>
             <span className="mr-2">🎵</span>
-            Generate Drums
+            Generate Section Specific Track
           </>
         )}
       </button>

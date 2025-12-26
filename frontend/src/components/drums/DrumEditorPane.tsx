@@ -10,6 +10,7 @@ import { DrumPianoRoll } from "./DrumPianoRoll";
 import { NoteInspector } from "./NoteInspector";
 import { GridResolution } from "../../utils/pianoRollGrid";
 import { GrooveWeightMap } from "../../types/grooveWeight";
+import type { DrumPlayerEngine } from "../../audio/drumPlayerEngine";
 
 interface DrumEditorPaneProps {
   drumTrack: DrumTrackForDCSM | null;
@@ -20,9 +21,13 @@ interface DrumEditorPaneProps {
   onUpdateTrack?: (track: DrumTrackForDCSM) => void;
   pianoRollScrollRef?: React.RefObject<HTMLDivElement>;
   pixelsPerBeat: number;
+  bpm?: number;
+  playheadSeconds?: number;
+  playing?: boolean;
   visibleStartMeasure?: number;
   visibleMeasureCount?: number;
   totalSongBars?: number;
+  drumEngine?: DrumPlayerEngine | null;
 }
 
 export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
@@ -34,9 +39,13 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   onUpdateTrack,
   pianoRollScrollRef,
   pixelsPerBeat,
+  bpm,
+  playheadSeconds,
+  playing,
   visibleStartMeasure,
   visibleMeasureCount,
   totalSongBars,
+  drumEngine,
 }) => {
   const [currentAspect, setCurrentAspect] =
     useState<NoteAspect | "all">("all");
@@ -106,6 +115,9 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
         <DrumPianoRoll
           drumTrack={drumTrack}
           timeSignature={timeSignature}
+          bpm={bpm}
+          playheadSeconds={playheadSeconds}
+          playing={playing}
           gridResolution={gridResolution}
           currentAspect={currentAspect}
           grooveWeights={grooveWeights}
@@ -120,6 +132,7 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
           visibleStartMeasure={visibleStartMeasure}
           visibleMeasureCount={visibleMeasureCount}
           totalSongBars={totalSongBars}
+          drumEngine={drumEngine}
         />
       </div>
 
