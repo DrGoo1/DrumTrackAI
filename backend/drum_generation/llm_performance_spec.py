@@ -11,6 +11,8 @@ import os
 from textwrap import dedent
 from typing import Dict, Any, Optional
 import logging
+import math
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    logger.warning("OpenAI not available - will use default performance specs")
+    logger.warning("OpenAI not available")
 
 # Import new Jamstix-style modules
 try:
@@ -35,6 +37,13 @@ try:
 except ImportError:
     JAMSTIX_MODULES_AVAILABLE = False
     logger.warning("Jamstix modules not available")
+
+try:
+    from .local_humanization_model import get_local_humanization_model
+    LOCAL_HUMANIZATION_AVAILABLE = True
+except Exception:
+    get_local_humanization_model = None
+    LOCAL_HUMANIZATION_AVAILABLE = False
 
 
 def build_songmap_summary(songmap) -> Dict[str, Any]:
@@ -297,10 +306,28 @@ def get_performance_spec_from_llm(
         # If humanize is off, return minimal spec
         logger.info("Humanize disabled, using flat performance spec")
         return build_flat_performance_spec(cfg, songmap_summary)
-    
+
+    provider = str(os.getenv("LLM_PROVIDER", "local")).strip().lower()
+    if provider == "local_service":
+        return get_performance_spec_from_local_service(
+            cfg=cfg,
+            songmap_summary=songmap_summary,
+            drummer_profile=drummer_profile,
+        )
+    if provider == "local":
+        if not LOCAL_HUMANIZATION_AVAILABLE or get_local_humanization_model is None:
+            raise RuntimeError("Local LLM provider selected but local humanization model is not available")
+        return build_local_performance_spec(
+            cfg=cfg,
+            songmap_summary=songmap_summary,
+            drummer_profile=drummer_profile,
+        )
+
+    if provider != "openai":
+        raise RuntimeError(f"Unsupported LLM_PROVIDER: {provider}")
+
     if not OPENAI_AVAILABLE:
-        logger.warning("OpenAI not available, using default performance spec")
-        return build_default_performance_spec(cfg, songmap_summary, drummer_profile)
+        raise RuntimeError("OpenAI client library is not available; no fallback performance spec is allowed")
     
     try:
         # Build prompt
@@ -311,8 +338,7 @@ def get_performance_spec_from_llm(
         # Get API key
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.warning("OPENAI_API_KEY not set, using default spec")
-            return build_default_performance_spec(cfg, songmap_summary, drummer_profile)
+            raise RuntimeError("OPENAI_API_KEY is not set; no fallback performance spec is allowed")
         
         # Call LLM
         client = OpenAI(api_key=api_key)
@@ -337,17 +363,173 @@ def get_performance_spec_from_llm(
         # Parse response
         content = response.choices[0].message.content
         spec = json.loads(content)
-        
+
         logger.info(f"LLM generated performance spec with {len(spec.get('phrases', []))} phrases")
         return spec
         
     except json.JSONDecodeError as e:
-        logger.error(f"LLM returned invalid JSON: {e}")
-        return build_default_performance_spec(cfg, songmap_summary, drummer_profile)
-    
+        raise RuntimeError(f"LLM returned invalid JSON: {e}")
+
     except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        return build_default_performance_spec(cfg, songmap_summary, drummer_profile)
+        raise RuntimeError(f"LLM call failed: {e}")
+
+
+def get_performance_spec_from_local_service(
+    cfg: "DrumGenerationConfig",
+    songmap_summary: Dict[str, Any],
+    drummer_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    base_url = str(os.getenv("LOCAL_LLM_URL", "")).strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("LLM_PROVIDER=local_service but LOCAL_LLM_URL is not set")
+
+    timeout_s = float(os.getenv("LOCAL_LLM_TIMEOUT_S", "15"))
+    url = f"{base_url}/v1/performance_spec"
+
+    cfg_payload = {}
+    if hasattr(cfg, "to_dict") and callable(getattr(cfg, "to_dict")):
+        try:
+            cfg_payload = cfg.to_dict()
+        except Exception:
+            cfg_payload = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+    else:
+        cfg_payload = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+
+    payload = {
+        "cfg": cfg_payload,
+        "songmap_summary": songmap_summary,
+        "drummer_profile": drummer_profile,
+    }
+
+    try:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+        except Exception as e:
+            raise RuntimeError(f"Local LLM service returned invalid JSON: {e}")
+
+        if not isinstance(data, dict) or not data.get("ok"):
+            raise RuntimeError(f"Local LLM service returned failure: {data}")
+        spec = data.get("spec")
+        if not isinstance(spec, dict):
+            raise RuntimeError(f"Local LLM service response missing 'spec': {data}")
+        return spec
+    except Exception as e:
+        raise RuntimeError(f"Local LLM service call failed: {e}")
+
+
+def build_local_performance_spec(
+    cfg: "DrumGenerationConfig",
+    songmap_summary: Dict[str, Any],
+    drummer_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    model = get_local_humanization_model()
+    avg_tempo = sum(cfg.tempos) / max(len(cfg.tempos), 1)
+    style = getattr(cfg, "style", None)
+    complexity = 0.7
+    try:
+        complexity = float(getattr(cfg, "complexity", None) or 0.7)
+    except Exception:
+        complexity = 0.7
+
+    params = model.predict_params(
+        tempo_bpm=float(avg_tempo),
+        style=style,
+        pattern_complexity=float(max(0.0, min(1.0, complexity))),
+    )
+
+    swing_from_model = float(params.get("swing_factor", 0.0))
+    swing_amount = float(max(0.0, min(1.0, (cfg.swingAmount + swing_from_model) * 0.5)))
+
+    timing_var = float(params.get("timing_variance", 0.0))
+    timing_drift = float(params.get("timing_drift", 0.0))
+    groove_consistency = float(params.get("groove_consistency", 0.8))
+
+    max_ms = 10.0 * float(max(0.0, min(1.0, cfg.humanizeAmount)))
+    var_ms = max(0.0, min(max_ms, timing_var * max_ms))
+    drift_ms = max(-max_ms, min(max_ms, (timing_drift - 0.5) * 2.0 * (max_ms * 0.6)))
+    tightness = max(0.0, min(1.0, groove_consistency))
+    var_ms *= (0.4 + 0.6 * (1.0 - tightness))
+
+    laid_back = 0.0
+    feel_map = {
+        "rock": "straight",
+        "funk": "laid_back",
+        "jazz": "swing",
+        "shuffle": "shuffle",
+        "blues": "shuffle",
+    }
+    global_feel = feel_map.get(str(cfg.style or "").lower(), "straight")
+    if swing_amount > 0.55:
+        global_feel = "swing"
+    if global_feel == "laid_back":
+        laid_back = 0.2
+    if global_feel == "pushed":
+        laid_back = -0.2
+
+    def _subdivision_offsets(scale: float) -> list:
+        out = []
+        for i in range(16):
+            base = math.sin((i + 1) * 1.7) * var_ms * scale
+            if (i % 2) == 1:
+                base += swing_amount * 8.0
+            base += drift_ms
+            out.append(float(max(-max_ms, min(max_ms, base))))
+        return out
+
+    base_velocity = int(60 + cfg.intensity * 50)
+    base_velocity = max(1, min(127, base_velocity))
+    ghost_pref = float(params.get("ghost_note_frequency", 0.15))
+    ghost_density = float(max(0.0, min(1.0, cfg.ghostNoteAmount * ghost_pref)))
+
+    def _profile(inst: str, timing_scale: float, vel_bias: int, accent_boost: int, ghost_reduction: float, rr: int):
+        return {
+            "instrumentId": inst,
+            "microTiming": {
+                "subdivisionOffsetsMs": _subdivision_offsets(timing_scale),
+                "swingAmount": float(swing_amount),
+                "laidBackAmount": float(laid_back),
+            },
+            "velocityProfile": {
+                "base": int(max(1, min(127, base_velocity + vel_bias))),
+                "accentBoost": int(max(0, min(40, accent_boost))),
+                "ghostReduction": float(max(0.0, min(1.0, ghost_reduction))),
+                "randomRange": int(max(0, min(20, rr))),
+                "phraseShape": "swell" if cfg.variation > 0.6 else "flat",
+            },
+            "ghostDensity": float(ghost_density if inst.startswith("snare") else ghost_density * 0.4),
+            "flamProbability": float(0.1 if cfg.humanizeAmount > 0.6 and inst.startswith("snare") else 0.0),
+            "dragProbability": float(0.05 if cfg.humanizeAmount > 0.7 and inst.startswith("snare") else 0.0),
+        }
+
+    profiles = [
+        _profile("kick", 0.5, 10, int(cfg.intensity * 20), 0.7, int(cfg.humanizeAmount * 8)),
+        _profile("snare_center", 1.0, 0, int(15 + cfg.intensity * 25), 0.4, int(cfg.humanizeAmount * 10)),
+        _profile("hihat_closed", 0.8, -10, int(8 + cfg.intensity * 12), 0.6, int(cfg.humanizeAmount * 6)),
+        _profile("ride_bow", 0.7, -5, int(10 + cfg.intensity * 15), 0.5, int(cfg.humanizeAmount * 7)),
+    ]
+
+    return {
+        "styleId": cfg.style,
+        "globalFeel": global_feel,
+        "quantizationBase": "16th",
+        "phrases": [
+            {
+                "phraseId": f"{cfg.sectionId}_local",
+                "barStart": cfg.startMeasure,
+                "barEnd": cfg.endMeasure,
+                "profiles": profiles,
+            }
+        ],
+    }
 
 
 def build_flat_performance_spec(

@@ -3,7 +3,7 @@
 
 import * as Tone from 'tone'
 import { MidiTrack, MidiNote, TempoPt } from './types'
-import { ticksToSeconds } from './tempo'
+import { getBpmAtTime, ticksToSeconds } from './tempo'
 
 export interface MidiInstrument {
   // Extended interface for MIDI-specific instruments
@@ -36,7 +36,7 @@ export class MidiScheduler {
     this.instruments[track.id] = instrument
     
     // Create events array from all clips in track
-    const events: { time: number; note: MidiNote; trackId: string }[] = []
+    const events: { time: number; note: MidiNote; trackId: string; disableGrooveShaping?: boolean }[] = []
     
     track.clips.forEach(clip => {
       clip.notes.forEach(note => {
@@ -44,14 +44,15 @@ export class MidiScheduler {
         events.push({ 
           time: startTime, 
           note, 
-          trackId: track.id 
+          trackId: track.id,
+          disableGrooveShaping: clip.disableGrooveShaping,
         })
       })
     })
     
     // Create Tone.Part for scheduling
     const part = new Tone.Part((time, event: any) => {
-      const { note, trackId } = event
+      const { note, trackId, disableGrooveShaping } = event
       const duration = ticksToSeconds(
         this.getTempoMap(), 
         note.t1 - note.t0, 
@@ -68,7 +69,7 @@ export class MidiScheduler {
       if (soloTracks && !track.solo) return
       
       // Trigger note on instrument
-      this.triggerNote(instrument, note, duration, time)
+      this.triggerNote(instrument, note, duration, time, Boolean(disableGrooveShaping))
       
     }, events).start(0)
     
@@ -109,25 +110,102 @@ export class MidiScheduler {
     instrument: MidiInstrument, 
     note: MidiNote, 
     duration: number, 
-    time: number
+    time: number,
+    disableGrooveShaping: boolean
   ) {
     try {
       // Convert MIDI note number to frequency
       const frequency = Tone.Frequency(note.pitch, 'midi')
       
       // Convert velocity (0-127) to gain (0-1)
-      const velocity = note.vel / 127
+      const baseVelocity = Math.max(1, Math.min(127, note.vel)) / 127
+
+      if (disableGrooveShaping) {
+        const velocity = Math.max(0, Math.min(1, baseVelocity))
+        instrument.triggerAttackRelease(
+          frequency,
+          Math.max(duration, 0.01),
+          time,
+          velocity,
+        )
+        return
+      }
+
+      // ---------------------------------------------------------------------
+      // Groove-based playback shaping (NO randomness)
+      // ---------------------------------------------------------------------
+      // Goal: avoid "random" humanization; only apply musically motivated feel.
+      // - hats: subtle swing + deterministic accent pattern
+      // - snare: slightly laid-back
+      // - kick: slightly ahead
+      const role = this.drumRoleForPitch(note.pitch)
+
+      const tempoMap = this.getTempoMap()
+      const noteSec = ticksToSeconds(tempoMap, note.t0, this.ppq)
+      const bpm = getBpmAtTime(tempoMap, noteSec)
+
+      // Position helpers (assume 4/4-ish grid for feel shaping; still works generically)
+      const ticksInQuarter = this.ppq
+      const ticksInEighth = this.ppq / 2
+      const ticksInSixteenth = this.ppq / 4
+      const posInBeat = ((note.t0 % ticksInQuarter) + ticksInQuarter) % ticksInQuarter
+
+      // A gentle swing feel by delaying the "and" (eighth offbeat) for hats/cymbals.
+      const isEighthOffbeat = posInBeat >= ticksInEighth - ticksInSixteenth * 0.25 && posInBeat <= ticksInEighth + ticksInSixteenth * 0.25
+      const swingMs = 10 // fixed, musical (not random)
+
+      // Intentional microtiming offsets
+      let timingOffsetMs = 0
+      if ((role === 'hihat' || role === 'cymbal') && isEighthOffbeat) timingOffsetMs += swingMs
+      if (role === 'snare') timingOffsetMs += 6
+      if (role === 'kick') timingOffsetMs -= 3
+
+      const when = time + timingOffsetMs / 1000
+
+      // Deterministic velocity shaping
+      let velocityMul = 1
+
+      // Hi-hat accent pattern: stronger on downbeats / weaker on off subdivisions
+      if (role === 'hihat') {
+        const sixteenthIndex = Math.floor((((note.t0 % (ticksInQuarter * 4)) + (ticksInQuarter * 4)) % (ticksInQuarter * 4)) / ticksInSixteenth)
+        const inBeatSixteenth = Math.floor(posInBeat / ticksInSixteenth)
+        // Common feel: 1 e + a (accent 1 and 3, lighter e/a)
+        if (inBeatSixteenth === 0) velocityMul *= 1.06
+        else if (inBeatSixteenth === 2) velocityMul *= 0.96
+        else velocityMul *= 0.92
+        // Slightly stronger on beat 1/3 within bar
+        if (sixteenthIndex === 0 || sixteenthIndex === 8) velocityMul *= 1.03
+      }
+
+      // Backbeat emphasis (helps groove without randomness)
+      if (role === 'snare') {
+        const beatInBar = Math.floor((((note.t0 % (ticksInQuarter * 4)) + (ticksInQuarter * 4)) % (ticksInQuarter * 4)) / ticksInQuarter)
+        if (beatInBar === 1 || beatInBar === 3) velocityMul *= 1.05
+      }
+
+      // Convert resulting velocity, clamp
+      const velocity = Math.max(0, Math.min(1, baseVelocity * velocityMul))
       
       // Trigger note with proper timing
       instrument.triggerAttackRelease(
         frequency, 
         Math.max(duration, 0.01), // Minimum duration
-        time, 
+        when, 
         velocity
       )
     } catch (error) {
       console.warn('Failed to trigger MIDI note:', error)
     }
+  }
+
+  private drumRoleForPitch(pitch: number): 'kick' | 'snare' | 'hihat' | 'cymbal' | 'tom' | 'other' {
+    // GM-ish pitch buckets for feel.
+    if (pitch === 36 || pitch === 35) return 'kick'
+    if (pitch === 38 || pitch === 40 || pitch === 37) return 'snare'
+    if (pitch === 42 || pitch === 44 || pitch === 46) return 'hihat'
+    if (pitch === 49 || pitch === 57 || pitch === 55 || pitch === 52 || pitch === 51 || pitch === 59) return 'cymbal'
+    if (pitch === 41 || pitch === 43 || pitch === 45 || pitch === 47 || pitch === 48 || pitch === 50) return 'tom'
+    return 'other'
   }
   
   /**

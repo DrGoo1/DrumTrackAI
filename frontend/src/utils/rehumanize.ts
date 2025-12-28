@@ -31,7 +31,7 @@ export function rehumanizeTrack(
   track: DrumTrackForDCSM,
   params: RehumanizeParams
 ): DrumTrackForDCSM {
-  const rng = createSeededRNG(params.seed || Date.now());
+  const rng = createSeededRNG(params.seed ?? 0);
   
   const newNotes = track.notes.map(note => {
     let newNote = { ...note };
@@ -368,7 +368,7 @@ export function rehumanizeSelection(
   selectedNoteIds: Set<string>,
   params: RehumanizeParams
 ): DrumTrackForDCSM {
-  const rng = createSeededRNG(params.seed || Date.now());
+  const rng = createSeededRNG(params.seed ?? 0);
   
   const newNotes = track.notes.map(note => {
     if (!selectedNoteIds.has(note.id)) {

@@ -10,6 +10,7 @@ import json
 import time
 import logging
 import uuid
+import math
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 import sqlite3
@@ -130,7 +131,11 @@ class DrumGenerationConfig:
         self.midi_map_name = data.get('midiMapName') or data.get('midi_map_name') or 'gm'
 
         self.groove_source = data.get('grooveSource') or data.get('groove_source')
+        self.groove_mode = data.get('grooveMode') or data.get('groove_mode')
         self.groove_controls = data.get('grooveControls') or data.get('groove_controls')
+
+        # Optional: force a specific EGMD phrase/clip id
+        self.egmd_phrase_id = data.get('egmdPhraseId') or data.get('egmd_phrase_id')
     
     @property
     def measure_count(self) -> int:
@@ -287,24 +292,33 @@ def generate_drums(config: DrumGenerationConfig) -> Dict:
     }
     """
     start_time = time.time()
-    
-    if DRUM_BUILDER_V2_AVAILABLE:
-        logger.info("Using Drum Builder v2.0")
-        try:
-            result = generate_with_v2_builder(config)
-            result['metadata']['builder_version'] = 'v2.0'
-            result['metadata']['generation_time_ms'] = round((time.time() - start_time) * 1000, 1)
-            return result
-        except Exception as e:
-            logger.error(f"Drum Builder v2.0 failed: {e}", exc_info=True)
-            logger.warning("Falling back to legacy generation")
-    
-    # Fallback to legacy generation
-    logger.info("Using legacy drum generation")
-    result = generate_with_legacy_system(config)
-    result['metadata']['builder_version'] = 'v1.1_legacy'
-    result['metadata']['generation_time_ms'] = round((time.time() - start_time) * 1000, 1)
-    return result
+
+    if not DRUM_BUILDER_V2_AVAILABLE:
+        return {
+            'ok': False,
+            'error': 'Drum Builder v2.0 is not available (import failed). No fallback generation is allowed.',
+            'metadata': {
+                'builder_version': 'v2.0_unavailable',
+                'generation_time_ms': round((time.time() - start_time) * 1000, 1),
+            },
+        }
+
+    logger.info("Using Drum Builder v2.0")
+    try:
+        result = generate_with_v2_builder(config)
+        result['metadata']['builder_version'] = 'v2.0'
+        result['metadata']['generation_time_ms'] = round((time.time() - start_time) * 1000, 1)
+        return result
+    except Exception as e:
+        logger.error(f"Drum Builder v2.0 failed: {e}", exc_info=True)
+        return {
+            'ok': False,
+            'error': f"Drum Builder v2.0 failed: {e}",
+            'metadata': {
+                'builder_version': 'v2.0_failed',
+                'generation_time_ms': round((time.time() - start_time) * 1000, 1),
+            },
+        }
 
 
 # ============================================================================
@@ -321,8 +335,8 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
     if not v2_config:
         raise Exception("Could not convert to v2.0 config")
     
-    # 2. Get drummer profile
-    drummer_profile = get_drummer_profile_simple(config.drummer)
+    # 2. Get drummer profile (persona/service-backed)
+    drummer_profile = build_drummer_profile(config)
     
     # 3. Create mock SongMap (TODO: integrate real SongMap analysis)
     # IMPORTANT: For section-scoped generation the internal events are section-relative
@@ -358,13 +372,28 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
         except Exception as e:
             logger.debug(f"Could not get part type preset: {e}")
     
-    perf_spec = get_performance_spec_from_llm(
-        cfg=v2_config,
-        section_label=section_label,
-        songmap_summary=songmap_summary,
-        drummer_profile=drummer_profile,
-        power_curve=power_curve,
-    )
+    groove_source = (getattr(config, "groove_source", None) or "").lower()
+    groove_mode = (getattr(config, "groove_mode", None) or "").lower()
+    egmd_exact_mode = groove_source in {"egmd", "egmd_phrase", "egmd_phrases"} and groove_mode in {"exact", "clip", "database"}
+
+    perf_spec = None
+    if egmd_exact_mode:
+        # In exact EGMD playback we must not introduce any LLM-derived micro-timing.
+        # build_drumtrack_for_dcsm() will apply micro-timing offsets from this spec.
+        perf_spec = {
+            "styleId": str(getattr(v2_config, "style", None) or getattr(config, "style", "")),
+            "globalFeel": "straight",
+            "quantizationBase": "16th",
+            "phrases": [],
+        }
+    else:
+        perf_spec = get_performance_spec_from_llm(
+            cfg=v2_config,
+            section_label=section_label,
+            songmap_summary=songmap_summary,
+            drummer_profile=drummer_profile,
+            power_curve=power_curve,
+        )
     
     # 5. Generate pattern (placeholder - use Rust audio-core or templates)
     # If Euclidean lanes are provided and mode is 'euclidean', use them to
@@ -376,60 +405,65 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
         or getattr(v2_config, "songStyle", None)
     )
 
-    groove_source = (getattr(config, "groove_source", None) or "").lower()
     egmd_phrase_info: Optional[Dict[str, Any]] = None
     egmd_transform_plan: Optional[Dict[str, Any]] = None
-    if getattr(v2_config, "generationMode", None) == "euclidean" and getattr(v2_config, "euclideanLanes", None):
+    internal_events: List[Dict[str, Any]] = []
+    if getattr(v2_config, "generationMode", None) == "euclidean":
+        lanes = getattr(v2_config, "euclideanLanes", None)
+        if not lanes:
+            raise Exception("Euclidean mode requested but euclideanLanes is empty; no fallback generation is allowed")
         internal_events = generate_euclidean_internal_events(config, v2_config)
     elif song_mode_active:
         grid_events = generate_song_grid_events(songmap, v2_config)
         if not grid_events:
-            logger.info("SongDrumPlanner produced no events; falling back to pattern generator")
-            internal_events = generate_pattern_events(config, drummer_profile)
-        else:
-            try:
-                grid_events = enrich_grid_with_rudiments(grid_events=grid_events, config=v2_config)
-            except Exception as err:
-                logger.warning(f"Rudiment enrichment failed: {err}")
-            internal_events = convert_song_grid_to_internal_events(
-                grid_events=grid_events,
-                songmap=songmap,
-                config=config,
-            )
-            logger.info(
-                "Song Mode: converted %d SongDrumPlanner grid events into %d internal events",
-                len(grid_events),
-                len(internal_events),
-            )
+            raise Exception("SongDrumPlanner produced no events; no fallback generation is allowed")
+        try:
+            grid_events = enrich_grid_with_rudiments(grid_events=grid_events, config=v2_config)
+        except Exception as err:
+            raise Exception(f"Rudiment enrichment failed: {err}")
+        internal_events = convert_song_grid_to_internal_events(
+            grid_events=grid_events,
+            songmap=songmap,
+            config=config,
+        )
+        logger.info(
+            "Song Mode: converted %d SongDrumPlanner grid events into %d internal events",
+            len(grid_events),
+            len(internal_events),
+        )
     elif groove_source in {"egmd", "egmd_phrase", "egmd_phrases"}:
         phrase = _select_best_egmd_phrase(config)
-        if phrase:
-            egmd_phrase_info = phrase
-            internal_events = _load_internal_events_from_midi_path(
-                midi_path=phrase["midi_path"],
-                config=config,
-            )
-            if internal_events:
-                controls = getattr(config, 'groove_controls', None)
-                if not isinstance(controls, dict):
-                    controls = _default_groove_controls_from_config(config)
-                measured = phrase.get('measured') if isinstance(phrase, dict) else None
-                if isinstance(measured, dict):
-                    egmd_transform_plan = _transform_plan_from_diff(controls, measured)
-                    internal_events = _apply_transform_stack_v0(
-                        internal_events=internal_events,
-                        config=config,
-                        transform_plan=egmd_transform_plan,
-                    )
-            if not internal_events:
-                internal_events = generate_pattern_events(config, drummer_profile)
-        else:
-            internal_events = generate_pattern_events(config, drummer_profile)
+        if not phrase:
+            raise Exception("EGMD grooveSource requested but no phrase could be selected; no fallback generation is allowed")
+        egmd_phrase_info = phrase
+        internal_events = _load_internal_events_from_midi_path(
+            midi_path=phrase["midi_path"],
+            config=config,
+        )
+        if not internal_events:
+            raise Exception("EGMD phrase selected but internal events could not be loaded; no fallback generation is allowed")
+        if not egmd_exact_mode:
+            controls = getattr(config, 'groove_controls', None)
+            if not isinstance(controls, dict):
+                controls = _default_groove_controls_from_config(config)
+            measured = phrase.get('measured') if isinstance(phrase, dict) else None
+            if isinstance(measured, dict):
+                egmd_transform_plan = _transform_plan_from_diff(controls, measured)
+                internal_events = _apply_transform_stack_v0(
+                    internal_events=internal_events,
+                    transform_plan=egmd_transform_plan,
+                )
     else:
-        internal_events = generate_pattern_events(config, drummer_profile)
+        raise Exception(
+            "No supported generation path selected for this request (song mode inactive, no euclidean lanes, no egmd grooveSource). "
+            "No fallback generation is allowed."
+        )
+
+    if not internal_events:
+        raise Exception("No internal events were produced by the generation pipeline; no fallback generation is allowed")
     
     # 5.5. Enrich with Jamstix-style attributes
-    if DRUM_BUILDER_V2_AVAILABLE:
+    if DRUM_BUILDER_V2_AVAILABLE and not egmd_exact_mode:
         try:
             # Compute laid-back amount from humanize settings
             laid_back_amount = (config.humanize_amount - 0.5) * 2.0  # Map 0-1 to -1 to +1
@@ -488,7 +522,7 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
         'measure_count': config.measure_count,
         'tempo_range': f"{min(config.tempos):.0f}-{max(config.tempos):.0f} BPM",
         'resolution_ppq': frontend_track.get('resolution_ppq', 960),
-        'performance_from_llm': True,
+        'performance_from_llm': False if egmd_exact_mode else True,
         'fill_density': getattr(config, 'fill_density', None),
         'articulation_profile': getattr(config, 'articulation_profile', None),
     }
@@ -526,8 +560,7 @@ def generate_euclidean_internal_events(config: DrumGenerationConfig, v2_config: 
 
     lanes = getattr(v2_config, "euclideanLanes", None) or []
     if not lanes:
-        # Fallback to the simple pattern if no lanes are defined
-        return generate_pattern_events(config, {})
+        raise Exception("Euclidean mode requested but euclideanLanes is empty; no fallback generation is allowed")
 
     events: List[Dict[str, Any]] = []
 
@@ -623,6 +656,79 @@ def _egmd_db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_DRUM_TRAINING_DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def list_egmd_phrases(
+    *,
+    style_group: str,
+    meter: Optional[str] = None,
+    tempo_bpm: Optional[float] = None,
+    tempo_tolerance_bpm: float = 12.0,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """List EGMD phrases for a given style group.
+
+    This is used by the frontend to allow users to pick among multiple clips
+    within a style. Returned entries are lightweight (id + paths + meter/tempo if available).
+    """
+    if not _DRUM_TRAINING_DB_PATH.exists():
+        return []
+    sg = (style_group or "").strip().lower() or "rock"
+    meter = (meter or "").strip() or None
+    try:
+        tempo = float(tempo_bpm) if tempo_bpm is not None else None
+    except Exception:
+        tempo = None
+    tol = float(tempo_tolerance_bpm or 12.0)
+    limit = max(1, min(200, int(limit or 50)))
+
+    conn = _egmd_db_connect()
+    try:
+        cur = conn.cursor()
+        tempo_expr = "COALESCE(tempo_bpm, tempo)"
+        meter_expr = "COALESCE(meter, time_signature)"
+        where = ["style_group = ?", "midi_path IS NOT NULL"]
+        params: List[Any] = [sg]
+        if meter:
+            where.append(f"{meter_expr} = ?")
+            params.append(meter)
+        if tempo is not None and math.isfinite(tempo):
+            where.append(f"{tempo_expr} BETWEEN ? AND ?")
+            params.extend([tempo - tol, tempo + tol])
+            order = f"ORDER BY ABS({tempo_expr} - ?), id"
+            params.append(tempo)
+        else:
+            order = "ORDER BY id"
+
+        query = (
+            "SELECT id, midi_path, audio_path, "
+            + tempo_expr
+            + " AS tempo_value, "
+            + meter_expr
+            + " AS meter_value "
+            "FROM egmd_phrases WHERE "
+            + " AND ".join(where)
+            + f" {order} LIMIT ?"
+        )
+        params.append(limit)
+        cur.execute(query, tuple(params))
+        rows = cur.fetchall() or []
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "phrase_id": int(r["id"]),
+                    "midi_path": r["midi_path"],
+                    "audio_path": r["audio_path"],
+                    "tempo_bpm": float(r["tempo_value"]) if r["tempo_value"] is not None else None,
+                    "meter": str(r["meter_value"]) if r["meter_value"] is not None else None,
+                }
+            )
+        return out
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 
 def _select_rudiment_midi_asset(
@@ -843,6 +949,36 @@ def _select_best_egmd_phrase(config: DrumGenerationConfig) -> Optional[Dict[str,
         logger.warning("drum_training.db not found at %s", _DRUM_TRAINING_DB_PATH)
         return None
 
+    forced_phrase_id = getattr(config, "egmd_phrase_id", None)
+    if forced_phrase_id is not None and str(forced_phrase_id).strip() != "":
+        try:
+            forced_id = int(forced_phrase_id)
+        except Exception:
+            forced_id = None
+        if forced_id is not None:
+            conn = _egmd_db_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT id, midi_path, audio_path, feature_json FROM egmd_phrases WHERE id = ? LIMIT 1",
+                    (forced_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    try:
+                        fj = json.loads(row["feature_json"]) if row["feature_json"] else {}
+                    except Exception:
+                        fj = {}
+                    pf = _derive_phrase_features_from_json(fj) if isinstance(fj, dict) else {}
+                    return {
+                        "phrase_id": int(row["id"]),
+                        "midi_path": row["midi_path"],
+                        "audio_path": row["audio_path"],
+                        "measured": pf,
+                    }
+            finally:
+                conn.close()
+
     controls = getattr(config, "groove_controls", None)
     if not isinstance(controls, dict):
         controls = _default_groove_controls_from_config(config)
@@ -864,30 +1000,38 @@ def _select_best_egmd_phrase(config: DrumGenerationConfig) -> Optional[Dict[str,
     conn = _egmd_db_connect()
     try:
         cur = conn.cursor()
+        # Deterministic candidate pool selection:
+        # - prefer rows closest to target tempo
+        # - match style_group and (when provided) meter
+        # - do NOT rely on random sampling
+        tempo_expr = "COALESCE(tempo_bpm, tempo)"
+        meter_expr = "COALESCE(meter, time_signature)"
         if meter:
             cur.execute(
-                """
+                f"""
                 SELECT id, midi_path, audio_path, feature_json
                 FROM egmd_phrases
                 WHERE style_group = ?
-                  AND time_signature = ?
-                  AND tempo BETWEEN ? AND ?
+                  AND {meter_expr} = ?
+                  AND {tempo_expr} BETWEEN ? AND ?
                   AND feature_json IS NOT NULL
-                ORDER BY RANDOM() LIMIT ?
+                ORDER BY ABS({tempo_expr} - ?), id
+                LIMIT ?
                 """,
-                (style_group, meter, tempo_min, tempo_max, pool),
+                (style_group, meter, tempo_min, tempo_max, tempo, pool),
             )
         else:
             cur.execute(
-                """
+                f"""
                 SELECT id, midi_path, audio_path, feature_json
                 FROM egmd_phrases
                 WHERE style_group = ?
-                  AND tempo BETWEEN ? AND ?
+                  AND {tempo_expr} BETWEEN ? AND ?
                   AND feature_json IS NOT NULL
-                ORDER BY RANDOM() LIMIT ?
+                ORDER BY ABS({tempo_expr} - ?), id
+                LIMIT ?
                 """,
-                (style_group, tempo_min, tempo_max, pool),
+                (style_group, tempo_min, tempo_max, tempo, pool),
             )
         rows = cur.fetchall()
         if not rows:
@@ -906,10 +1050,10 @@ def _select_best_egmd_phrase(config: DrumGenerationConfig) -> Optional[Dict[str,
         if not best_rows:
             return None
 
-        best_rows.sort(key=lambda x: x[0])
-        shortlist = best_rows[:top_k]
-        chosen = random.choice(shortlist)
-        _, row, pf = chosen
+        # Deterministic choice: pick the best-scoring phrase.
+        # (If you want variety, drive it from musical controls/constraints, not randomness.)
+        best_rows.sort(key=lambda x: (x[0], int(x[1]["id"]) if "id" in x[1].keys() else 0))
+        _, row, pf = best_rows[0]
         return {
             "phrase_id": int(row["id"]),
             "midi_path": row["midi_path"],
@@ -1225,6 +1369,83 @@ def get_drummer_profile_simple(drummer_name: str) -> Dict[str, Any]:
         profile["style_specialties"] = ["funk", "disco"]
     
     return profile
+
+
+def build_drummer_profile(config: DrumGenerationConfig) -> Dict[str, Any]:
+    """Resolve a drummer profile for LLM prompting."""
+
+    drummer_name = getattr(config, "drummer", None) or "unknown"
+    return get_drummer_profile_simple(str(drummer_name))
+
+
+def _build_full_song_internal_events_from_egmd(
+    *,
+    config: DrumGenerationConfig,
+    controls: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    beats_per_bar = int(getattr(config, "time_signature", (4, 4))[0] or 4)
+    tempo = float((getattr(config, "tempos", None) or [120])[0] or 120)
+    bar_duration = (60.0 / max(tempo, 1e-3)) * beats_per_bar
+    measure_count = int(getattr(config, "measure_count", 1) or 1)
+    total_duration = bar_duration * measure_count
+
+    chunk_bars = int(controls.get("egmd_chunk_bars", 4) or 4)
+    chunk_bars = max(1, min(16, chunk_bars))
+    chunk_duration = bar_duration * chunk_bars
+
+    seed = int(getattr(config, "start_measure", 0) or 0) + 901
+    rng = random.Random(seed)
+
+    out: List[Dict[str, Any]] = []
+    chosen_phrase: Optional[Dict[str, Any]] = None
+
+    t0 = 0.0
+    while t0 < total_duration - 1e-6:
+        phrase = _select_best_egmd_phrase(config)
+        if not phrase:
+            break
+        if chosen_phrase is None:
+            chosen_phrase = phrase
+
+        phrase_events = _load_internal_events_from_midi_path(midi_path=phrase["midi_path"], config=config)
+        if not phrase_events:
+            t0 += chunk_duration
+            continue
+
+        measured = phrase.get("measured") if isinstance(phrase, dict) else None
+        if isinstance(measured, dict):
+            transform_plan = _transform_plan_from_diff(controls, measured)
+            phrase_events = _apply_transform_stack_v0(
+                internal_events=phrase_events,
+                config=config,
+                transform_plan=transform_plan,
+            )
+
+        phrase_max_time = max(float(e.get("time_sec", 0.0)) for e in phrase_events)
+        phrase_span = max(0.25, phrase_max_time)
+
+        local_time = 0.0
+        while local_time < chunk_duration - 1e-6:
+            for e in phrase_events:
+                te = float(e.get("time_sec", 0.0))
+                out_time = t0 + local_time + (te % phrase_span)
+                if out_time >= total_duration:
+                    continue
+                e2 = dict(e)
+                e2["time_sec"] = float(out_time)
+                out.append(e2)
+            local_time += phrase_span
+
+        reseed_prob = float(controls.get("egmd_reseed_probability", 0.85) or 0.85)
+        if rng.random() < reseed_prob:
+            t0 += chunk_duration
+        else:
+            t0 += bar_duration
+
+    if chosen_phrase is None:
+        chosen_phrase = {"phrase_id": None, "midi_path": None, "audio_path": None, "measured": None}
+    out.sort(key=lambda e: float(e.get("time_sec", 0.0)))
+    return chosen_phrase, out
 
 
 def build_mock_songmap_for_section(config: DrumGenerationConfig):

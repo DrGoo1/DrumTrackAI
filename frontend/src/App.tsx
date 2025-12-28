@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import WebDAWApp from './components/WebDAWApp';
 import BenchPage from './pages/BenchPage';
 import { WebDAW } from './pages/WebDAW';
@@ -11,43 +11,24 @@ function App() {
     <Router>
       <div className="App min-h-screen bg-slate-950">
         <nav className="bg-slate-900 border-b border-slate-800 px-4 py-2">
-          <div className="flex items-center justify-between max-w-6xl mx-auto">
-            <div className="flex items-center space-x-6">
-              <h1 className="text-xl font-bold text-slate-100">DrumTracKAI v1.1.17</h1>
-              <div className="flex space-x-4">
-                <Link 
-                  to="/upload" 
-                  className="text-slate-300 hover:text-slate-100 px-3 py-2 rounded transition-colors"
-                >
-                  Upload Audio
-                </Link>
-                <Link 
-                  to="/" 
-                  className="text-slate-300 hover:text-slate-100 px-3 py-2 rounded transition-colors"
-                >
-                  DCSM Studio
-                </Link>
-                <Link 
-                  to="/bench" 
-                  className="text-slate-300 hover:text-slate-100 px-3 py-2 rounded transition-colors"
-                >
-                  Benchmarks
-                </Link>
-                <Link 
-                  to="/webdaw" 
-                  className="text-slate-300 hover:text-slate-100 px-3 py-2 rounded transition-colors"
-                >
-                  WebDAW (Scaffold)
-                </Link>
+          <div className="flex items-center justify-center max-w-6xl mx-auto">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex flex-col leading-tight min-w-0 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-slate-400 truncate">DrumTracKAI</div>
+                <div className="text-base font-semibold text-white truncate">
+                  <span className="text-lg">D</span>
+                  <span className="text-sm text-slate-200">rumTrack</span>
+                  <span className="ml-1 text-lg">C</span>
+                  <span className="text-sm text-slate-200">reation</span>
+                  <span className="ml-1 text-lg">S</span>
+                  <span className="text-sm text-slate-200">tudio</span>
+                  <span className="ml-1 text-lg">M</span>
+                  <span className="text-sm text-slate-200">odule</span>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-200 bg-emerald-900/20">
-                Use ver 1.1.17
+              <span className="text-[11px] px-2 py-1 rounded border border-slate-700 bg-slate-950 text-slate-300">
+                v1.1.17
               </span>
-              <div className="text-xs text-slate-400">
-                Advanced Groove • Fill Library • Rust Performance
-              </div>
             </div>
           </div>
         </nav>

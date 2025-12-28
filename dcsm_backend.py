@@ -37,6 +37,15 @@ librosa = None
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 LOG = logging.getLogger("drumtrackai")
 
+DRUM_GEN_STATS = {
+    "requests": 0,
+    "ok": 0,
+    "fallback": 0,
+    "last_backend": None,
+    "last_fallback_reason": None,
+    "last_fallback_ts": None,
+}
+
 # Import drummer mapping service
 from drummer_mapping_service import get_drummer_service
 # TEMPORARILY DISABLED FOR TESTING - AI endpoints have deep dependency chain
@@ -44,7 +53,7 @@ from drummer_mapping_service import get_drummer_service
 from song_lookup_service import search_song
 
 # Import drum generation API (Drum Builder v2.0 integrated)
-from drum_generation_api import generate_drums, DrumGenerationConfig
+from drum_generation_api import generate_drums, DrumGenerationConfig, list_egmd_phrases
 from backend.drum_generation.brain_elements import get_brain_elements
 from backend.drum_generation.drum_generation_config import (
     DrumBrainConfig,
@@ -409,6 +418,52 @@ async def api_sample_collections(request: web.Request) -> web.Response:
     except Exception as e:
         LOG.error(f"api_sample_collections failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_list_egmd_phrases(request: web.Request):
+    """List EGMD phrases for a given style group.
+
+    Query params:
+      - style_group (required)
+      - meter (optional, e.g. "4/4")
+      - tempo_bpm (optional)
+      - tempo_tolerance_bpm (optional)
+      - limit (optional)
+    """
+    style_group = (request.query.get("style_group") or request.query.get("styleGroup") or "").strip()
+    if not style_group:
+        return web.json_response({"error": "style_group required"}, status=400)
+
+    meter = (request.query.get("meter") or "").strip() or None
+    tempo_raw = request.query.get("tempo_bpm") or request.query.get("tempoBpm")
+    tol_raw = request.query.get("tempo_tolerance_bpm") or request.query.get("tempoToleranceBpm")
+    limit_raw = request.query.get("limit")
+
+    tempo_bpm = None
+    if tempo_raw is not None and str(tempo_raw).strip() != "":
+        try:
+            tempo_bpm = float(tempo_raw)
+        except Exception:
+            tempo_bpm = None
+
+    try:
+        tol = float(tol_raw) if tol_raw is not None and str(tol_raw).strip() != "" else 12.0
+    except Exception:
+        tol = 12.0
+
+    try:
+        limit = int(limit_raw) if limit_raw is not None and str(limit_raw).strip() != "" else 50
+    except Exception:
+        limit = 50
+
+    items = list_egmd_phrases(
+        style_group=style_group,
+        meter=meter,
+        tempo_bpm=tempo_bpm,
+        tempo_tolerance_bpm=tol,
+        limit=limit,
+    )
+    return web.json_response({"items": items})
 
 
 async def api_drum_samples(request: web.Request) -> web.Response:
@@ -886,7 +941,20 @@ def compute_waveform(path: Path, max_points: int = 3000):
 
 # ---------- Routes ----------
 async def healthz(_):
-    return web.json_response({"ok": True, "ts": time.time()})
+    return web.json_response(
+        {
+            "ok": True,
+            "ts": time.time(),
+            "drum_generation": {
+                "requests": int(DRUM_GEN_STATS.get("requests", 0) or 0),
+                "ok": int(DRUM_GEN_STATS.get("ok", 0) or 0),
+                "fallback": int(DRUM_GEN_STATS.get("fallback", 0) or 0),
+                "last_backend": DRUM_GEN_STATS.get("last_backend"),
+                "last_fallback_reason": DRUM_GEN_STATS.get("last_fallback_reason"),
+                "last_fallback_ts": DRUM_GEN_STATS.get("last_fallback_ts"),
+            },
+        }
+    )
 
 async def upload(request: web.Request):
     try:
@@ -1406,6 +1474,7 @@ def make_app() -> web.Application:
         web.get("/api/song-lookup", song_lookup),
         # Drum generation endpoint
         web.post("/api/generate-drums", handle_generate_drums),
+        web.get("/api/egmd/phrases", api_list_egmd_phrases),
         # Jamstix brain endpoints
         web.post("/api/jamstix/enrich", jamstix_enrich_pattern),
         web.post("/api/jamstix/build-track", jamstix_build_track),
@@ -2369,16 +2438,58 @@ async def handle_generate_drums(request):
         # Create config object
         config = DrumGenerationConfig(data)
         
+        DRUM_GEN_STATS["requests"] = int(DRUM_GEN_STATS.get("requests", 0) or 0) + 1
+
         # Generate drums using integrated system
         result = generate_drums(config)
 
         metadata = result.get('metadata') or {}
+        builder_version = str(metadata.get("builder_version") or "").strip().lower()
+        mode = str(metadata.get("mode") or "").strip().lower()
+        ok_flag = bool(result.get("ok"))
+
+        generation_backend = None
+        if not ok_flag:
+            generation_backend = "fallback"
+        elif builder_version in {"v2.0_failed", "v2.0_unavailable"}:
+            generation_backend = "fallback"
+        elif builder_version.startswith("v2"):
+            generation_backend = "v2"
+        elif "legacy" in mode or "fallback" in mode:
+            generation_backend = "legacy"
+        else:
+            generation_backend = builder_version or (mode or "unknown")
+
+        fallback_used = False
+        fallback_reason = None
+        if generation_backend != "v2":
+            fallback_used = True
+            fallback_reason = str(result.get("error") or metadata.get("error") or "") or None
+
+        DRUM_GEN_STATS["last_backend"] = generation_backend
+        if ok_flag:
+            DRUM_GEN_STATS["ok"] = int(DRUM_GEN_STATS.get("ok", 0) or 0) + 1
+        if fallback_used:
+            DRUM_GEN_STATS["fallback"] = int(DRUM_GEN_STATS.get("fallback", 0) or 0) + 1
+            DRUM_GEN_STATS["last_fallback_reason"] = fallback_reason
+            DRUM_GEN_STATS["last_fallback_ts"] = float(time.time())
+
         metadata['sectionId'] = section_id or None
+        metadata['generation_backend'] = generation_backend
+        metadata['fallback_used'] = bool(fallback_used)
+        metadata['fallback_reason'] = fallback_reason
         result['metadata'] = metadata
         
         LOG.info(f"✅ Generated drums in {result['metadata']['generation_time_ms']}ms")
-        
-        return web.json_response(result)
+
+        headers = {
+            "X-DrumTracKAI-Backend": str(generation_backend),
+            "X-DrumTracKAI-Fallback": "1" if fallback_used else "0",
+        }
+        if fallback_reason:
+            headers["X-DrumTracKAI-Fallback-Reason"] = str(fallback_reason)[:512]
+
+        return web.json_response(result, headers=headers)
         
     except Exception as e:
         LOG.error(f"Drum generation failed: {e}")

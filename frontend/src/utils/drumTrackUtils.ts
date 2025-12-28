@@ -226,12 +226,34 @@ export function splitTrackByBar(
 // ============================================================================
 
 export function getInstrumentForMidiPitch(pitch: number): DrumInstrumentId {
+  const p = Math.round(pitch);
+
+  // Expanded GM-style mapping (some instruments have multiple common pitches)
+  // Keep this logic here (instead of DRUM_INSTRUMENT_MIDI_MAP) since that map is 1:1.
+  if (p === 36 || p === 35) return "kick";
+  if (p === 38) return "snare_center";
+  if (p === 40) return "snare_ghost";
+  if (p === 37) return "snare_rim";
+  if (p === 42) return "hihat_closed";
+  if (p === 46) return "hihat_open";
+  if (p === 44) return "hihat_pedal";
+  if (p === 51) return "ride_bow";
+  if (p === 53) return "ride_bell";
+  if (p === 59) return "ride_edge";
+  if (p === 49) return "crash_1";
+  if (p === 57) return "crash_2";
+
+  // Toms (common GM pitches)
+  if (p === 50 || p === 48) return "tom_high";
+  if (p === 47 || p === 45) return "tom_mid";
+  if (p === 43 || p === 41) return "tom_floor";
+
   for (const [instrumentId, midiPitch] of Object.entries(DRUM_INSTRUMENT_MIDI_MAP)) {
-    if (midiPitch === pitch) {
+    if (midiPitch === p) {
       return instrumentId as DrumInstrumentId;
     }
   }
-  return 'other';
+  return "other";
 }
 
 export function getMidiPitchForInstrument(instrumentId: DrumInstrumentId): number {

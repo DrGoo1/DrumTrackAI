@@ -11,24 +11,58 @@ services:
       - PYTHONPATH=/app
       - USE_RUST=1
       - AUDIO_CORE_BIN=/usr/local/bin/audio-core
+      - LLM_PROVIDER=local_service
+      - LOCAL_LLM_URL=http://llm:9000
       # DB path inside container (mount a single SQLite file here)
       - SAMPLE_DB_PATH=/data/db/drumtrackai.db
       # Samples root inside container (mount host samples root here)
       - SAMPLES_ROOT=/data/samples
       # Optional: if DB still contains Windows absolute paths, remap prefix
-      - SAMPLE_PATH_MAP_FROM=${SAMPLE_PATH_MAP_FROM}
-      - SAMPLE_PATH_MAP_TO=${SAMPLE_PATH_MAP_TO}
+      - SAMPLE_PATH_MAP_FROM=${SAMPLE_PATH_MAP_FROM:-E:/}
+      - SAMPLE_PATH_MAP_TO=${SAMPLE_PATH_MAP_TO:-/data/samples/}
     volumes:
       - ./admin:/app/admin
       - ./uploads:/app/uploads
       - ./sessions:/app/sessions
+      - ./dcsm_backend.py:/app/dcsm_backend.py
+      - ./drum_generation_api.py:/app/drum_generation_api.py
+      - ./backend:/app/backend
       # Persist/override the DB file location (cloud-friendly)
       - ${DRUMTRACKAI_DB_HOST_PATH:-./admin/drumtrackai.db}:/data/db/drumtrackai.db
       # Mount the host sample library (read-only recommended)
-      - ${DRUMTRACKAI_SAMPLES_HOST_PATH:-E:\\Drum Samples}:/data/samples:ro
+      - ${DRUMTRACKAI_SAMPLES_HOST_PATH:-E:\\}:/data/samples:ro
+    networks:
+      - drumtrackai-network
+    depends_on:
+      - llm
+    restart: unless-stopped
+
+  # Local GPU-backed "LLM" service (humanization/performance spec)
+  llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.llm
+    container_name: drumtrackai-v1117-llm
+    ports:
+      - "9000:9000"
+    gpus: all
+    environment:
+      - ACTIVE_MODEL_JSON=/models/production/active_model.json
+      - ACTIVE_MODEL_PATH=/models/production/v1.1.17/drum_humanizer/model.pth
+      - ONNX_MODEL_PATH=/models/production/v1.1.17/drum_humanizer/model.onnx
+      - INFERENCE_BACKEND=torch
+    volumes:
+      - ./admin/models:/models
+      - ./llm_service:/app/llm_service
     networks:
       - drumtrackai-network
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
 
   # React Frontend v1.1.17 (Landing + BeatSketch)
   frontend:

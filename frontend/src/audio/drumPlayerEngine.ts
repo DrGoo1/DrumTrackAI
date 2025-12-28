@@ -241,8 +241,10 @@ export class DrumPlayerEngine {
     }
     const rms = Math.sqrt(sum / data.length);
 
-    const combined = Math.max(rms * 2.5, peak * 1.4);
-    const boosted = 1 - Math.exp(-combined * 2.2);
+    // Make meters feel more responsive for transient material.
+    // (We intentionally compress the dynamic range, but with higher sensitivity.)
+    const combined = Math.max(rms * 4.5, peak * 2.2);
+    const boosted = 1 - Math.exp(-combined * 3.4);
     return Math.max(0, Math.min(1, boosted));
   }
 

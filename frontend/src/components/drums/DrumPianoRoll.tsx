@@ -21,6 +21,14 @@ import { getInstrumentForMidiPitch } from "../../utils/drumTrackUtils";
 
 const SUPPORTED_LIMBS: readonly LimbId[] = ["RH", "LH", "RF", "LF"];
 
+export type DrumSectionRegion = {
+  id: string;
+  label: string;
+  startBar: number;
+  endBar: number;
+  color?: string;
+};
+
 interface DrumPianoRollProps {
   drumTrack: DrumTrackForDCSM | null;
   timeSignature: [number, number];
@@ -39,6 +47,17 @@ interface DrumPianoRollProps {
   visibleMeasureCount?: number;
   totalSongBars?: number;
   drumEngine?: DrumPlayerEngine | null;
+  sectionRegions?: DrumSectionRegion[];
+}
+
+function getSectionOverlayColor(label?: string | null): string {
+  const v = (label || "").toLowerCase();
+  if (v.includes("verse")) return "#3b82f6";
+  if (v.includes("chorus")) return "#22c55e";
+  if (v.includes("bridge")) return "#a855f7";
+  if (v.includes("intro")) return "#f97316";
+  if (v.includes("outro")) return "#ef4444";
+  return "#64748b";
 }
 
 function mapInstrumentToChannel(instId: DrumInstrumentId): DrumPlayerChannelId | null {
@@ -131,6 +150,7 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   visibleMeasureCount,
   totalSongBars,
   drumEngine,
+  sectionRegions,
 }) => {
   if (!drumTrack) {
     return (
@@ -194,6 +214,25 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
   const totalBarsSpan = totalSongBars ?? Math.max(trackBarCount || 1, 1);
   const totalWidth = Math.max(1, totalBarsSpan * barWidthPx);
+
+  const normalizedSectionRegions = useMemo(() => {
+    const regions = Array.isArray(sectionRegions) ? sectionRegions : [];
+    return regions
+      .map((r) => {
+        const startBar = Math.max(0, Math.min(totalBarsSpan - 1, Math.floor(r.startBar ?? 0)));
+        const endBar = Math.max(startBar, Math.min(totalBarsSpan - 1, Math.floor(r.endBar ?? startBar)));
+        const label = (r.label || "Section").toString();
+        const color = (r.color || getSectionOverlayColor(label)).toString();
+        return {
+          id: (r.id || `${label}-${startBar}-${endBar}`).toString(),
+          label,
+          startBar,
+          endBar,
+          color,
+        };
+      })
+      .filter((r) => Number.isFinite(r.startBar) && Number.isFinite(r.endBar) && r.endBar >= r.startBar);
+  }, [sectionRegions, totalBarsSpan]);
 
   const playheadX = useMemo(() => {
     const playSec = typeof playheadSeconds === "number" && Number.isFinite(playheadSeconds) ? playheadSeconds : null;
@@ -277,7 +316,10 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
   const supportedLimb = useCallback((raw?: DrumNoteEvent["limbId"] | null): LimbId | null => {
     if (!raw) return null;
-    return SUPPORTED_LIMBS.includes(raw as LimbId) ? (raw as LimbId) : null;
+    const v = String(raw);
+    if (v === "LS") return "LH";
+    if (v === "RS") return "RH";
+    return SUPPORTED_LIMBS.includes(v as LimbId) ? (v as LimbId) : null;
   }, []);
 
   const limbAccentForNote = useCallback((note: DrumNoteEvent): { limb: LimbId | null; accent?: string } => {
@@ -413,7 +455,16 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
       const map: Record<string, DrumNoteEvent[]> = {};
       for (const id of instrumentOrder) map[id] = [];
       for (const n of filteredNotes) {
-        const arr = map[n.instrumentId] || (map[n.instrumentId] = []);
+        const instrumentIdRaw = (n.instrumentId || "").toString();
+        const hasLane = instrumentOrder.includes(instrumentIdRaw as DrumInstrumentId);
+        const inferred =
+          hasLane && instrumentIdRaw !== "other"
+            ? (instrumentIdRaw as DrumInstrumentId)
+            : typeof n.midiPitch === "number"
+              ? getInstrumentForMidiPitch(n.midiPitch)
+              : "other";
+        const key = (inferred || "other") as DrumInstrumentId;
+        const arr = map[key] || (map[key] = []);
         arr.push(n);
       }
       return map as Record<DrumInstrumentId, DrumNoteEvent[]>;
@@ -468,6 +519,24 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
             className="relative"
             style={{ width: `${totalWidth}px`, height: 24 }}
           >
+            {normalizedSectionRegions.map((r) => {
+              const left = r.startBar * barWidthPx;
+              const width = Math.max(1, (r.endBar - r.startBar + 1) * barWidthPx);
+              return (
+                <div
+                  key={`section-hdr-${r.id}`}
+                  className="absolute top-0 bottom-0"
+                  style={{
+                    left,
+                    width,
+                    background: r.color,
+                    opacity: 0.10,
+                    pointerEvents: "none",
+                    zIndex: 1,
+                  }}
+                />
+              );
+            })}
             {/* Bar labels */}
             {Array.from({ length: totalBarsSpan }).map((_, barIdx) => (
               <div
@@ -484,6 +553,33 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
                 {barIdx + 1}
               </div>
             ))}
+
+            {normalizedSectionRegions.map((r) => {
+              const left = r.startBar * barWidthPx;
+              const width = Math.max(1, (r.endBar - r.startBar + 1) * barWidthPx);
+              return (
+                <div
+                  key={`section-label-${r.id}`}
+                  className="absolute top-0 h-full flex items-center"
+                  style={{
+                    left: left + 18,
+                    width: Math.max(1, width - 24),
+                    color: r.color,
+                    opacity: 0.95,
+                    pointerEvents: "none",
+                    zIndex: 3,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textShadow: "0 1px 0 rgba(0,0,0,0.6)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {r.label}
+                </div>
+              );
+            })}
 
             {/* Subdivision grid + groove weights */}
             {Array.from({ length: totalBarsSpan }).map((_, barIdx) =>
@@ -612,6 +708,24 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
               height: instrumentOrder.length * laneHeight + limbLaneOrder.length * limbLaneHeight,
             }}
           >
+            {normalizedSectionRegions.map((r) => {
+              const left = r.startBar * barWidthPx;
+              const width = Math.max(1, (r.endBar - r.startBar + 1) * barWidthPx);
+              return (
+                <div
+                  key={`section-lane-${r.id}`}
+                  className="absolute top-0 bottom-0"
+                  style={{
+                    left,
+                    width,
+                    background: r.color,
+                    opacity: 0.08,
+                    pointerEvents: "none",
+                    zIndex: 0,
+                  }}
+                />
+              );
+            })}
             {clampedPlayheadX !== null && (
               <div
                 className="absolute top-0 bottom-0"

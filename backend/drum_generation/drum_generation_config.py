@@ -295,6 +295,7 @@ class DrumGenerationConfig:
     humanize: bool                         # Enable/disable performance layer
     fillLocations: List[int]               # Measure indices (relative to range)
     fillType: str                          # "auto", "tom_run", "crash_buildup", etc.
+    drummerPersona: Optional[Dict[str, Any]] = None
     fillDensity: float = 0.7               # 0.0 (sparse) - 1.0 (busy) for fills
     # Which analysis source to use for persona style metrics: Jamstix-only,
     # signature-song (MVSEP) only, or a combined style vector.
@@ -350,6 +351,7 @@ class DrumGenerationConfig:
             "style": self.style,
             "drummer": self.drummer,
             "publicDrummerId": self.publicDrummerId,
+            "drummerPersona": self.drummerPersona,
             "intensity": self.intensity,
             "variation": self.variation,
             "generationMode": self.generationMode,
@@ -540,6 +542,7 @@ class DrumGenerationConfig:
             style=data["style"],
             drummer=data["drummer"],
             publicDrummerId=data.get("publicDrummerId"),
+            drummerPersona=data.get("drummerPersona"),
             intensity=data["intensity"],
             variation=data["variation"],
             generationMode=data["generationMode"],

@@ -11,6 +11,35 @@ export class TransportBridge {
   private midiScheduler: MidiScheduler
   private unsubscribers: (() => void)[] = []
   private isInitialized = false
+
+  private simplifyTempoMap(tempoMap: any[]): any[] {
+    if (!Array.isArray(tempoMap) || tempoMap.length === 0) return []
+
+    // If analysis provides a dense tempo map, small per-point jitter can feel like
+    // random/non-musical tempo changes during drum playback. For MIDI playback we
+    // prefer a stable tempo unless there's clear intentional tempo variation.
+    if (tempoMap.length < 8) return tempoMap
+
+    const bpms = tempoMap
+      .map((p: any) => Number(p?.bpm))
+      .filter((v: number) => Number.isFinite(v))
+    if (bpms.length === 0) return tempoMap
+
+    const sorted = [...bpms].sort((a, b) => a - b)
+    const median = sorted[Math.floor(sorted.length / 2)]
+    const min = sorted[0]
+    const max = sorted[sorted.length - 1]
+    const range = max - min
+
+    // If overall variation is small, flatten to a single BPM.
+    if (range <= 3.0) {
+      const stable = Number.isFinite(median) ? median : bpms[0]
+      const first = tempoMap[0]
+      return [{ ...first, bpm: stable }]
+    }
+
+    return tempoMap
+  }
   
   constructor() {
     this.midiScheduler = new MidiScheduler(
@@ -64,12 +93,13 @@ export class TransportBridge {
     const unsubscribe = useDawStore.subscribe((state) => {
       const tempoMap = state.project?.analytics?.tempoMap || []
       if (tempoMap.length > 0) {
-        console.log('Syncing tempo map to MIDI:', tempoMap.length, 'points')
-        useMidi.getState().setTempoMap(tempoMap)
+        const stableTempoMap = this.simplifyTempoMap(tempoMap)
+        console.log('Syncing tempo map to MIDI:', stableTempoMap.length, 'points')
+        useMidi.getState().setTempoMap(stableTempoMap)
         
         // Update Tone.js transport BPM (use first tempo point)
-        if (tempoMap[0]) {
-          Tone.Transport.bpm.value = tempoMap[0].bpm
+        if (stableTempoMap[0]) {
+          Tone.Transport.bpm.value = stableTempoMap[0].bpm
         }
       }
     })

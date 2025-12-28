@@ -59,7 +59,7 @@ export const RehumanizePanel: React.FC<RehumanizePanelProps> = ({
     swingAmount: swingAmount / 100,
     ghostNoteAmount: ghostNoteAmount / 100,
     tightenLoosen: tightenLoosen / 100,
-    seed: Date.now()
+    seed: Array.from(String(track?.track_id || '')).reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) >>> 0, 0)
   });
 
   const getGrooveParams = (): GrooveAdjustment => ({

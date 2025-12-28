@@ -20,7 +20,7 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    logger.warning("OpenAI not available - will use default performance specs")
+    logger.warning("OpenAI not available")
 
 # Import new Jamstix-style modules
 try:

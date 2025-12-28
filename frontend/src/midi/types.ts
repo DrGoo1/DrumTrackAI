@@ -22,6 +22,7 @@ export type MidiClip = {
   endTick: Tick
   notes: MidiNote[]
   dcsmTrack?: DrumTrackForDCSM
+  disableGrooveShaping?: boolean
 }
 
 export type MidiTrackKind = 'drums' | 'bass' | 'melodic'

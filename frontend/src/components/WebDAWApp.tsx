@@ -27,6 +27,7 @@ import { DrumEditorPane } from "./drums/DrumEditorPane";
 import { resolveApiBaseNormalized } from "../utils/apiBase";
 import { GridResolution } from "../utils/pianoRollGrid";
 import { inferLimbFromInstrument, inferLimbFromLane, type LimbId } from "../constants/limbs";
+import type { DrumSectionRegion } from "./drums/DrumPianoRoll";
 import { useMidi } from "../midi/midiStore";
 import type { MidiClip, MidiNote as MidiClipNote } from "../midi/types";
 import {
@@ -34,6 +35,103 @@ import {
   DrumGenerationDebugSnapshot,
   DrumTrackPlacementContext,
 } from "./drumGenerationHandlers";
+
+function HoverTip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="relative inline-flex items-center group">
+      {children}
+      <span className="pointer-events-none absolute left-0 top-full mt-1 hidden w-72 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200 shadow-xl group-hover:block z-50">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function DrummerPersonaModal({
+  open,
+  onClose,
+  selectedDrummer,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  selectedDrummer: Drummer | null;
+  onSelect: (drummer: Drummer) => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-800 p-4">
+          <div>
+            <div className="text-sm font-semibold text-white">Choose a Drum Personality</div>
+            <div className="mt-1 text-xs text-slate-400">
+              This step selects the drummer persona (feel, time, dynamics, limb tendencies) that will guide every
+              generation.
+            </div>
+          </div>
+          <button
+            className="text-slate-400 hover:text-slate-100"
+            onClick={onClose}
+            title="Close"
+            type="button"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-300">
+            <div>
+              <span className="font-semibold text-slate-100">What it is:</span> a drummer model/persona used to keep grooves stylistically consistent.
+            </div>
+            <div className="mt-1">
+              <span className="font-semibold text-slate-100">Why it matters:</span> prevents random feel changes and improves musical continuity across sections.
+            </div>
+            <div className="mt-1">
+              <span className="font-semibold text-slate-100">When to change:</span> only if you intentionally want a different drummer feel.
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Selected</div>
+                <div className="text-sm font-semibold text-white">
+                  {selectedDrummer?.display_name || "None"}
+                </div>
+              </div>
+              {selectedDrummer && (
+                <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+                  {selectedDrummer.style?.toUpperCase() || "CUSTOM"}
+                </span>
+              )}
+            </div>
+            <div className="mt-3">
+              <DrummerSelector
+                onSelect={(drummer) => {
+                  onSelect(drummer);
+                  onClose();
+                }}
+                selectedDrummer={selectedDrummer}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-800 p-4">
+          <button
+            className="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm text-slate-200 hover:bg-slate-700"
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export type UploadedTrack = {
   key: string;
@@ -89,6 +187,40 @@ export type MeasureRange = {
 };
 
 const DRUM_SECTION_LABELS = new Set(["intro", "verse", "chorus", "bridge", "outro"]);
+
+const SCRATCH_SECTION_LABEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "intro", label: "Intro" },
+  { value: "verse", label: "Verse" },
+  { value: "prechorus", label: "Pre-Chorus" },
+  { value: "chorus", label: "Chorus" },
+  { value: "postchorus", label: "Post-Chorus" },
+  { value: "bridge", label: "Bridge" },
+  { value: "breakdown", label: "Breakdown" },
+  { value: "interlude", label: "Interlude" },
+  { value: "solo", label: "Solo" },
+  { value: "outro", label: "Outro" },
+  { value: "ending", label: "Ending" },
+  { value: "tag", label: "Tag" },
+  { value: "transition", label: "Transition" },
+  { value: "turnaround", label: "Turnaround" },
+  { value: "pickup", label: "Pickup" },
+  { value: "link", label: "Link" },
+  { value: "break", label: "Break" },
+  { value: "vamp", label: "Vamp" },
+  { value: "count_in", label: "Count-In" },
+  { value: "coda", label: "Coda" },
+  { value: "buildup", label: "Build-Up" },
+  { value: "rise", label: "Rise" },
+  { value: "drop", label: "Drop" },
+  { value: "climax", label: "Climax" },
+  { value: "lift", label: "Lift" },
+  { value: "fall", label: "Fall" },
+  { value: "half_time", label: "Half-Time" },
+  { value: "double_time", label: "Double-Time" },
+  { value: "final_chorus", label: "Final Chorus" },
+  { value: "double_chorus", label: "Double Chorus" },
+  { value: "unknown", label: "Unknown" },
+];
 
 type SectionPatternPreset = {
   intensity: number;
@@ -1383,6 +1515,13 @@ export default function WebDAWApp() {
     [midiSong.ppq, midiSong.tempoMap, bpm],
   );
 
+  const [grooveSource, setGrooveSource] = useState<string>("pattern");
+  const [grooveMode, setGrooveMode] = useState<string>("exact");
+  const [styleGroup, setStyleGroup] = useState<string>("rock");
+  const [lastEgmdPhraseInfo, setLastEgmdPhraseInfo] = useState<any | null>(null);
+
+  // EGMD clip picker state/effects are declared further below (after arrangementSource)
+
   const applyTrackToMidiClip = useCallback(
     (track?: DrumTrackForDCSM | null, legacyNotes?: any[] | null, placement?: DrumTrackPlacementContext) => {
       if (!drumTrackId || !drumClipId) {
@@ -1423,6 +1562,7 @@ export default function WebDAWApp() {
       };
       if (track) {
         updates.dcsmTrack = track;
+        updates.disableGrooveShaping = grooveSource === "egmd_phrases" && grooveMode === "exact";
       }
       updateMidiClip(drumTrackId, drumClipId, updates);
     },
@@ -1436,6 +1576,8 @@ export default function WebDAWApp() {
       updateMidiClip,
       midiSong.ppq,
       beatsPerBar,
+      grooveSource,
+      grooveMode,
     ],
   );
 
@@ -1461,24 +1603,40 @@ export default function WebDAWApp() {
 
   // NEW: Selected sections for generation
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
-  const hasSectionSelection = selectedSectionIds.size > 0;
-  
-  // NEW: Full SongMap with bars, meter, enhanced sections
+
   const [songMap, setSongMap] = useState<SongMapSummary | null>(null);
 
+  const drumSectionRegions: DrumSectionRegion[] = useMemo(() => {
+    if (!Array.isArray(sections) || !sections.length) return [];
+    const regions: DrumSectionRegion[] = [];
+    for (const s of sections) {
+      try {
+        const mr = sectionToMeasureRange(s, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode);
+        const label = mr.sectionLabel || "Section";
+        regions.push({
+          id: mr.sectionId,
+          label,
+          startBar: mr.startMeasure,
+          endBar: mr.endMeasure,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    return regions;
+  }, [sections, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode]);
+
   const [scratchStyle, setScratchStyle] = useState<string>("rock");
-  const [scratchArrangement, setScratchArrangement] = useState<
-    Array<{ label: string; bars: number }>
-  >([
+  const [scratchArrangement, setScratchArrangement] = useState<Array<{ label: string; bars: number }>>([
     { label: "intro", bars: 4 },
-    { label: "verse", bars: 8 },
-    { label: "chorus", bars: 8 },
     { label: "verse", bars: 8 },
     { label: "chorus", bars: 8 },
     { label: "bridge", bars: 4 },
     { label: "chorus", bars: 8 },
     { label: "outro", bars: 4 },
   ]);
+
+  const hasSectionSelection = selectedSectionIds.size > 0;
   
   // NEW: Arrangement entry modals
   const [showManualModal, setShowManualModal] = useState(false);
@@ -1488,13 +1646,70 @@ export default function WebDAWApp() {
   const [midiMapName, setMidiMapName] = useState<string>("Mixosaurus_EZ_Drummer");
   const [lastGeneratedMidiBase64, setLastGeneratedMidiBase64] = useState<string | null>(null);
   const [lastGeneratedMidiLabel, setLastGeneratedMidiLabel] = useState<string | null>(null);
-
-  const [grooveSource, setGrooveSource] = useState<string>("pattern");
-  const [styleGroup, setStyleGroup] = useState<string>("rock");
-  const [lastEgmdPhraseInfo, setLastEgmdPhraseInfo] = useState<any | null>(null);
+  const [showDrummerPersonaModal, setShowDrummerPersonaModal] = useState(false);
   
   // NEW: Track arrangement source for conflict handling
   const [arrangementSource, setArrangementSource] = useState<string | null>(null);
+
+  const [egmdPhraseOptions, setEgmdPhraseOptions] = useState<
+    Array<{
+      phrase_id: number;
+      midi_path?: string | null;
+      audio_path?: string | null;
+      tempo_bpm?: number | null;
+      meter?: string | null;
+    }>
+  >([]);
+  const [selectedEgmdPhraseId, setSelectedEgmdPhraseId] = useState<number | null>(null);
+
+  const isScratchEntry = tracks.length === 0;
+  const isScratchWorkflow = arrangementSource === "scratch" || isScratchEntry;
+
+  useEffect(() => {
+    if (!isScratchWorkflow) return;
+    // Scratch workflow: always EGMD Exact Clip
+    if (grooveSource !== "egmd_phrases") {
+      setGrooveSource("egmd_phrases");
+    }
+    if (grooveMode !== "exact") {
+      setGrooveMode("exact");
+    }
+  }, [isScratchWorkflow, grooveSource, grooveMode]);
+
+  useEffect(() => {
+    if (grooveSource !== "egmd_phrases") {
+      setEgmdPhraseOptions([]);
+      setSelectedEgmdPhraseId(null);
+      return;
+    }
+    const controller = new AbortController();
+    const apiBase = resolveApiBaseNormalized();
+    const meter = `${timeSig[0]}/${timeSig[1]}`;
+    const tempo = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+    const url = `${apiBase}/api/egmd/phrases?style_group=${encodeURIComponent(styleGroup)}&meter=${encodeURIComponent(meter)}&tempo_bpm=${encodeURIComponent(String(tempo))}&limit=50`;
+    (async () => {
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) {
+          setEgmdPhraseOptions([]);
+          return;
+        }
+        const json = await res.json();
+        const items = Array.isArray(json?.items) ? json.items : [];
+        setEgmdPhraseOptions(items);
+        // Keep the current selection if it still exists; otherwise reset to Best Match.
+        if (
+          selectedEgmdPhraseId !== null &&
+          !items.some((it: any) => Number(it?.phrase_id) === selectedEgmdPhraseId)
+        ) {
+          setSelectedEgmdPhraseId(null);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => controller.abort();
+  }, [grooveSource, styleGroup, bpm, timeSig, selectedEgmdPhraseId]);
 
   // NEW: Drum Builder - measure range selection
   const [selectedMeasureRange, setSelectedMeasureRange] = useState<MeasureRange | null>(null);
@@ -1554,6 +1769,8 @@ export default function WebDAWApp() {
       artist: "",
     });
 
+    setArrangementSource("scratch");
+
     setSections(nextSections);
     setSelectedSectionIds(new Set());
     setSelectedMeasureRange(null);
@@ -1582,9 +1799,12 @@ export default function WebDAWApp() {
   const sectionTrackIds = useMemo(() => Object.keys(sectionDrumTracks ?? {}), [sectionDrumTracks]);
 
   const fullSongDrumTrack = useMemo(() => {
-    const keys = Object.keys(sectionDrumTracks ?? {}).filter(
-      (k) => k !== "__global__" && k !== "full-song",
-    );
+    const explicit = sectionDrumTracks?.["full-song"] ?? null;
+    if (explicit && Array.isArray(explicit.notes) && explicit.notes.length) {
+      return explicit;
+    }
+
+    const keys = Object.keys(sectionDrumTracks ?? {}).filter((k) => k !== "__global__" && k !== "full-song");
     if (!keys.length) {
       return null;
     }
@@ -1594,11 +1814,23 @@ export default function WebDAWApp() {
     if (!tracksToMerge.length) {
       return null;
     }
+
     const base = tracksToMerge[0];
+    const performanceSpec =
+      base.performance_spec ??
+      ({
+        styleId: base.style_id || "unknown",
+        globalFeel: "straight",
+        quantizationBase: "16th",
+        phrases: [],
+      } as any);
+
     return {
-      ...base,
       track_id: "full-song",
+      style_id: base.style_id || "unknown",
+      resolution_ppq: typeof base.resolution_ppq === "number" ? base.resolution_ppq : 960,
       notes: tracksToMerge.flatMap((t) => t.notes ?? []),
+      performance_spec: performanceSpec,
     } satisfies DrumTrackForDCSM;
   }, [sectionDrumTracks]);
 
@@ -2594,8 +2826,16 @@ export default function WebDAWApp() {
     if (!confirmed) return;
     
     setSections([]);
+    setSelectedSectionIds(new Set());
+    setSelectedMeasureRange(null);
+    setPlayhead(0);
     setArrangementSource(null);
     setSongMap(null);
+    setSectionDrumTracks({});
+    setSectionGrooveMaps({});
+    setSectionPlacementContexts({});
+    setSectionNoteIds({});
+    setNotes([]);
     console.log('🗑️ Arrangement cleared');
   }
   
@@ -2732,16 +2972,23 @@ export default function WebDAWApp() {
     }
     let appliedHighRes = false;
     try {
-      let payload: DrumGenerationConfig = config;
+      let payload: DrumGenerationConfig = {
+        ...config,
+        publicDrummerId: selectedDrummer?.id ?? config.publicDrummerId ?? config.drummer,
+        drummerPersona: selectedDrummer ?? config.drummerPersona,
+      };
       if (config.sectionId) {
         try {
           const brainStore = useBrainPanelStore.getState();
-          const ensuredConfig = await brainStore.ensureSectionConfig(config.sectionId);
-          if (ensuredConfig) {
-            payload = { ...config, brainConfig: ensuredConfig };
+          const brainConfig = await brainStore.ensureSectionConfig(config.sectionId);
+          if (brainConfig) {
+            payload = {
+              ...payload,
+              brainConfig,
+            };
           }
-        } catch (brainErr) {
-          console.warn('Brain config unavailable, continuing without overrides', brainErr);
+        } catch (err) {
+          console.warn("Failed to fetch brain config for section", config.sectionId, err);
         }
       }
 
@@ -2749,7 +2996,9 @@ export default function WebDAWApp() {
       payload = {
         ...payload,
         grooveSource: grooveSource === "egmd_phrases" ? "egmd_phrases" : undefined,
+        grooveMode: grooveSource === "egmd_phrases" ? grooveMode : undefined,
         styleGroup: grooveSource === "egmd_phrases" ? styleGroup : undefined,
+        egmdPhraseId: grooveSource === "egmd_phrases" && selectedEgmdPhraseId !== null ? selectedEgmdPhraseId : undefined,
       };
       console.log('🥁 Generating drums:', payload);
 
@@ -2768,9 +3017,26 @@ export default function WebDAWApp() {
       }
       
       const result = await response.json();
-      console.log(`✅ Drums generated in ${result.metadata.generation_time_ms}ms`);
+      const resultMetadata = result?.metadata ?? {};
+      const builderVersion =
+        (resultMetadata as any)?.builder_version ?? (resultMetadata as any)?.builderVersion ?? null;
+      const resultOk = (result as any)?.ok;
+      if (resultOk === false) {
+        const detail =
+          (result as any)?.error ?? (result as any)?.message ?? (result as any)?.detail ?? 'Generation failed';
+        throw new Error(String(detail));
+      }
+      if (builderVersion && String(builderVersion).toLowerCase() !== "v2") {
+        const msg = `Warning: drum builder_version=${builderVersion}. Expected v2.`;
+        console.warn(msg, { metadata: resultMetadata });
+        setErr(msg);
+      }
+      const genMs = (resultMetadata as any)?.generation_time_ms;
+      console.log(
+        `✅ Drums generated${typeof genMs === "number" ? ` in ${genMs}ms` : ""}`,
+      );
 
-      setLastEgmdPhraseInfo(result?.metadata?.egmdPhrase ?? null);
+      setLastEgmdPhraseInfo((resultMetadata as any)?.egmdPhrase ?? null);
 
       if (typeof result?.midi_base64 === "string" && result.midi_base64.length > 0) {
         setLastGeneratedMidiBase64(result.midi_base64);
@@ -2847,6 +3113,10 @@ export default function WebDAWApp() {
 
   async function handleGenerateDrums(config: DrumGenerationConfig) {
     try {
+      if (!selectedDrummer) {
+        setShowDrummerPersonaModal(true);
+        return;
+      }
       await executeDrumGeneration(config);
     } catch {
       // Error already handled inside executeDrumGeneration
@@ -2938,6 +3208,10 @@ export default function WebDAWApp() {
   async function handleGenerateFullSong() {
     if (!sections.length) {
       setErr('No sections available to build drums for yet.');
+      return;
+    }
+    if (!selectedDrummer) {
+      setShowDrummerPersonaModal(true);
       return;
     }
     if (bulkGenerating || generatingDrums) {
@@ -3093,8 +3367,8 @@ export default function WebDAWApp() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3">
-          <div className="font-semibold">DrumTracKAI v1.1.17 – Enhanced DCSM</div>
-          <div className="flex items-center gap-3">
+          <div />
+          <div className="flex flex-wrap items-center gap-3">
             <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await ensureDrumEngineReady(); lastDrumScheduleSecRef.current = playhead; await Engine.play(playhead); setPlaying(true); }}>Play</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.pause(); setPlaying(false); }}>Pause</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.stop(); setPlaying(false); setPlayhead(0); }}>Stop</button>
@@ -3120,19 +3394,6 @@ export default function WebDAWApp() {
             <button className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600" onClick={() => setShowDrumPlayer(true)}>
               Drum Player
             </button>
-            <button
-              className={`px-3 py-1 rounded ${debugMode ? "bg-emerald-600" : "bg-slate-700"}`}
-              onClick={() => setDebugMode((prev) => !prev)}
-            >
-              {debugMode ? "Close Debug" : "Debug"}
-            </button>
-            <button
-              className="px-3 py-1 rounded bg-slate-700"
-              onClick={exportActiveDrumDebug}
-            >
-              Export Drum Debug
-            </button>
-            <button className="px-3 py-1 rounded bg-slate-700" onClick={save}>Save</button>
             <button className="px-3 py-1 rounded bg-slate-700" onClick={load}>Load</button>
             {tracks.length > 0 && (
               <button
@@ -3356,6 +3617,7 @@ export default function WebDAWApp() {
                           visibleStartMeasure={selectedMeasureRange.startMeasure}
                           visibleMeasureCount={selectedMeasureRange.measureCount}
                           totalSongBars={totalSongBars}
+                          sectionRegions={drumSectionRegions}
                           onUpdateTrack={(updatedTrack) => {
                             if (!activeSectionId || activeSectionId === "full-song") return;
                             setSectionDrumTracks((prev) => ({
@@ -3483,7 +3745,11 @@ export default function WebDAWApp() {
                 <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-white">Section Drum Track Builder</h3>
+                      <h3 className="text-sm font-semibold text-white">
+                        <HoverTip text="Generate limb-aware drums for the currently selected section range. Requires selecting a drummer persona first.">
+                          <span>Section Drum Track Builder</span>
+                        </HoverTip>
+                      </h3>
                       <p className="text-xs text-slate-400">Uses the selected section or range to author limb-aware grooves.</p>
                     </div>
                     {selectedMeasureRange && (
@@ -3492,11 +3758,26 @@ export default function WebDAWApp() {
                       </div>
                     )}
                   </div>
-                  <DrumBuilderPanelV2
-                    selectedRange={selectedMeasureRange}
-                    onGenerate={handleGenerateDrums}
-                    busy={generatingDrums}
-                  />
+                  {selectedDrummer ? (
+                    <DrumBuilderPanelV2
+                      selectedRange={selectedMeasureRange}
+                      onGenerate={handleGenerateDrums}
+                      busy={generatingDrums}
+                    />
+                  ) : (
+                    <div className="mt-2 rounded border border-yellow-500/30 bg-yellow-900/10 p-3 text-xs text-yellow-200 flex items-center justify-between gap-3">
+                      <div>
+                        Drum personality is required before generating.
+                      </div>
+                      <button
+                        type="button"
+                        className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-slate-950"
+                        onClick={() => setShowDrummerPersonaModal(true)}
+                      >
+                        Choose Drum Personality
+                      </button>
+                    </div>
+                  )}
 
                   <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -3515,16 +3796,35 @@ export default function WebDAWApp() {
                       <select
                         className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
                         value={grooveSource}
-                        onChange={(e) => setGrooveSource(e.target.value)}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setGrooveSource(next);
+                          if (next === "egmd_phrases") {
+                            setGrooveMode("exact");
+                          }
+                        }}
+                        disabled={isScratchWorkflow}
                       >
                         <option value="pattern">Built-in</option>
                         <option value="egmd_phrases">E-GMD Phrases</option>
                       </select>
+                      {grooveSource === "egmd_phrases" && !isScratchWorkflow && (
+                        <select
+                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                          value={grooveMode}
+                          onChange={(e) => setGrooveMode(e.target.value)}
+                          title="E-GMD Playback Mode"
+                        >
+                          <option value="exact">Exact Clip</option>
+                          <option value="enhanced">Enhanced</option>
+                        </select>
+                      )}
                       {grooveSource === "egmd_phrases" && (
                         <select
                           className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
                           value={styleGroup}
                           onChange={(e) => setStyleGroup(e.target.value)}
+                          disabled={isScratchWorkflow}
                         >
                           <option value="rock">Rock</option>
                           <option value="funk">Funk</option>
@@ -3535,6 +3835,32 @@ export default function WebDAWApp() {
                           <option value="latin">Latin</option>
                           <option value="hiphop">Hip-Hop</option>
                           <option value="soul">Soul</option>
+                        </select>
+                      )}
+                      {grooveSource === "egmd_phrases" && (
+                        <select
+                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
+                          value={selectedEgmdPhraseId === null ? "" : String(selectedEgmdPhraseId)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (!raw) {
+                              setSelectedEgmdPhraseId(null);
+                              return;
+                            }
+                            const next = Number(raw);
+                            setSelectedEgmdPhraseId(Number.isFinite(next) ? next : null);
+                          }}
+                          title="Select which EGMD clip to use for this style"
+                        >
+                          <option value="">Best Match</option>
+                          {egmdPhraseOptions.map((p) => {
+                            const filename = String(p.midi_path || "").split("\\").pop()?.split("/").pop() || "midi";
+                            return (
+                              <option key={String(p.phrase_id)} value={String(p.phrase_id)}>
+                                #{String(p.phrase_id)} · {filename}
+                              </option>
+                            );
+                          })}
                         </select>
                       )}
                     </div>
@@ -3585,7 +3911,11 @@ export default function WebDAWApp() {
               {/* Analysis Options */}
               {tracks.length > 0 && (
                 <div className="p-4 border-b border-slate-800">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">Arrangement Analysis</h3>
+                  <h3 className="text-sm font-semibold text-slate-300 mb-3">
+                    <HoverTip text="Choose how to create your song structure: analyze uploaded audio, or define a scratch arrangement. Analysis must complete before drum generation.">
+                      <span>Arrangement Analysis</span>
+                    </HoverTip>
+                  </h3>
                   
                   {/* Current Arrangement Indicator */}
                   {arrangementSource && sections.length > 0 && (
@@ -3596,13 +3926,6 @@ export default function WebDAWApp() {
                           <div className="text-xs text-white mt-0.5">{arrangementSource}</div>
                           <div className="text-xs text-slate-400 mt-0.5">{sections.length} sections</div>
                         </div>
-                        <button
-                          onClick={clearArrangement}
-                          className="ml-2 px-2 py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 text-xs rounded transition-colors"
-                          title="Clear all sections"
-                        >
-                          🗑️ Clear
-                        </button>
                       </div>
                     </div>
                   )}
@@ -3665,64 +3988,10 @@ export default function WebDAWApp() {
                 </div>
               )}
 
-              {sections.length > 0 && (
-                <div className="p-4 border-b border-slate-800 space-y-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-100">AI Full-Song Drummer</h3>
-                    <p className="text-xs text-slate-400">
-                      Generates a cohesive drum track across every detected section using the current drummer style
-                      and macro settings.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleGenerateFullSong}
-                    disabled={bulkGenerating || generatingDrums}
-                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {bulkGenerating ? '⏳ Building Entire Song…' : '🥁 Generate Entire Song'}
-                  </button>
-                  {fullSongStatus && (
-                    <div
-                      className={`text-xs px-3 py-2 rounded border ${
-                        fullSongStatus.type === 'success'
-                          ? 'bg-emerald-900/10 text-emerald-200 border-emerald-400/40'
-                          : fullSongStatus.type === 'error'
-                            ? 'bg-rose-900/10 text-rose-200 border-rose-400/40'
-                            : 'bg-cyan-900/10 text-cyan-200 border-cyan-400/40'
-                      }`}
-                    >
-                      <span>{fullSongStatus.message}</span>
-                      {fullSongStatus.type === 'progress' && fullSongProgress.total > 0 && (
-                        <span className="ml-2 text-slate-200">
-                          {fullSongProgress.completed}/{fullSongProgress.total} sections
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <p className="text-[11px] text-slate-500">
-                    This builds a single cohesive performance using the full song arrangement.
-                  </p>
-                </div>
-              )}
-
-              {/* Brain Panel UI */}
-              {sections.length > 0 && (
-                <div className="p-4 border-b border-slate-800">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">🧠 Brain Panel</h3>
-                  <BrainPanel
-                    sectionId={selectedMeasureRange?.sectionId}
-                    sectionLabel={selectedMeasureRange?.sectionLabel}
-                    styleHint={drumOptions.style}
-                    locked={false}
-                  />
-                </div>
-              )}
-              
               {/* Upload prompt if no tracks */}
               {tracks.length === 0 && (
                 <div className="p-4 border-b border-slate-800 space-y-3">
                   <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-                    <div className="text-sm font-semibold text-slate-100">Create Drumtrack From Scratch</div>
                     <div className="text-xs text-slate-400 mt-1">
                       Set tempo, time signature, and an arrangement to generate drums without uploading audio.
                     </div>
@@ -3778,6 +4047,96 @@ export default function WebDAWApp() {
                     </div>
 
                     <div className="mt-3">
+                      <div className="text-[11px] text-slate-400 mb-1">Groove</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                          value={grooveSource}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setGrooveSource(next);
+                            if (next === "egmd_phrases") {
+                              setGrooveMode("exact");
+                            }
+                          }}
+                          disabled={isScratchWorkflow}
+                        >
+                          <option value="pattern">Built-in</option>
+                          <option value="egmd_phrases">E-GMD Phrases</option>
+                        </select>
+                        {grooveSource === "egmd_phrases" ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            {!isScratchWorkflow ? (
+                              <select
+                                className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                                value={grooveMode}
+                                onChange={(e) => setGrooveMode(e.target.value)}
+                                title="E-GMD Playback Mode"
+                              >
+                                <option value="exact">Exact Clip</option>
+                                <option value="enhanced">Enhanced</option>
+                              </select>
+                            ) : (
+                              <div className="w-full px-2 py-1 bg-slate-800 text-slate-300 text-sm rounded border border-slate-700">
+                                Exact Clip
+                              </div>
+                            )}
+                            <select
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={styleGroup}
+                              onChange={(e) => setStyleGroup(e.target.value)}
+                              title="E-GMD Style Group"
+                              disabled={isScratchWorkflow}
+                            >
+                              <option value="rock">Rock</option>
+                              <option value="funk">Funk</option>
+                              <option value="jazz">Jazz</option>
+                              <option value="metal">Metal</option>
+                              <option value="blues">Blues</option>
+                              <option value="pop">Pop</option>
+                              <option value="latin">Latin</option>
+                              <option value="hiphop">Hip-Hop</option>
+                              <option value="soul">Soul</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="w-full" />
+                        )}
+                      </div>
+                      {grooveSource === "egmd_phrases" && (
+                        <div className="mt-2">
+                          <select
+                            className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                            value={selectedEgmdPhraseId === null ? "" : String(selectedEgmdPhraseId)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (!raw) {
+                                setSelectedEgmdPhraseId(null);
+                                return;
+                              }
+                              const next = Number(raw);
+                              setSelectedEgmdPhraseId(Number.isFinite(next) ? next : null);
+                            }}
+                            title="Select which EGMD clip to use for this style"
+                          >
+                            <option value="">Best Match</option>
+                            {egmdPhraseOptions.map((p) => {
+                              const filename = String(p.midi_path || "").split("\\").pop()?.split("/").pop() || "midi";
+                              return (
+                                <option key={String(p.phrase_id)} value={String(p.phrase_id)}>
+                                  #{String(p.phrase_id)} · {filename}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      )}
+                      {grooveSource === "egmd_phrases" && (
+                        <div className="mt-1 text-[11px] text-slate-500">E-GMD Style Group</div>
+                      )}
+                    </div>
+
+                    <div className="mt-3">
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] text-slate-400">Arrangement (Section + Bars)</div>
                         <button
@@ -3800,13 +4159,11 @@ export default function WebDAWApp() {
                                 );
                               }}
                             >
-                              <option value="intro">Intro</option>
-                              <option value="verse">Verse</option>
-                              <option value="chorus">Chorus</option>
-                              <option value="bridge">Bridge</option>
-                              <option value="break">Break</option>
-                              <option value="solo">Solo</option>
-                              <option value="outro">Outro</option>
+                              {SCRATCH_SECTION_LABEL_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
                             </select>
                             <input
                               type="number"
@@ -3851,6 +4208,71 @@ export default function WebDAWApp() {
               )}
               
               
+              <div className="p-4 border-b border-slate-800 space-y-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-100">
+                    <HoverTip text="Generate a full-song drum performance. You must select a drummer persona first.">
+                      <span>Create Drum Track</span>
+                    </HoverTip>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Generate a cohesive drum performance across the full arrangement, or clear the arrangement and patterns.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!selectedDrummer) {
+                      setShowDrummerPersonaModal(true);
+                      return;
+                    }
+                    handleGenerateFullSong();
+                  }}
+                  disabled={!sections.length || bulkGenerating || generatingDrums}
+                  className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!sections.length ? "Add an arrangement first" : !selectedDrummer ? "Select a drummer persona first" : undefined}
+                >
+                  {bulkGenerating ? '⏳ Building Entire Song…' : '🥁 Generate Entire Song'}
+                </button>
+                {fullSongStatus && (
+                  <div
+                    className={`text-xs px-3 py-2 rounded border ${
+                      fullSongStatus.type === 'success'
+                        ? 'bg-emerald-900/10 text-emerald-200 border-emerald-400/40'
+                        : fullSongStatus.type === 'error'
+                          ? 'bg-rose-900/10 text-rose-200 border-rose-400/40'
+                          : 'bg-cyan-900/10 text-cyan-200 border-cyan-400/40'
+                    }`}
+                  >
+                    <span>{fullSongStatus.message}</span>
+                    {fullSongStatus.type === 'progress' && fullSongProgress.total > 0 && (
+                      <span className="ml-2 text-slate-200">
+                        {fullSongProgress.completed}/{fullSongProgress.total} sections
+                      </span>
+                    )}
+                  </div>
+                )}
+                <button
+                  onClick={clearArrangement}
+                  className="w-full px-4 py-2 rounded-lg bg-red-600/25 hover:bg-red-600/40 text-red-200 text-sm font-semibold border border-red-500/30 transition-colors"
+                  title="Clear arrangement sections and all generated drum patterns/grids"
+                >
+                  🗑️ Clear Arrangement + Patterns
+                </button>
+              </div>
+
+              {/* Brain Panel UI */}
+              {sections.length > 0 && (
+                <div className="p-4 border-b border-slate-800">
+                  <h3 className="text-sm font-semibold text-slate-300 mb-3">🧠 Brain Panel</h3>
+                  <BrainPanel
+                    sectionId={selectedMeasureRange?.sectionId}
+                    sectionLabel={selectedMeasureRange?.sectionLabel}
+                    styleHint={drumOptions.style}
+                    locked={false}
+                  />
+                </div>
+              )}
+
               {sections.length > 0 && (
                 <div>
                   {/* Selection Info & Actions */}
@@ -3974,6 +4396,15 @@ export default function WebDAWApp() {
       />
 
       <DrumPlayerModal isOpen={showDrumPlayer} onClose={() => setShowDrumPlayer(false)} />
+
+      <DrummerPersonaModal
+        open={showDrummerPersonaModal}
+        onClose={() => setShowDrummerPersonaModal(false)}
+        selectedDrummer={selectedDrummer}
+        onSelect={(drummer) => {
+          setSelectedDrummer(drummer);
+        }}
+      />
     </div>
   );
 }

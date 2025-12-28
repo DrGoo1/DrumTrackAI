@@ -238,6 +238,76 @@ def assign_hit_style(
     return HitStyle.SINGLE
 
 
+def _is_hand_played_instrument(instrument_id: str) -> bool:
+    if not instrument_id:
+        return False
+    inst = str(instrument_id).lower()
+    if inst.startswith("kick"):
+        return False
+    if "pedal" in inst:
+        return False
+    if "hat" in inst:
+        return True
+    if inst.startswith("snare"):
+        return True
+    if inst.startswith("tom"):
+        return True
+    if inst.startswith("crash") or inst.startswith("ride") or "cym" in inst:
+        return True
+    return False
+
+
+def _alternate_sticking(notes: List[DrumNoteEvent], resolution_ppq: int) -> None:
+    if not notes:
+        return
+
+    hand_limbs = {LimbId.LH, LimbId.RH, LimbId.LS, LimbId.RS}
+    last_hand_for_key: Dict[str, LimbId] = {}
+    last_tick_for_key: Dict[str, int] = {}
+
+    threshold_ticks = max(1, int(round(resolution_ppq / 4)))
+
+    for n in notes:
+        if not _is_hand_played_instrument(getattr(n, "instrumentId", "")):
+            continue
+
+        limb = getattr(n, "limbId", None)
+        if limb not in hand_limbs:
+            if limb is None or limb == LimbId.OTHER:
+                limb = LimbId.RH
+            else:
+                continue
+
+        inst = str(getattr(n, "instrumentId", "") or "")
+        aspect = getattr(n, "aspect", None)
+        is_fill = bool(aspect == NoteAspect.FILL)
+        key = inst if is_fill else (inst if inst.startswith("snare") or inst.startswith("tom") else "")
+        if not key:
+            continue
+
+        abs_tick = int(getattr(n, "barIndex", 0)) * int(resolution_ppq) * 4 + int(getattr(n, "tickInBar", 0))
+        prev_tick = last_tick_for_key.get(key)
+        prev_limb = last_hand_for_key.get(key)
+
+        if prev_tick is not None and prev_limb is not None:
+            if abs_tick > prev_tick and (abs_tick - prev_tick) <= threshold_ticks:
+                if limb in {LimbId.LS, LimbId.LH}:
+                    norm = LimbId.LH
+                else:
+                    norm = LimbId.RH
+                if prev_limb in {LimbId.LS, LimbId.LH}:
+                    prev_norm = LimbId.LH
+                else:
+                    prev_norm = LimbId.RH
+
+                if norm == prev_norm:
+                    limb = LimbId.RH if prev_norm == LimbId.LH else LimbId.LH
+
+        n.limbId = limb
+        last_hand_for_key[key] = limb
+        last_tick_for_key[key] = abs_tick
+
+
 def assign_aspect(
     is_fill: bool = False,
     is_accent: bool = False,
@@ -425,6 +495,8 @@ def build_drumtrack_for_dcsm(
     
     # Sort notes by position
     notes.sort(key=lambda n: (n.barIndex, n.tickInBar))
+
+    _alternate_sticking(notes, resolution_ppq)
     
     # Log statistics
     logger.info(f"Built DCSM track: {len(notes)} notes, {resolution_ppq} PPQ")

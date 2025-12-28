@@ -407,7 +407,7 @@ export default function DrumGrid({ trackId, clipId, className = '' }: DrumGridPr
       <div className="relative">
         <canvas
           ref={canvasRef}
-          className="block cursor-crosshair"
+          className={`block ${isDragging ? "cursor-grabbing" : "cursor-crosshair"}`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}

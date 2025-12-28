@@ -6,7 +6,7 @@ import {
   DrumNoteEvent,
   NoteAspect,
 } from "../../types/drumTrack";
-import { DrumPianoRoll } from "./DrumPianoRoll";
+import { DrumPianoRoll, type DrumSectionRegion } from "./DrumPianoRoll";
 import { NoteInspector } from "./NoteInspector";
 import { GridResolution } from "../../utils/pianoRollGrid";
 import { GrooveWeightMap } from "../../types/grooveWeight";
@@ -28,6 +28,7 @@ interface DrumEditorPaneProps {
   visibleMeasureCount?: number;
   totalSongBars?: number;
   drumEngine?: DrumPlayerEngine | null;
+  sectionRegions?: DrumSectionRegion[];
 }
 
 export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
@@ -46,6 +47,7 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   visibleMeasureCount,
   totalSongBars,
   drumEngine,
+  sectionRegions,
 }) => {
   const [currentAspect, setCurrentAspect] =
     useState<NoteAspect | "all">("all");
@@ -133,6 +135,7 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
           visibleMeasureCount={visibleMeasureCount}
           totalSongBars={totalSongBars}
           drumEngine={drumEngine}
+          sectionRegions={sectionRegions}
         />
       </div>
 

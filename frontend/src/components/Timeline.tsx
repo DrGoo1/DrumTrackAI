@@ -2,6 +2,29 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useRudimentBlockStore } from '../state/useRudimentBlockStore';
 import { BAR_GRID_THEME } from '../constants/barGrid';
 
+type SectionStyle = { fill: string; stroke: string; title: string };
+
+const SECTION_STYLES: Record<string, SectionStyle> = {
+  intro: { fill: 'rgba(249, 115, 22, 0.5)', stroke: '#f97316', title: 'INTRO' },
+  verse: { fill: 'rgba(59, 130, 246, 0.5)', stroke: '#3b82f6', title: 'VERSE' },
+  prechorus: { fill: 'rgba(14, 165, 233, 0.5)', stroke: '#0ea5e9', title: 'PRE-CHORUS' },
+  chorus: { fill: 'rgba(34, 197, 94, 0.5)', stroke: '#22c55e', title: 'CHORUS' },
+  postchorus: { fill: 'rgba(34, 197, 94, 0.42)', stroke: '#22c55e', title: 'POST-CHORUS' },
+  bridge: { fill: 'rgba(168, 85, 247, 0.5)', stroke: '#a855f7', title: 'BRIDGE' },
+  breakdown: { fill: 'rgba(236, 72, 153, 0.45)', stroke: '#ec4899', title: 'BREAKDOWN' },
+  interlude: { fill: 'rgba(99, 102, 241, 0.45)', stroke: '#6366f1', title: 'INTERLUDE' },
+  solo: { fill: 'rgba(234, 179, 8, 0.45)', stroke: '#eab308', title: 'SOLO' },
+  outro: { fill: 'rgba(239, 68, 68, 0.5)', stroke: '#ef4444', title: 'OUTRO' },
+  ending: { fill: 'rgba(239, 68, 68, 0.42)', stroke: '#ef4444', title: 'ENDING' },
+  tag: { fill: 'rgba(148, 163, 184, 0.45)', stroke: '#94a3b8', title: 'TAG' },
+  default: { fill: 'rgba(100, 116, 139, 0.5)', stroke: '#64748b', title: 'SECTION' },
+};
+
+function sectionStyleFor(label?: string): SectionStyle {
+  const key = (label || '').trim().toLowerCase();
+  return SECTION_STYLES[key] || SECTION_STYLES.default;
+}
+
 export type UploadedTrack = {
   key: string;
   peaks: number[];
@@ -276,7 +299,7 @@ const Timeline: React.FC<TimelineProps> = ({
     const displayWidth = Math.max(parentWidth, Math.ceil(timelineDuration * pxPerSecond));
     contentWidthRef.current = displayWidth;
 
-    const displayHeight = Math.max(220, Math.max(1, tracks.length) * 70);
+    const displayHeight = Math.max(180, Math.max(1, tracks.length) * 55);
     const dpr = window.devicePixelRatio || 1;
     const targetWidth = Math.round(displayWidth * dpr);
     const targetHeight = Math.round(displayHeight * dpr);
@@ -293,7 +316,7 @@ const Timeline: React.FC<TimelineProps> = ({
 
     const width = displayWidth;
     const height = displayHeight;
-    const headerHeight = 50;
+    const headerHeight = 32;
     const contentHeight = height - headerHeight;
     const beatsPerBar = timeSignature?.[0] ?? 4;
     const pxForTime = (time: number) => Math.max(0, time * pxPerSecond);
@@ -345,7 +368,7 @@ const Timeline: React.FC<TimelineProps> = ({
     drawBarGrid();
 
     // Draw tracks below header
-    const trackHeight = Math.max(60, contentHeight / Math.max(1, tracks.length));
+    const trackHeight = Math.max(48, contentHeight / Math.max(1, tracks.length));
     tracks.forEach((track, i) => {
       const y = headerHeight + i * trackHeight;
       const waveformColor = track.color || '#38bdf8';
@@ -447,28 +470,10 @@ const Timeline: React.FC<TimelineProps> = ({
         console.log(`🎯 First section ${section.label} spans ${endX - startX}px`);
       }
 
-      const sectionColors = {
-        verse: 'rgba(59, 130, 246, 0.5)',
-        chorus: 'rgba(34, 197, 94, 0.5)',
-        bridge: 'rgba(168, 85, 247, 0.5)',
-        intro: 'rgba(249, 115, 22, 0.5)',
-        outro: 'rgba(239, 68, 68, 0.5)',
-        default: 'rgba(100, 116, 139, 0.5)',
-      } as const;
-
-      const strokeColors = {
-        verse: '#3b82f6',
-        chorus: '#22c55e',
-        bridge: '#a855f7',
-        intro: '#f97316',
-        outro: '#ef4444',
-        default: '#64748b',
-      } as const;
-
-      const sectionType = (section.label || 'default').toLowerCase() as keyof typeof sectionColors;
+      const style = sectionStyleFor(section.label);
       const isSelected = selectedSectionIds.has(section.id);
 
-      ctx.fillStyle = sectionColors[sectionType] || sectionColors.default;
+      ctx.fillStyle = style.fill;
       ctx.fillRect(startX, 0, endX - startX, headerHeight);
 
       if (isSelected) {
@@ -484,7 +489,7 @@ const Timeline: React.FC<TimelineProps> = ({
 
       ctx.save();
       ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = strokeColors[sectionType] || strokeColors.default;
+      ctx.strokeStyle = style.stroke;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(startX, headerHeight);
@@ -495,9 +500,10 @@ const Timeline: React.FC<TimelineProps> = ({
       if (section.label && endX - startX > 60) {
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px sans-serif';
-        const textWidth = ctx.measureText(section.label.toUpperCase()).width;
+        const labelText = (style.title || section.label.toUpperCase()).toUpperCase();
+        const textWidth = ctx.measureText(labelText).width;
         const textX = startX + (endX - startX - textWidth) / 2;
-        ctx.fillText(section.label.toUpperCase(), textX, 15);
+        ctx.fillText(labelText, textX, 12);
 
         const microTempo = section.tempo || bpm;
         ctx.font = 'bold 10px monospace';
@@ -505,7 +511,7 @@ const Timeline: React.FC<TimelineProps> = ({
         const tempoText = `♩=${Math.round(microTempo)}`;
         const tempoTextWidth = ctx.measureText(tempoText).width;
         const tempoTextX = startX + (endX - startX - tempoTextWidth) / 2;
-        ctx.fillText(tempoText, tempoTextX, 28);
+        ctx.fillText(tempoText, tempoTextX, 22);
 
         const durationSec = section.end - section.start;
         const secPerBeat = 60 / Math.max(1, microTempo);
@@ -515,7 +521,7 @@ const Timeline: React.FC<TimelineProps> = ({
         const barText = `${bars}`;
         const barTextWidth = ctx.measureText(barText).width;
         const barTextX = startX + (endX - startX - barTextWidth) / 2;
-        ctx.fillText(barText, barTextX, 42);
+        ctx.fillText(barText, barTextX, 30);
       }
 
       const sectionBlocks = blocksBySection[section.id] || [];
@@ -591,7 +597,7 @@ const Timeline: React.FC<TimelineProps> = ({
     const canvasWidth = canvas.clientWidth || contentWidthRef.current || 1;
     const clickTime = (x / canvasWidth) * duration;
     
-    const headerHeight = 50;
+    const headerHeight = 32;
     
     // Check if click was in section header area
     if (y <= headerHeight && onSelectSection) {

@@ -230,6 +230,8 @@ export interface DrumGenerationConfig {
   timeSignature: [number, number];
   style: string;
   drummer: string;
+  publicDrummerId?: string;
+  drummerPersona?: Record<string, any>;
   intensity: number;  // 0.0-1.0
   variation: number;  // 0.0-1.0
   generationMode: 'template' | 'ai_variation' | 'full_ai';
@@ -243,8 +245,12 @@ export interface DrumGenerationConfig {
 
   // Optional groove library controls
   grooveSource?: string;
+  grooveMode?: string;
   styleGroup?: string;
   grooveControls?: Record<string, any>;
+
+  // Optional: pin a specific EGMD phrase/clip id
+  egmdPhraseId?: number;
   
   // New v2.0 fields
   humanizeAmount?: number;  // 0.0-1.0 (default: 0.7)
