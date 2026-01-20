@@ -142,6 +142,183 @@ class CentralDatabaseService(QObject):
             self.database_error.emit(f"Failed to initialize database: {str(e)}")
             return False
 
+    def list_drummer_presets(self, profile_type: str) -> List[Dict[str, Any]]:
+        try:
+            profile_type = (profile_type or "").strip().lower()
+            if not profile_type:
+                return []
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT preset_id, profile_type, name, tier,
+                       deltas_json, policies_json,
+                       source_type, source_song_name, source_ref
+                FROM drummer_presets
+                WHERE profile_type = ?
+                ORDER BY tier DESC, name
+                """,
+                (profile_type,),
+            )
+            rows = cursor.fetchall()
+            out: List[Dict[str, Any]] = []
+            for row in rows:
+                deltas = {}
+                policies = {}
+                try:
+                    deltas = json.loads(row[4]) if row[4] else {}
+                except Exception:
+                    deltas = {}
+                try:
+                    policies = json.loads(row[5]) if row[5] else {}
+                except Exception:
+                    policies = {}
+                out.append(
+                    {
+                        "preset_id": row[0],
+                        "profile_type": row[1],
+                        "name": row[2],
+                        "tier": row[3],
+                        "deltas": deltas,
+                        "policies": policies,
+                        "source_type": row[6],
+                        "source_song_name": row[7],
+                        "source_ref": row[8],
+                    }
+                )
+            return out
+        except sqlite3.OperationalError as e:
+            logger.warning(f"drummer_presets table not available: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error listing drummer presets: {str(e)}")
+            self.database_error.emit(f"Error listing drummer presets: {str(e)}")
+            return []
+
+    def get_drummer_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            preset_id = (preset_id or "").strip()
+            if not preset_id:
+                return None
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT preset_id, profile_type, name, tier,
+                       deltas_json, policies_json,
+                       source_type, source_song_name, source_ref
+                FROM drummer_presets
+                WHERE preset_id = ?
+                LIMIT 1
+                """,
+                (preset_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            deltas = {}
+            policies = {}
+            try:
+                deltas = json.loads(row[4]) if row[4] else {}
+            except Exception:
+                deltas = {}
+            try:
+                policies = json.loads(row[5]) if row[5] else {}
+            except Exception:
+                policies = {}
+
+            return {
+                "preset_id": row[0],
+                "profile_type": row[1],
+                "name": row[2],
+                "tier": row[3],
+                "deltas": deltas,
+                "policies": policies,
+                "source_type": row[6],
+                "source_song_name": row[7],
+                "source_ref": row[8],
+            }
+        except sqlite3.OperationalError as e:
+            logger.warning(f"drummer_presets table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting drummer preset {preset_id}: {str(e)}")
+            self.database_error.emit(f"Error getting drummer preset: {str(e)}")
+            return None
+
+    def upsert_drummer_preset(
+        self,
+        preset_id: str,
+        profile_type: str,
+        name: str,
+        tier: str,
+        deltas: Optional[Dict[str, Any]] = None,
+        policies: Optional[Dict[str, Any]] = None,
+        source_type: Optional[str] = None,
+        source_song_name: Optional[str] = None,
+        source_ref: Optional[str] = None,
+    ) -> bool:
+        try:
+            preset_id = (preset_id or "").strip()
+            profile_type = (profile_type or "").strip().lower()
+            name = (name or "").strip()
+            tier = (tier or "").strip().lower()
+
+            if not preset_id or not profile_type or not name or not tier:
+                return False
+
+            deltas_json = json.dumps(deltas or {})
+            policies_json = json.dumps(policies or {})
+
+            now = datetime.utcnow().isoformat()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO drummer_presets (
+                    preset_id, profile_type, name, tier,
+                    deltas_json, policies_json,
+                    source_type, source_song_name, source_ref,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(preset_id) DO UPDATE SET
+                    profile_type=excluded.profile_type,
+                    name=excluded.name,
+                    tier=excluded.tier,
+                    deltas_json=excluded.deltas_json,
+                    policies_json=excluded.policies_json,
+                    source_type=excluded.source_type,
+                    source_song_name=excluded.source_song_name,
+                    source_ref=excluded.source_ref,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    preset_id,
+                    profile_type,
+                    name,
+                    tier,
+                    deltas_json,
+                    policies_json,
+                    source_type,
+                    source_song_name,
+                    source_ref,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return True
+        except sqlite3.OperationalError as e:
+            logger.warning(f"drummer_presets table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error upserting drummer preset: {str(e)}")
+            self.database_error.emit(f"Error upserting drummer preset: {str(e)}")
+            return False
+
     def _get_connection(self) -> sqlite3.Connection:
         """
         Get a thread-local database connection.
@@ -251,6 +428,22 @@ class CentralDatabaseService(QObject):
                 default_humanize REAL,
                 default_swing REAL,
                 default_chorus_ride_pref REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_presets (
+                preset_id TEXT PRIMARY KEY,
+                profile_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                deltas_json TEXT,
+                policies_json TEXT,
+                source_type TEXT,
+                source_song_name TEXT,
+                source_ref TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )

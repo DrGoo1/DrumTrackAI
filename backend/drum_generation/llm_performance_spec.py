@@ -426,6 +426,148 @@ def get_performance_spec_from_local_service(
         raise RuntimeError(f"Local LLM service call failed: {e}")
 
 
+def get_song_roadmap_from_llm(
+    *,
+    cfg: "DrumGenerationConfig",
+    songmap_summary: Dict[str, Any],
+    drummer_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return a structured Song Roadmap (arrangement director layer).
+
+    This is intentionally separate from the performance spec:
+    - performance spec: HOW notes are played
+    - song roadmap: WHERE the groove changes (fills, crashes, orchestration)
+    """
+
+    provider = str(os.getenv("LLM_PROVIDER", "local")).strip().lower()
+    if provider == "local_service":
+        try:
+            return get_song_roadmap_from_local_service(
+                cfg=cfg,
+                songmap_summary=songmap_summary,
+                drummer_profile=drummer_profile,
+            )
+        except Exception as e:
+            logger.warning("Song roadmap local_service call failed; falling back: %s", e)
+            return build_fallback_song_roadmap(cfg=cfg, drummer_profile=drummer_profile)
+
+    # For now, other providers fall back to deterministic roadmap.
+    return build_fallback_song_roadmap(cfg=cfg, drummer_profile=drummer_profile)
+
+
+def get_song_roadmap_from_local_service(
+    *,
+    cfg: "DrumGenerationConfig",
+    songmap_summary: Dict[str, Any],
+    drummer_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    base_url = str(os.getenv("LOCAL_LLM_URL", "")).strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("LLM_PROVIDER=local_service but LOCAL_LLM_URL is not set")
+
+    timeout_s = float(os.getenv("LOCAL_LLM_TIMEOUT_S", "15"))
+    url = f"{base_url}/v1/song_roadmap"
+
+    cfg_payload: Dict[str, Any] = {}
+    if hasattr(cfg, "to_dict") and callable(getattr(cfg, "to_dict")):
+        try:
+            cfg_payload = cfg.to_dict()
+        except Exception:
+            cfg_payload = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+    else:
+        cfg_payload = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+
+    payload = {
+        "cfg": cfg_payload,
+        "songmap_summary": songmap_summary,
+        "drummer_profile": drummer_profile,
+    }
+
+    try:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not data.get("ok"):
+            raise RuntimeError(f"Local LLM service returned failure: {data}")
+        roadmap = data.get("roadmap")
+        if not isinstance(roadmap, dict):
+            raise RuntimeError(f"Local LLM service response missing 'roadmap': {data}")
+        return roadmap
+    except Exception as e:
+        raise RuntimeError(f"Local LLM service call failed: {e}")
+
+
+def build_fallback_song_roadmap(*, cfg: "DrumGenerationConfig", drummer_profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Deterministic roadmap fallback when LLM is unavailable."""
+
+    style_group = str(getattr(cfg, "style", None) or "rock").strip().lower()
+    tempos = getattr(cfg, "tempos", None) or [120.0]
+    try:
+        avg_tempo = float(sum(float(t) for t in tempos) / max(len(tempos), 1))
+    except Exception:
+        avg_tempo = 120.0
+
+    preferred_feel = str(drummer_profile.get("preferred_feel") or drummer_profile.get("feel") or "").strip().lower()
+    time_feel = preferred_feel if preferred_feel in {"straight", "swing", "shuffle", "laid_back", "pushed"} else "straight"
+
+    song_sections = getattr(cfg, "songSections", None) or getattr(cfg, "song_sections", None) or []
+    if not isinstance(song_sections, list):
+        song_sections = []
+
+    def _key(name: str) -> str:
+        raw = str(name or "").strip().lower()
+        raw = "_".join(raw.split())
+        raw = "".join(ch for ch in raw if (ch.isalnum() or ch == "_"))
+        return raw.strip("_") or "section"
+
+    sections_out: List[Dict[str, Any]] = []
+    for idx, sec in enumerate(song_sections):
+        if not isinstance(sec, dict):
+            continue
+        name = sec.get("name") or sec.get("label") or "section"
+        bars = int(sec.get("bars") or 1)
+        st = _key(str(name))
+        energy = 0.62
+        if st == "chorus":
+            energy = 0.86
+        elif st == "intro":
+            energy = 0.45
+        elif st in {"bridge", "solo"}:
+            energy = 0.74
+        elif st in {"outro", "ending"}:
+            energy = 0.55
+
+        sections_out.append(
+            {
+                "sectionIndex": idx,
+                "sectionType": st,
+                "bars": bars,
+                "energy": energy,
+                "orchestration": {
+                    "timekeeper": "ride" if st == "chorus" else "hats",
+                    "crashDownbeatProbability": 0.6 if st in {"chorus", "bridge", "outro"} else 0.3,
+                },
+                "transitions": {
+                    "fillOut": {"enabled": st != "intro", "length": "last_bar", "family": "auto", "aggression": 0.6},
+                },
+            }
+        )
+
+    return {
+        "version": "fallback",
+        "styleGroup": style_group,
+        "global": {"avgTempo": avg_tempo, "timeFeel": time_feel},
+        "sections": sections_out,
+    }
+
+
 def build_local_performance_spec(
     cfg: "DrumGenerationConfig",
     songmap_summary: Dict[str, Any],

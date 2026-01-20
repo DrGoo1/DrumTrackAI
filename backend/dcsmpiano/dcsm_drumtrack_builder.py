@@ -23,6 +23,8 @@ from .dcsm_drumtrack_schema import (
     instrument_id_to_midi_pitch,
 )
 
+from backend.articulation_selector import select_articulation_for_note
+
 logger = logging.getLogger(__name__)
 
 EnumT = TypeVar("EnumT", bound=Enum)
@@ -339,6 +341,7 @@ def build_drumtrack_for_dcsm(
     style_id: str,
     performance_spec: Dict[str, Any],
     resolution_ppq: int = 960,
+    section_label: str = "",
 ) -> DrumTrackForDCSM:
     """
     Build complete DrumTrackForDCSM from internal events + performance spec.
@@ -437,6 +440,21 @@ def build_drumtrack_for_dcsm(
             hat_open_level = 0.8  # TODO: Get from performance spec
         elif inst_id == "hihat_closed":
             hat_open_level = 0.0
+
+        articulation_id = None
+        try:
+            articulation_id = select_articulation_for_note(
+                {
+                    "instrumentId": inst_id,
+                    "velocity": int(vel) if vel is not None else 0,
+                    "isGhost": bool(is_ghost),
+                    "isAccent": bool(is_accent),
+                },
+                performance_spec or {},
+                section_label or "",
+            )
+        except Exception:
+            articulation_id = None
         
         # Create note
         note = DrumNoteEvent(
@@ -448,6 +466,7 @@ def build_drumtrack_for_dcsm(
             midiPitch=pitch,
             velocity=vel,
             instrumentId=inst_id,
+            articulationId=articulation_id,
             aspect=aspect,
             limbId=limb_id,
             priority=priority,

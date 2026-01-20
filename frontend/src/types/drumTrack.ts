@@ -61,6 +61,9 @@ export interface DrumNoteEvent {
   
   // Drum-specific identification
   instrumentId: DrumInstrumentId;
+
+  // Optional articulation identifier for plugin mapping / CC rendering
+  articulationId?: string;
   
   // Optional aspect classification
   aspect?: NoteAspect;
@@ -221,6 +224,14 @@ export interface RudimentBlock {
   preserveHatTail?: boolean;
 }
 
+export type PresetTier = "song" | "flavor" | "utility";
+
+export interface PresetStackItem {
+  presetId: string;
+  tier: PresetTier;
+  intensity: number;
+}
+
 export interface DrumGenerationConfig {
   // Required fields
   sectionId: string;
@@ -240,6 +251,17 @@ export interface DrumGenerationConfig {
   fillType: string;
   fillDensity?: number;
 
+  // Cymbal focus / hat-vs-ride controls
+  chorusRidePreference?: number;
+  cymbalFocusMode?: 'continuous' | 'section_rule';
+  hatsToRideBlend?: number;
+  hatsToRideThreshold?: number;
+  rideBellPercent?: number;
+
+  // Left-foot hat pulse while riding (hihat_pedal)
+  footHatPulseSubdivision?: 'off' | 'quarter' | 'eighth' | 'sixteenth';
+  footHatPulseApply?: 'transition' | 'ride_bars' | 'both';
+
   // Optional output controls
   midiMapName?: string;
 
@@ -251,7 +273,28 @@ export interface DrumGenerationConfig {
 
   // Optional: pin a specific EGMD phrase/clip id
   egmdPhraseId?: number;
-  
+
+  // Optional: pin EGMD selection by exact MIDI path (preferred for exact mode).
+  egmdMidiPath?: string;
+  egmdFillMidiPath?: string;
+
+  // Optional: per-section EGMD phrase overrides (full-song generation)
+  egmdPhraseOverrides?: {
+    mode: 'by_type' | 'by_index';
+    byType?: Record<string, number>;
+    byIndex?: Record<string, number>;
+  };
+
+  // Optional: groove catalog selections
+  selectedGrooveId?: string;
+  grooveUse?: 'use_as_groove' | 'use_as_fill';
+  fillGrooveId?: string;
+  fillBarIndex?: number;
+
+  // Optional: per-bar fill directives (absolute bar indices)
+  forceFillBars?: number[];
+  suppressFillBars?: number[];
+
   // New v2.0 fields
   humanizeAmount?: number;  // 0.0-1.0 (default: 0.7)
   ghostNoteAmount?: number;  // 0.0-1.0 (default: 0.7)
@@ -265,6 +308,9 @@ export interface DrumGenerationConfig {
   fillControls?: FillControls;
   rudimentControls?: RudimentControls;
   rudimentBlocks?: RudimentBlock[];
+
+  globalPresetStack?: PresetStackItem[];
+  sectionPresetStack?: PresetStackItem[];
 }
 
 // ============================================================================

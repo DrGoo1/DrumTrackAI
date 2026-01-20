@@ -22,13 +22,20 @@ interface DrumEditorPaneProps {
   pianoRollScrollRef?: React.RefObject<HTMLDivElement>;
   pixelsPerBeat: number;
   bpm?: number;
+  tempoMap?: Array<{ tSec: number; bpm: number }>;
+  beatTimes?: number[];
   playheadSeconds?: number;
   playing?: boolean;
+  selectedBarIndex?: number | null;
+  onBarSelect?: (barIndex: number | null) => void;
   visibleStartMeasure?: number;
   visibleMeasureCount?: number;
   totalSongBars?: number;
+  barDirectives?: Record<number, { forceFill?: boolean; suppressFill?: boolean }>;
   drumEngine?: DrumPlayerEngine | null;
   sectionRegions?: DrumSectionRegion[];
+  selectedSectionIds?: Set<string> | string[];
+  onSectionSelect?: (sectionId: string) => void;
 }
 
 export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
@@ -41,13 +48,20 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   pianoRollScrollRef,
   pixelsPerBeat,
   bpm,
+  tempoMap,
+  beatTimes,
   playheadSeconds,
   playing,
+  selectedBarIndex,
+  onBarSelect,
   visibleStartMeasure,
   visibleMeasureCount,
   totalSongBars,
+  barDirectives,
   drumEngine,
   sectionRegions,
+  selectedSectionIds,
+  onSectionSelect,
 }) => {
   const [currentAspect, setCurrentAspect] =
     useState<NoteAspect | "all">("all");
@@ -69,8 +83,7 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
   };
 
   return (
-    <div className="flex flex-row h-full min-w-0 overflow-hidden">
-      <div className="flex-1 min-w-0 flex flex-col">
+    <div className="relative flex flex-col h-full min-w-0 overflow-hidden">
         {/* Aspect + Grid controls */}
         <div className="flex items-center justify-between px-2 py-1 bg-slate-950 border-b border-slate-800 text-[11px] text-slate-200">
           <div className="flex items-center gap-2">
@@ -118,11 +131,16 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
           drumTrack={drumTrack}
           timeSignature={timeSignature}
           bpm={bpm}
+          tempoMap={tempoMap}
+          beatTimes={beatTimes}
           playheadSeconds={playheadSeconds}
           playing={playing}
           gridResolution={gridResolution}
           currentAspect={currentAspect}
           grooveWeights={grooveWeights}
+          selectedBarIndex={selectedBarIndex}
+          onBarSelect={onBarSelect}
+          barDirectives={barDirectives}
           selectedNoteIds={selectedNoteIds}
           onNoteSelect={setSelectedNoteIds}
           onNoteChange={(notes) => {
@@ -136,14 +154,19 @@ export const DrumEditorPane: React.FC<DrumEditorPaneProps> = ({
           totalSongBars={totalSongBars}
           drumEngine={drumEngine}
           sectionRegions={sectionRegions}
+          selectedSectionIds={selectedSectionIds}
+          onSectionSelect={onSectionSelect}
         />
-      </div>
 
-      {/* Note inspector */}
-      <NoteInspector
-        selectedNotes={selectedNotes}
-        onUpdateNotes={handleNoteChange}
-      />
+      {selectedNotes.length > 0 && (
+        <div className="absolute right-2 top-12 bottom-2 w-64 z-50 shadow-lg">
+          <NoteInspector
+            selectedNotes={selectedNotes}
+            onUpdateNotes={handleNoteChange}
+            onClose={() => setSelectedNoteIds([])}
+          />
+        </div>
+      )}
     </div>
   );
 };

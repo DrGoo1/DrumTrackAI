@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Tooltip } from "./Tooltip";
 
 type MicroTempoMeterProps = {
   beatTimes: number[];
@@ -130,17 +131,22 @@ export default function MicroTempoMeter(props: MicroTempoMeterProps) {
             <div className="text-2xl font-bold text-cyan-200 tabular-nums leading-none">{instantText}</div>
             <div className="text-[11px] text-slate-400">BPM</div>
             {deltaBpm !== null && (
-              <div
-                className="text-[11px] font-semibold tabular-nums px-2 py-0.5 rounded"
-                style={{
-                  background: "rgba(2, 132, 199, 0.12)",
-                  border: "1px solid rgba(34, 211, 238, 0.25)",
-                  color: "#a5f3fc",
-                }}
-                title={`Δ vs session (${baseBpm.toFixed(1)} BPM)`}
+              <Tooltip
+                content={`Δ vs session (${baseBpm.toFixed(1)} BPM)`}
+                placement="top"
+                maxWidthClassName="w-52"
               >
-                {deltaText}
-              </div>
+                <div
+                  className="text-[11px] font-semibold tabular-nums px-2 py-0.5 rounded"
+                  style={{
+                    background: "rgba(2, 132, 199, 0.12)",
+                    border: "1px solid rgba(34, 211, 238, 0.25)",
+                    color: "#a5f3fc",
+                  }}
+                >
+                  {deltaText}
+                </div>
+              </Tooltip>
             )}
           </div>
           <div className="text-[10px] text-slate-500 mt-1">

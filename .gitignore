@@ -53,6 +53,9 @@ brain_configs/
 *.sqlite
 *.sqlite3
 
+# Local kit packs (kept outside git)
+frontend/public/kits/
+
 # Temporary files
 *.tmp
 *.temp

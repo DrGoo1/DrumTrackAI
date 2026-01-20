@@ -20,24 +20,50 @@ export const WaveformView: React.FC<Props> = ({ peaks, peaksL, peaksR, durationS
     if (!canvas || !l) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = Math.max(1, Math.floor(canvas.parentElement?.clientWidth || canvas.clientWidth || 800));
+    const cssH = 160;
+    canvas.style.width = '100%';
+    canvas.style.height = `${cssH}px`;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
 
-    const draw = (data: number[], top: number, height: number, color: string) => {
+    ctx.resetTransform();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = '#1e1e1e';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    const drawBars = (data: number[], centerY: number, laneHeight: number, color: string) => {
       ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let x = 0; x < canvas.width; x++) {
-        const idx = Math.floor((x / canvas.width) * data.length);
-        const v = data[idx] || 0;
-        const y = top + height * (0.5 - v * 0.5);
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const n = data.length;
+      const halfLane = laneHeight / 2;
+      for (let x = 0; x < cssW; x++) {
+        const idx = Math.floor((x / cssW) * n);
+        const v = Math.max(0, Math.min(1, data[idx] ?? 0));
+        const amp = v * (halfLane - 2);
+        ctx.moveTo(x + 0.5, centerY - amp);
+        ctx.lineTo(x + 0.5, centerY + amp);
       }
       ctx.stroke();
     };
 
-    const half = canvas.height / 2;
-    draw(l, 0, half, '#64b5f6');
-    if (r) draw(r, half, half, '#9575cd');
+    const half = cssH / 2;
+    const centerTop = half / 2;
+    const centerBottom = half + half / 2;
+
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.beginPath();
+    ctx.moveTo(0, centerTop + 0.5);
+    ctx.lineTo(cssW, centerTop + 0.5);
+    ctx.moveTo(0, centerBottom + 0.5);
+    ctx.lineTo(cssW, centerBottom + 0.5);
+    ctx.stroke();
+
+    drawBars(l, centerTop, half, '#64b5f6');
+    if (r) drawBars(r, centerBottom, half, '#9575cd');
 
     // Draw beat grid overlay
     if (durationSec && beatLanes && beatLanes.length) {
@@ -57,9 +83,9 @@ export const WaveformView: React.FC<Props> = ({ peaks, peaksL, peaksR, durationS
         ctx.beginPath();
         for (const t of beats) {
           if (t < 0 || t > durationSec) continue;
-          const x = Math.floor((t / durationSec) * canvas.width);
+          const x = Math.floor((t / durationSec) * cssW);
           ctx.moveTo(x + 0.5, 0);
-          ctx.lineTo(x + 0.5, canvas.height);
+          ctx.lineTo(x + 0.5, cssH);
         }
         ctx.stroke();
       }
@@ -78,9 +104,9 @@ export const WaveformView: React.FC<Props> = ({ peaks, peaksL, peaksR, durationS
         ctx.beginPath();
         for (const t of bars) {
           if (t < 0 || t > durationSec) continue;
-          const x = Math.floor((t / durationSec) * canvas.width);
+          const x = Math.floor((t / durationSec) * cssW);
           ctx.moveTo(x + 0.5, 0);
-          ctx.lineTo(x + 0.5, canvas.height);
+          ctx.lineTo(x + 0.5, cssH);
         }
         ctx.stroke();
       }

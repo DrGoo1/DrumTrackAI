@@ -1,5 +1,244 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { Tooltip } from './Tooltip';
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const CircularKnob = ({
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) => {
+  const pointerRef = useRef<number | null>(null);
+  const dragRef = useRef<{ value: number; y: number } | null>(null);
+  const knobRef = useRef<HTMLDivElement | null>(null);
+
+  const finishDrag = () => {
+    if (pointerRef.current !== null && knobRef.current) {
+      try {
+        knobRef.current.releasePointerCapture(pointerRef.current);
+      } catch {
+        // Safe to ignore release failures when pointer capture was already lost.
+      }
+    }
+    pointerRef.current = null;
+    dragRef.current = null;
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerRef.current !== event.pointerId) return;
+    if (!dragRef.current) return;
+    event.preventDefault();
+    const delta = (dragRef.current.y - event.clientY) / 150;
+    const raw = dragRef.current.value + delta * (max - min);
+    const snapped = Math.round(raw / step) * step;
+    onChange(Number(clampNumber(snapped, min, max).toFixed(4)));
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerRef.current !== event.pointerId) return;
+    finishDrag();
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    pointerRef.current = event.pointerId;
+    dragRef.current = { value, y: event.clientY };
+    knobRef.current = event.currentTarget;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const raw = value + direction * step * 2;
+    onChange(Number(clampNumber(raw, min, max).toFixed(4)));
+  };
+
+  useEffect(() => () => finishDrag(), []);
+
+  const percent = clampNumber((value - min) / (max - min), 0, 1);
+
+  return (
+    <div
+      ref={knobRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onWheel={handleWheel}
+      className="relative h-20 w-20 rounded-full bg-slate-950 border border-cyan-400/60 shadow-[inset_0_0_20px_rgba(34,211,238,0.35)] cursor-pointer select-none"
+      style={{ touchAction: 'none' }}
+    >
+      <div
+        className="absolute bottom-3 left-1/2 w-1 rounded-full bg-cyan-300/60 origin-bottom"
+        style={{
+          height: `${Math.max(12, percent * 70)}%`,
+          transform: 'translateX(-50%)',
+        }}
+      />
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          background: `conic-gradient(rgba(34,211,238,0.9) ${percent * 300}deg, rgba(8,47,73,0.2) ${percent * 300}deg)`,
+        }}
+      />
+      <div className="absolute inset-[6px] rounded-full bg-slate-900 flex items-center justify-center text-cyan-100 font-semibold">
+        {Math.round(percent * 100)}%
+      </div>
+    </div>
+  );
+};
+
+const RangeSlider = ({
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  ariaLabel,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  ariaLabel: string;
+}) => {
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const pointerRef = useRef<number | null>(null);
+
+  const updateFromClientX = useCallback(
+    (clientX: number) => {
+      const rect = sliderRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const ratio = clampNumber((clientX - rect.left) / rect.width, 0, 1);
+      const raw = min + ratio * (max - min);
+      const snapped = Math.round(raw / step) * step;
+      onChange(Number(clampNumber(snapped, min, max).toFixed(4)));
+    },
+    [min, max, step, onChange]
+  );
+
+  const finishDrag = () => {
+    if (pointerRef.current !== null && sliderRef.current) {
+      try {
+        sliderRef.current.releasePointerCapture(pointerRef.current);
+      } catch {
+        // ignore release failures
+      }
+    }
+    pointerRef.current = null;
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    pointerRef.current = event.pointerId;
+    sliderRef.current = event.currentTarget;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateFromClientX(event.clientX);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerRef.current !== event.pointerId) return;
+    event.preventDefault();
+    updateFromClientX(event.clientX);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerRef.current !== event.pointerId) return;
+    finishDrag();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowRight' ? 1 : -1;
+    const multiplier = event.shiftKey ? 5 : event.altKey ? 0.2 : 1;
+    const delta = direction * step * multiplier;
+    const next = clampNumber(value + delta, min, max);
+    onChange(Number(next.toFixed(4)));
+  };
+
+  const percent = clampNumber((value - min) / (max - min), 0, 1) * 100;
+
+  return (
+    <div
+      ref={sliderRef}
+      role="slider"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Number(value.toFixed(3))}
+      aria-valuetext={`${Math.round(percent)}%`}
+      className="relative w-32 h-6 cursor-pointer select-none focus:outline-none focus:ring-2 focus:ring-cyan-400/70 rounded"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onKeyDown={handleKeyDown}
+      style={{ touchAction: 'none' }}
+    >
+      <div
+        className="absolute top-1/2 left-0 right-0 h-1 bg-slate-700/80 rounded-full pointer-events-none"
+        style={{ transform: 'translateY(-50%)' }}
+      />
+      <div
+        className="absolute top-1/2 left-0 h-1 bg-cyan-400 rounded-full pointer-events-none"
+        style={{ width: `${percent}%`, transform: 'translateY(-50%)' }}
+      />
+      <div
+        className="absolute top-1/2 h-3 w-3 rounded-full bg-white border border-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.7)] pointer-events-none"
+        style={{ left: `calc(${percent}% - 6px)`, transform: 'translateY(-50%)' }}
+      />
+    </div>
+  );
+};
+
+const KnobField = ({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  info,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  info?: string;
+}) => {
+  return (
+    <div className="flex flex-col items-center gap-2 text-center text-xs text-slate-300">
+      <div className="flex items-center gap-1">
+        <span className="font-semibold text-slate-100">{label}</span>
+        {info && (
+          <Tooltip content={info} placement="top" maxWidthClassName="w-44">
+            <span className="inline-flex items-center">
+              <Info className="h-3 w-3 text-cyan-300 cursor-help" />
+            </span>
+          </Tooltip>
+        )}
+      </div>
+      <CircularKnob value={value} onChange={onChange} min={min} max={max} step={step} />
+      <RangeSlider value={value} onChange={onChange} min={min} max={max} step={step} ariaLabel={`${label} slider`} />
+    </div>
+  );
+};
 
 export interface DrumOptions {
   // Basic parameters
@@ -67,7 +306,7 @@ interface Props {
 }
 export default function DrumOptionsPanel({ options, onChange, drummerType }: Props) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(['basic', 'velocity', 'density'])
+    new Set(['velocity', 'density'])
   );
 
   const hatPresets = [
@@ -98,9 +337,6 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
     setExpandedSections(newExpanded);
   };
 
-  const clamp = (value: number, min: number, max: number) =>
-    Math.min(max, Math.max(min, value));
-
   const updateOptions = (partial: Partial<DrumOptions>) => {
     onChange({ ...options, ...partial });
   };
@@ -109,272 +345,6 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
     updateOptions({ [key]: value } as Partial<DrumOptions>);
   };
 
-  const CircularKnob = ({
-    value,
-    onChange,
-    min = 0,
-    max = 1,
-    step = 0.01,
-  }: {
-    value: number;
-    onChange: (v: number) => void;
-    min?: number;
-    max?: number;
-    step?: number;
-  }) => {
-    const pointerRef = useRef<number | null>(null);
-    const dragRef = useRef<{ value: number; y: number } | null>(null);
-    const knobRef = useRef<HTMLDivElement | null>(null);
-
-    const finishDrag = () => {
-      if (pointerRef.current !== null && knobRef.current) {
-        try {
-          knobRef.current.releasePointerCapture(pointerRef.current);
-        } catch {
-          // Safe to ignore release failures when pointer capture was already lost.
-        }
-      }
-      pointerRef.current = null;
-      dragRef.current = null;
-    };
-
-    const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-      if (pointerRef.current !== event.pointerId) return;
-      if (!dragRef.current) return;
-      event.preventDefault();
-      const delta = (dragRef.current.y - event.clientY) / 150;
-      const raw = dragRef.current.value + delta * (max - min);
-      const snapped = Math.round(raw / step) * step;
-      onChange(Number(clamp(snapped, min, max).toFixed(4)));
-    };
-
-    const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-      if (pointerRef.current !== event.pointerId) return;
-      finishDrag();
-    };
-
-    const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      pointerRef.current = event.pointerId;
-      dragRef.current = { value, y: event.clientY };
-      knobRef.current = event.currentTarget;
-      event.currentTarget.setPointerCapture(event.pointerId);
-    };
-
-    const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const direction = event.deltaY < 0 ? 1 : -1;
-      const raw = value + direction * step * 2;
-      onChange(Number(clamp(raw, min, max).toFixed(4)));
-    };
-
-    useEffect(() => () => finishDrag(), []);
-
-    const percent = clamp((value - min) / (max - min), 0, 1);
-
-    return (
-      <div
-        ref={knobRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onWheel={handleWheel}
-        className="relative h-20 w-20 rounded-full bg-slate-950 border border-cyan-400/60 shadow-[inset_0_0_20px_rgba(34,211,238,0.35)] cursor-pointer select-none"
-        style={{ touchAction: 'none' }}
-      >
-        <div
-          className="absolute bottom-3 left-1/2 w-1 rounded-full bg-cyan-300/60 origin-bottom"
-          style={{
-            height: `${Math.max(12, percent * 70)}%`,
-            transform: 'translateX(-50%)',
-          }}
-        />
-        <div
-          className="absolute inset-0 rounded-full"
-          style={{
-            background: `conic-gradient(rgba(34,211,238,0.9) ${percent * 300}deg, rgba(8,47,73,0.2) ${percent * 300}deg)`,
-          }}
-        />
-        <div className="absolute inset-[6px] rounded-full bg-slate-900 flex items-center justify-center text-cyan-100 font-semibold">
-          {Math.round(percent * 100)}%
-        </div>
-      </div>
-    );
-  };
-
-  const RangeSlider = ({
-    value,
-    onChange,
-    min = 0,
-    max = 1,
-    step = 0.01,
-    ariaLabel,
-  }: {
-    value: number;
-    onChange: (v: number) => void;
-    min?: number;
-    max?: number;
-    step?: number;
-    ariaLabel: string;
-  }) => {
-    const sliderRef = useRef<HTMLDivElement | null>(null);
-    const draggingRef = useRef(false);
-
-    const updateFromClientX = useCallback(
-      (clientX: number) => {
-        const rect = sliderRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
-        const raw = min + ratio * (max - min);
-        const snapped = Math.round(raw / step) * step;
-        onChange(Number(clamp(snapped, min, max).toFixed(4)));
-      },
-      [min, max, step, onChange]
-    );
-
-    useEffect(() => {
-      const handleMouseMove = (event: MouseEvent) => {
-        if (!draggingRef.current) return;
-        event.preventDefault();
-        updateFromClientX(event.clientX);
-      };
-
-      const handleMouseUp = () => {
-        if (!draggingRef.current) return;
-        draggingRef.current = false;
-      };
-
-      const handleTouchMove = (event: TouchEvent) => {
-        if (!draggingRef.current) return;
-        if (!event.touches.length) return;
-        event.preventDefault();
-        updateFromClientX(event.touches[0].clientX);
-      };
-
-      const handleTouchEnd = () => {
-        if (!draggingRef.current) return;
-        draggingRef.current = false;
-      };
-
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      window.addEventListener('touchmove', handleTouchMove, { passive: false });
-      window.addEventListener('touchend', handleTouchEnd);
-      window.addEventListener('touchcancel', handleTouchEnd);
-
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-        window.removeEventListener('touchmove', handleTouchMove);
-        window.removeEventListener('touchend', handleTouchEnd);
-        window.removeEventListener('touchcancel', handleTouchEnd);
-      };
-    }, [updateFromClientX]);
-
-    const startDragging = (clientX: number) => {
-      draggingRef.current = true;
-      sliderRef.current?.focus();
-      updateFromClientX(clientX);
-    };
-
-    const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      startDragging(event.clientX);
-    };
-
-    const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-      if (!event.touches.length) return;
-      event.preventDefault();
-      startDragging(event.touches[0].clientX);
-    };
-
-    const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-      event.preventDefault();
-      const direction = event.key === 'ArrowRight' ? 1 : -1;
-      const multiplier = event.shiftKey ? 5 : event.altKey ? 0.2 : 1;
-      const delta = direction * step * multiplier;
-      const next = clamp(value + delta, min, max);
-      onChange(Number(next.toFixed(4)));
-    };
-
-    const percent = clamp((value - min) / (max - min), 0, 1) * 100;
-
-    return (
-      <div
-        ref={sliderRef}
-        role="slider"
-        tabIndex={0}
-        aria-label={ariaLabel}
-        aria-valuemin={min}
-        aria-valuemax={max}
-        aria-valuenow={Number(value.toFixed(3))}
-        aria-valuetext={`${Math.round(percent)}%`}
-        className="relative w-32 h-6 cursor-pointer select-none focus:outline-none focus:ring-2 focus:ring-cyan-400/70 rounded"
-        onMouseDown={handleMouseDown}
-        onTouchStart={handleTouchStart}
-        onKeyDown={handleKeyDown}
-        style={{ touchAction: 'none' }}
-      >
-        <div
-          className="absolute top-1/2 left-0 right-0 h-1 bg-slate-700/80 rounded-full"
-          style={{ transform: 'translateY(-50%)' }}
-        />
-        <div
-          className="absolute top-1/2 left-0 h-1 bg-cyan-400 rounded-full"
-          style={{ width: `${percent}%`, transform: 'translateY(-50%)' }}
-        />
-        <div
-          className="absolute top-1/2 h-3 w-3 rounded-full bg-white border border-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.7)]"
-          style={{ left: `calc(${percent}% - 6px)`, transform: 'translateY(-50%)' }}
-        />
-      </div>
-    );
-  };
-
-  const KnobField = ({
-    label,
-    value,
-    onChange,
-    min = 0,
-    max = 1,
-    step = 0.01,
-    info,
-  }: {
-    label: string;
-    value: number;
-    onChange: (v: number) => void;
-    min?: number;
-    max?: number;
-    step?: number;
-    info?: string;
-  }) => {
-    return (
-      <div className="flex flex-col items-center gap-2 text-center text-xs text-slate-300">
-        <div className="flex items-center gap-1">
-          <span className="font-semibold text-slate-100">{label}</span>
-          {info && (
-            <div className="group relative">
-              <Info className="h-3 w-3 text-cyan-300 cursor-help" />
-              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 bg-slate-900 text-[11px] text-slate-100 p-2 rounded border border-cyan-400/40 shadow-lg">
-                {info}
-              </div>
-            </div>
-          )}
-        </div>
-        <CircularKnob value={value} onChange={onChange} min={min} max={max} step={step} />
-        <RangeSlider
-          value={value}
-          onChange={onChange}
-          min={min}
-          max={max}
-          step={step}
-          ariaLabel={`${label} slider`}
-        />
-      </div>
-    );
-  };
 
   const Select = ({
     label,
@@ -393,12 +363,11 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       <label className="text-sm text-gray-300 flex items-center gap-1">
         {label}
         {info && (
-          <div className="group relative">
-            <Info className="h-3 w-3 text-gray-500 cursor-help" />
-            <div className="hidden group-hover:block absolute bottom-full left-0 mb-2 w-48 bg-gray-800 text-xs text-gray-200 p-2 rounded shadow-lg z-10">
-              {info}
-            </div>
-          </div>
+          <Tooltip content={info} placement="top" maxWidthClassName="w-48">
+            <span className="inline-flex items-center">
+              <Info className="h-3 w-3 text-gray-500 cursor-help" />
+            </span>
+          </Tooltip>
         )}
       </label>
       <select
@@ -417,12 +386,12 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
 
   const CollapsibleSection = ({
     id,
-    title,
+    heading,
     children,
     icon,
   }: {
     id: string;
-    title: string;
+    heading: string;
     children: React.ReactNode;
     icon?: string;
   }) => {
@@ -436,7 +405,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
         >
           <span className="text-white font-semibold flex items-center gap-2">
             {icon && <span>{icon}</span>}
-            {title}
+            {heading}
           </span>
           {isExpanded ? (
             <ChevronDown className="h-5 w-5 text-gray-400" />
@@ -450,102 +419,9 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
   };
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-gray-700 bg-gray-900/80 p-4 shadow-inner">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-gray-500">Global Groove Macros</p>
-            <p className="text-sm text-gray-300">Quickly tune the overall drummer feel before diving into details.</p>
-          </div>
-          {drummerType && (
-            <span className="text-[11px] px-2 py-1 rounded-full border border-gray-700 text-gray-300">
-              {drummerType.toUpperCase()}
-            </span>
-          )}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <KnobField
-            label="Groove Intensity"
-            value={options.density}
-            onChange={(v) => updateOption('density', v)}
-            info="Maps to pattern density & ghosting"
-          />
-          <KnobField
-            label="Pocket & Swing"
-            value={options.swing}
-            onChange={(v) => updateOption('swing', v)}
-            info="Push/pull feel across hats & snare"
-          />
-          <KnobField
-            label="Humanize"
-            value={options.humanize}
-            onChange={(v) => updateOption('humanize', v)}
-            info="Timing and velocity variation"
-          />
-        </div>
-      </div>
-
-      {/* Basic Parameters */}
-      <CollapsibleSection id="basic" title="Basic Parameters" icon="🎵">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-sm text-gray-300">BPM</label>
-            <input
-              type="number"
-              min={40}
-              max={240}
-              value={options.bpm}
-              onChange={(e) => updateOption('bpm', parseInt(e.target.value))}
-              className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-sm text-gray-300">Bars</label>
-            <input
-              type="number"
-              min={1}
-              max={64}
-              value={options.bars}
-              onChange={(e) => updateOption('bars', parseInt(e.target.value))}
-              className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-        </div>
-        
-        <Select
-          label="Style"
-          value={options.style}
-          options={['rock', 'funk', 'edm', 'hiphop', 'jazz', 'pop']}
-          onChange={(v) => updateOption('style', v)}
-          info="Musical genre/style for drum pattern"
-        />
-        
-        <Select
-          label="Section Label"
-          value={options.label}
-          options={['intro', 'verse', 'chorus', 'bridge', 'outro']}
-          onChange={(v) => updateOption('label', v)}
-          info="Song section for appropriate pattern density"
-        />
-        
-        <div className="grid grid-cols-2 gap-6">
-          <KnobField
-            label="Overall Density"
-            value={options.density}
-            onChange={(v) => updateOption('density', v)}
-            info="How busy/complex the overall pattern is"
-          />
-          <KnobField
-            label="Humanize"
-            value={options.humanize}
-            onChange={(v) => updateOption('humanize', v)}
-            info="Add human timing variations for realism"
-          />
-        </div>
-      </CollapsibleSection>
-
+    <div className="space-y-4">
       {/* Velocity Controls */}
-      <CollapsibleSection id="velocity" title="Velocity (Volume)" icon="🔊">
+      <CollapsibleSection id="velocity" heading="Velocity (Volume)" icon="🔊">
         <div className="space-y-3">
           <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3">
             <p className="text-xs text-blue-300 mb-2">Master Volume Controls</p>
@@ -564,11 +440,9 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
               />
             </div>
           </div>
-          
+
           <details className="bg-gray-700/30 rounded p-3">
-            <summary className="text-sm text-gray-300 cursor-pointer hover:text-white">
-              Individual Instrument Volumes
-            </summary>
+            <summary className="text-sm text-gray-300 cursor-pointer hover:text-white">Individual Instrument Volumes</summary>
             <div className="mt-3 grid grid-cols-3 gap-4">
               <KnobField label="Kick" value={options.kick_velocity} onChange={(v) => updateOption('kick_velocity', v)} />
               <KnobField label="Snare" value={options.snare_velocity} onChange={(v) => updateOption('snare_velocity', v)} />
@@ -582,10 +456,11 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Density Controls */}
-      <CollapsibleSection id="density" title="Density (Complexity)" icon="🎚️">
+      <CollapsibleSection id="density" heading="Instrument Density (Complexity)" icon="🎚️">
         <div className="space-y-3">
           <div className="bg-purple-500/10 border border-purple-500/30 rounded p-3">
-            <p className="text-xs text-purple-300 mb-2">Master Density Controls</p>
+            <p className="text-xs text-purple-300 mb-2">Master Density Controls (per-instrument)</p>
+            <p className="text-[11px] text-purple-200/80 mb-2">These affect drums/cymbals separately (overall density is in Global Groove Macros).</p>
             <div className="grid grid-cols-2 gap-3">
               <KnobField
                 label="Drums"
@@ -601,11 +476,9 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
               />
             </div>
           </div>
-          
+
           <details className="bg-gray-700/30 rounded p-3">
-            <summary className="text-sm text-gray-300 cursor-pointer hover:text-white">
-              Individual Cymbal Density
-            </summary>
+            <summary className="text-sm text-gray-300 cursor-pointer hover:text-white">Individual Cymbal Density</summary>
             <div className="mt-3 grid grid-cols-3 gap-4">
               <KnobField label="Hi-Hat" value={options.hihat_density} onChange={(v) => updateOption('hihat_density', v)} />
               <KnobField label="Ride" value={options.ride_density} onChange={(v) => updateOption('ride_density', v)} />
@@ -616,7 +489,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Fill Controls */}
-      <CollapsibleSection id="fills" title="Fill Options" icon="🥁">
+      <CollapsibleSection id="fills" heading="Fill Options" icon="🥁">
         <Select
           label="Fill Type"
           value={options.fill_preset}
@@ -624,14 +497,14 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
           onChange={(v) => updateOption('fill_preset', v)}
           info="Type of drum fill at transitions"
         />
-        
+
         <KnobField
           label="Fill Density"
           value={options.fill_density}
           onChange={(v) => updateOption('fill_density', v)}
           info="How complex/busy the fills are (0=sparse, 1=insane)"
         />
-        
+
         <Select
           label="Fill Location"
           value={options.fill_location}
@@ -639,7 +512,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
           onChange={(v) => updateOption('fill_location', v)}
           info="Where in the measure fills occur"
         />
-        
+
         <div>
           <label className="text-sm text-gray-300">Fill Frequency (every N bars)</label>
           <input
@@ -654,7 +527,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Groove Options */}
-      <CollapsibleSection id="groove" title="Groove Options" icon="🎼">
+      <CollapsibleSection id="groove" heading="Groove Options" icon="🎼">
         <Select
           label="Swing Preset"
           value={options.swing_preset}
@@ -662,14 +535,14 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
           onChange={(v) => updateOption('swing_preset', v)}
           info="Timing offset for swing feel"
         />
-        
+
         <KnobField
           label="Fine Swing Amount"
           value={options.swing}
           onChange={(v) => updateOption('swing', v)}
           info="Additional swing adjustment"
         />
-        
+
         <Select
           label="Velocity Pattern"
           value={options.vel_preset}
@@ -680,7 +553,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Hi-Hat Controls */}
-      <CollapsibleSection id="hihat" title="Hi-Hat Articulation" icon="🎩">
+      <CollapsibleSection id="hihat" heading="Hi-Hat Articulation" icon="🎩">
         <div className="flex flex-wrap gap-2 mb-3">
           {hatPresets.map((preset) => (
             <button
@@ -734,7 +607,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Ride Cymbal Controls */}
-      <CollapsibleSection id="ride" title="Ride Cymbal Dynamics" icon="🔔">
+      <CollapsibleSection id="ride" heading="Ride Cymbal Dynamics" icon="🔔">
         <div className="flex flex-wrap gap-2 mb-3">
           {ridePresets.map((preset) => (
             <button
@@ -788,7 +661,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Bass Line Reference */}
-      <CollapsibleSection id="bass" title="Low-End Lock" icon="🎸">
+      <CollapsibleSection id="bass" heading="Low-End Lock" icon="🎸">
         <div className="flex flex-wrap gap-2 mb-3">
           {bassLockPresets.map((preset) => (
             <button
@@ -837,7 +710,7 @@ export default function DrumOptionsPanel({ options, onChange, drummerType }: Pro
       </CollapsibleSection>
 
       {/* Additional Controls */}
-      <CollapsibleSection id="additional" title="Additional Controls" icon="⚙️">
+      <CollapsibleSection id="additional" heading="Additional Controls" icon="⚙️">
         <div className="grid grid-cols-2 gap-6">
           <KnobField
             label="Tom Usage"

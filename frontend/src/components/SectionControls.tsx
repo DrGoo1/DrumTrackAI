@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { Section } from './WebDAWApp';
 import { useRudimentBlockStore } from '../state/useRudimentBlockStore';
+import { Tooltip } from './Tooltip';
 
 interface SectionControlsProps {
   sections: Section[];
@@ -234,21 +235,23 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
                 )}
                 <div className="flex gap-0.5">
                   {!isEditing && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); startRename(section); }}
-                      className="px-1 py-0 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
-                      title="Rename"
-                    >
-                      ✏️
-                    </button>
+                    <Tooltip content="Rename" placement="top" maxWidthClassName="w-24">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); startRename(section); }}
+                        className="px-1 py-0 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded"
+                      >
+                        ✏️
+                      </button>
+                    </Tooltip>
                   )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteSection(section.id); }}
-                    className="px-1 py-0 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
-                    title="Delete"
-                  >
-                    🗑️
-                  </button>
+                  <Tooltip content="Delete" placement="top" maxWidthClassName="w-24">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteSection(section.id); }}
+                      className="px-1 py-0 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                    >
+                      🗑️
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -303,22 +306,24 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
 
                   {/* Action buttons */}
                   <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => splitSection(section.id, currentTime)}
-                      disabled={currentTime <= section.start || currentTime >= section.end}
-                      className="flex-1 px-2 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-xs rounded"
-                      title="Split at playhead position"
-                    >
-                      ✂️ Split Here
-                    </button>
-                    {idx < sections.length - 1 && (
+                    <Tooltip content="Split at playhead position" placement="top" maxWidthClassName="w-56">
                       <button
-                        onClick={() => mergeSections(section.id, sections[idx + 1].id)}
-                        className="flex-1 px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded"
-                        title="Merge with next section"
+                        onClick={() => splitSection(section.id, currentTime)}
+                        disabled={currentTime <= section.start || currentTime >= section.end}
+                        className="flex-1 px-2 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-xs rounded"
                       >
-                        🔗 Merge →
+                        ✂️ Split Here
                       </button>
+                    </Tooltip>
+                    {idx < sections.length - 1 && (
+                      <Tooltip content="Merge with next section" placement="top" maxWidthClassName="w-52">
+                        <button
+                          onClick={() => mergeSections(section.id, sections[idx + 1].id)}
+                          className="flex-1 px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded"
+                        >
+                          🔗 Merge →
+                        </button>
+                      </Tooltip>
                     )}
                   </div>
                 </div>

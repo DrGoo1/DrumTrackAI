@@ -5,6 +5,7 @@ import React from 'react'
 import { Play, Pause, Square, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
 import { useDawStore } from '../../state/dawStore'
 import * as Tone from 'tone'
+import { Tooltip } from '../Tooltip'
 
 export default function TransportControls() {
   const { 
@@ -70,41 +71,45 @@ export default function TransportControls() {
     <div className="flex items-center gap-4">
       {/* Main transport buttons */}
       <div className="flex items-center gap-2">
-        <button
-          onClick={handleRewind}
-          className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
-          title="Rewind 10s"
-        >
-          <SkipBack size={16} />
-        </button>
+        <Tooltip content="Rewind 10s" placement="top" maxWidthClassName="w-28">
+          <button
+            onClick={handleRewind}
+            className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
+          >
+            <SkipBack size={16} />
+          </button>
+        </Tooltip>
 
-        <button
-          onClick={handlePlay}
-          className={`p-3 rounded-full ${
-            playing 
-              ? 'bg-red-600 hover:bg-red-700' 
-              : 'bg-green-600 hover:bg-green-700'
-          } text-white`}
-          title={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? <Pause size={20} /> : <Play size={20} />}
-        </button>
+        <Tooltip content={playing ? 'Pause' : 'Play'} placement="top" maxWidthClassName="w-20">
+          <button
+            onClick={handlePlay}
+            className={`p-3 rounded-full ${
+              playing 
+                ? 'bg-red-600 hover:bg-red-700' 
+                : 'bg-green-600 hover:bg-green-700'
+            } text-white`}
+          >
+            {playing ? <Pause size={20} /> : <Play size={20} />}
+          </button>
+        </Tooltip>
 
-        <button
-          onClick={handleStop}
-          className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
-          title="Stop"
-        >
-          <Square size={16} />
-        </button>
+        <Tooltip content="Stop" placement="top" maxWidthClassName="w-20">
+          <button
+            onClick={handleStop}
+            className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
+          >
+            <Square size={16} />
+          </button>
+        </Tooltip>
 
-        <button
-          onClick={handleFastForward}
-          className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
-          title="Fast Forward 10s"
-        >
-          <SkipForward size={16} />
-        </button>
+        <Tooltip content="Fast Forward 10s" placement="top" maxWidthClassName="w-36">
+          <button
+            onClick={handleFastForward}
+            className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded"
+          >
+            <SkipForward size={16} />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Time display */}
@@ -114,17 +119,18 @@ export default function TransportControls() {
 
       {/* Loop controls */}
       <div className="flex items-center gap-2">
-        <button
-          onClick={handleLoopToggle}
-          className={`p-2 rounded ${
-            loopEnabled 
-              ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-              : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-          }`}
-          title="Toggle Loop"
-        >
-          <RotateCcw size={16} />
-        </button>
+        <Tooltip content="Toggle Loop" placement="top" maxWidthClassName="w-28">
+          <button
+            onClick={handleLoopToggle}
+            className={`p-2 rounded ${
+              loopEnabled 
+                ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
+          >
+            <RotateCcw size={16} />
+          </button>
+        </Tooltip>
 
         {loopEnabled && (
           <div className="text-xs text-slate-400">

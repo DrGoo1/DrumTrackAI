@@ -1,8 +1,10 @@
- # drumtrackai_api_server_clean.py
-import os, asyncio, logging, mimetypes, time, shutil, json, subprocess, math
+  # drumtrackai_api_server_clean.py
+import os, asyncio, logging, mimetypes, time, shutil, json, subprocess, math, uuid
 import sqlite3
 from typing import Optional
 from pathlib import Path
+
+import urllib.request
 
 # DISABLED: numpy causes heap corruption (exit code 3221226356) on Windows
 # import numpy as np
@@ -53,7 +55,7 @@ from drummer_mapping_service import get_drummer_service
 from song_lookup_service import search_song
 
 # Import drum generation API (Drum Builder v2.0 integrated)
-from drum_generation_api import generate_drums, DrumGenerationConfig, list_egmd_phrases
+from drum_generation_api import generate_drums, DrumGenerationConfig, list_egmd_phrases, list_egmd_style_groups
 from backend.drum_generation.brain_elements import get_brain_elements
 from backend.drum_generation.drum_generation_config import (
     DrumBrainConfig,
@@ -65,11 +67,28 @@ from backend.beatbox_translator import (
     translate_beatbox,
     taps_to_translation,
 )
+
+from backend.render_to_plugin_midi import render_articulated_notes_to_midi
 from backend.beatprompt_engine import (
     normalize_sections,
     render_sections_to_hits,
     serialize_sections,
 )
+
+from backend.groove_catalog import GrooveCatalog
+from backend.fill_library import get_fill_pattern
+from backend.dcsmpiano.dcsm_drumtrack_schema import instrument_id_to_midi_pitch, make_note_id
+
+# Groove Coach (safe import; does not require heavy deps)
+try:
+    from backend.groove_coach_engine import build_groove_coach_response, list_available_goals, apply_config_patch
+    GROOVE_COACH_AVAILABLE = True
+except Exception as e:
+    GROOVE_COACH_AVAILABLE = False
+    build_groove_coach_response = None  # type: ignore
+    list_available_goals = None  # type: ignore
+    apply_config_patch = None  # type: ignore
+    LOG.warning("Groove coach not available: %s", e)
 
 # Admin DB service for drummer personas (optional; fail-soft if unavailable)
 try:
@@ -274,8 +293,140 @@ PORT = int(os.getenv("API_PORT", "8000"))
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = (BASE_DIR / "uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MVSEP_DIR = (UPLOAD_DIR / "mvsep")
+MVSEP_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR = BASE_DIR / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
+
+# ---- MVSEP job manager (Mode A) ----
+MVSEP_JOBS = {}
+
+def _mvsep_safe_path(p: Path) -> Optional[Path]:
+    try:
+        rp = p.resolve()
+        if not str(rp).startswith(str(MVSEP_DIR.resolve())):
+            return None
+        return rp
+    except Exception:
+        return None
+
+def _upload_safe_path(p: Path) -> Optional[Path]:
+    try:
+        rp = p.resolve()
+        if not str(rp).startswith(str(UPLOAD_DIR.resolve())):
+            return None
+        return rp
+    except Exception:
+        return None
+
+async def _mvsep_run_job(job_id: str, audio_path: Path, out_dir: Path):
+    # Lazy import so backend can still boot without admin deps.
+    try:
+        from admin.services.mvsep_service import MVSepService
+    except Exception as e:
+        MVSEP_JOBS[job_id]["status"] = "failed"
+        MVSEP_JOBS[job_id]["error"] = f"mvsep_service_import_failed: {e}"
+        return
+
+    api_key = str(os.getenv("MVSEP_API_KEY", "")).strip()
+    if not api_key:
+        try:
+            from admin.utils.api_key_manager import get_api_key_manager
+            api_key = str(get_api_key_manager().get_key("MVSEP_API_KEY") or "").strip()
+        except Exception:
+            api_key = ""
+    if not api_key:
+        MVSEP_JOBS[job_id]["status"] = "failed"
+        MVSEP_JOBS[job_id]["error"] = "MVSEP_API_KEY not set"
+        return
+
+    MVSEP_JOBS[job_id]["status"] = "running"
+    MVSEP_JOBS[job_id]["progress"] = 0.01
+    MVSEP_JOBS[job_id]["message"] = "starting"
+
+    def _progress(p: float, msg: str):
+        try:
+            MVSEP_JOBS[job_id]["progress"] = float(p)
+            MVSEP_JOBS[job_id]["message"] = str(msg)
+        except Exception:
+            pass
+
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        svc = MVSepService(api_key=api_key)
+        stems = await svc.process_audio_file(
+            input_file=str(audio_path),
+            output_dir=str(out_dir),
+            progress_callback=_progress,
+            keep_original_mix=True,
+            keep_drum_stem=True,
+        )
+        MVSEP_JOBS[job_id]["status"] = "done"
+        MVSEP_JOBS[job_id]["progress"] = 1.0
+        MVSEP_JOBS[job_id]["message"] = "done"
+        MVSEP_JOBS[job_id]["stems"] = stems or {}
+    except Exception as e:
+        MVSEP_JOBS[job_id]["status"] = "failed"
+        MVSEP_JOBS[job_id]["error"] = str(e)
+
+
+async def api_mvsep_start(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    key = data.get("key")
+    if not key:
+        return web.json_response({"ok": False, "error": "key required"}, status=400)
+
+    audio_path = _upload_safe_path((UPLOAD_DIR / str(key)))
+    if not audio_path or not audio_path.exists():
+        return web.json_response({"ok": False, "error": "audio not found"}, status=404)
+
+    job_id = str(uuid.uuid4())
+    out_dir = _mvsep_safe_path(MVSEP_DIR / job_id)
+    if not out_dir:
+        return web.json_response({"ok": False, "error": "invalid mvsep output dir"}, status=500)
+
+    MVSEP_JOBS[job_id] = {
+        "job_id": job_id,
+        "key": str(key),
+        "status": "queued",
+        "progress": 0.0,
+        "message": "queued",
+        "stems": None,
+        "error": None,
+        "created_at": time.time(),
+    }
+
+    asyncio.create_task(_mvsep_run_job(job_id, audio_path, out_dir))
+    return web.json_response({"ok": True, "job_id": job_id})
+
+
+async def api_mvsep_status(request: web.Request):
+    job_id = request.query.get("job_id")
+    if not job_id:
+        return web.json_response({"ok": False, "error": "job_id required"}, status=400)
+    job = MVSEP_JOBS.get(str(job_id))
+    if not job:
+        return web.json_response({"ok": False, "error": "job not found"}, status=404)
+    return web.json_response({"ok": True, **job})
+
+
+async def api_mvsep_stems(request: web.Request):
+    job_id = request.query.get("job_id")
+    if not job_id:
+        return web.json_response({"ok": False, "error": "job_id required"}, status=400)
+    job = MVSEP_JOBS.get(str(job_id))
+    if not job:
+        return web.json_response({"ok": False, "error": "job not found"}, status=404)
+    stems = job.get("stems")
+    if not isinstance(stems, dict):
+        return web.json_response({"ok": False, "error": "stems not ready"}, status=409)
+    return web.json_response({"ok": True, "job_id": str(job_id), "stems": stems})
+
+KITS_ROOT = (BASE_DIR / "frontend" / "public" / "kits")
 
 # Sample DB + sample library configuration (Docker/cloud friendly)
 # - DB path can be mounted at /data/db/drumtrackai.db
@@ -287,6 +438,19 @@ SAMPLE_PATH_MAP_TO = os.getenv("SAMPLE_PATH_MAP_TO")
 
 BRAIN_CONFIG_DIR = BASE_DIR / "brain_configs"
 BRAIN_CONFIG_DIR.mkdir(exist_ok=True)
+
+GROOVE_MANIFEST_BANG_PATH = BASE_DIR / "Drum_Education" / "extracted" / "BangTheDrumSchool_manifest.jsonl"
+GROOVE_MANIFEST_EGMD_PATH = BASE_DIR / "Drum_Education" / "extracted" / "EGMD_manifest.jsonl"
+GROOVE_MANIFEST_RUDIMENTS_PATH = BASE_DIR / "Drum_Education" / "extracted" / "RUDIMENTS_manifest.jsonl"
+GROOVE_MANIFEST_DRUM_PATTERNS_PATH = BASE_DIR / "Drum_Education" / "extracted" / "DRUM_PATTERNS_manifest.jsonl"
+_GROOVE_CATALOG = GrooveCatalog(
+    [
+        GROOVE_MANIFEST_BANG_PATH,
+        GROOVE_MANIFEST_EGMD_PATH,
+        GROOVE_MANIFEST_RUDIMENTS_PATH,
+        GROOVE_MANIFEST_DRUM_PATTERNS_PATH,
+    ]
+)
 
 
 def _brain_config_file(section_id: str) -> Path:
@@ -466,6 +630,17 @@ async def api_list_egmd_phrases(request: web.Request):
     return web.json_response({"items": items})
 
 
+async def api_list_egmd_style_groups(request: web.Request):
+    """List EGMD style_group values available in the training DB."""
+    limit_raw = request.query.get("limit")
+    try:
+        limit = int(limit_raw) if limit_raw is not None and str(limit_raw).strip() != "" else 200
+    except Exception:
+        limit = 200
+    items = list_egmd_style_groups(limit=limit)
+    return web.json_response({"items": items})
+
+
 async def api_drum_samples(request: web.Request) -> web.Response:
     if not SAMPLE_DB_PATH.exists():
         return web.json_response({"error": "sample db not found", "db": str(SAMPLE_DB_PATH)}, status=404)
@@ -556,6 +731,228 @@ async def api_drum_sample_audio(request: web.Request) -> web.StreamResponse:
             conn.close()
     except Exception as e:
         LOG.error(f"api_drum_sample_audio failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+def _safe_kit_id(raw: str) -> str:
+    return "".join(ch for ch in str(raw or "") if ch.isalnum() or ch in ("-", "_"))
+
+
+def _pick_sample_id_by_prefix(prefix: str) -> Optional[str]:
+    try:
+        if not SAMPLE_DB_PATH.exists():
+            return None
+
+        raw_prefix = str(prefix or "")
+        if not raw_prefix:
+            return None
+
+        # DB file_path values may use single backslashes, double backslashes, or forward slashes.
+        # Normalize and try multiple variants so kit-pack manifests don't silently fall back.
+        candidates = []
+        candidates.append(raw_prefix)
+        candidates.append(raw_prefix.replace("\\\\", "\\"))
+        candidates.append(raw_prefix.replace("\\", "/"))
+        candidates.append(raw_prefix.replace("/", "\\"))
+
+        # De-dup while preserving order.
+        seen = set()
+        prefixes = []
+        for c in candidates:
+            if c in seen:
+                continue
+            seen.add(c)
+            prefixes.append(c)
+
+        conn = _samples_db_connect()
+        try:
+            cur = conn.cursor()
+            for pfx in prefixes:
+                like = f"{pfx}%"
+                cur.execute(
+                    "SELECT id FROM drum_samples WHERE file_path LIKE ? ORDER BY id LIMIT 1",
+                    (like,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return str(row[0])
+            return None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _url_for_sample_id(sample_id: Optional[str], fallback_url: str) -> str:
+    if sample_id:
+        safe_id = "".join(ch for ch in str(sample_id) if ch.isdigit())
+        if safe_id:
+            return f"/api/drum-samples/{safe_id}/audio"
+    return fallback_url
+
+
+async def api_list_kits(_: web.Request) -> web.Response:
+    try:
+        if not KITS_ROOT.exists() or not KITS_ROOT.is_dir():
+            kits = []
+            kits.append({
+                "kitId": "sneap_erkan_local_v1",
+                "name": "Andy Sneap + Erkan (Local Samples)",
+                "version": "v1",
+            })
+            return web.json_response({"kits": kits, "kitsRoot": str(KITS_ROOT)})
+
+        kits = []
+        for entry in sorted(KITS_ROOT.iterdir(), key=lambda p: p.name.lower()):
+            if not entry.is_dir():
+                continue
+            manifest_path = entry / "manifest.json"
+            if not manifest_path.exists() or not manifest_path.is_file():
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                kits.append({
+                    "kitId": manifest.get("kitId") or entry.name,
+                    "name": manifest.get("name") or entry.name,
+                    "version": manifest.get("version") or "v1",
+                })
+            except Exception:
+                kits.append({"kitId": entry.name, "name": entry.name, "version": "v1"})
+
+        kits.append({
+            "kitId": "sneap_erkan_local_v1",
+            "name": "Andy Sneap + Erkan (Local Samples)",
+            "version": "v1",
+        })
+
+        return web.json_response({"kits": kits, "kitsRoot": str(KITS_ROOT)})
+    except Exception as e:
+        LOG.error(f"api_list_kits failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_get_kit_manifest(request: web.Request) -> web.Response:
+    try:
+        raw_kit_id = request.match_info.get("kit_id")
+        kit_id = _safe_kit_id(raw_kit_id)
+        if not kit_id:
+            return web.json_response({"error": "kit_id required"}, status=400)
+
+        if kit_id == "sneap_erkan_local_v1":
+            fallback = "/kits/stub_kit_v1/samples/one.wav"
+
+            # NOTE: The sample DB stores forward-slash paths (e.g. 'E:/Drum Samples/...').
+            # Use that form here so the prefix LIKE query succeeds on Windows.
+            kick_id = _pick_sample_id_by_prefix("E:/Drum Samples/Kick Samples/Andy Sneap Kick")
+            snare_id = _pick_sample_id_by_prefix("E:/Drum Samples/Snare Samples/Andy Sneap Snare")
+            tom_high_id = _pick_sample_id_by_prefix("E:/Drum Samples/Tom2 (high)/Andy Sneap Tom1")
+            tom_mid_id = _pick_sample_id_by_prefix("E:/Drum Samples/Tom3 (medium)/Andy Sneap Tom2")
+            tom_floor_id = _pick_sample_id_by_prefix("E:/Drum Samples/Tom4 (low)/Andy Sneap Tom3")
+            hat_id = _pick_sample_id_by_prefix("E:/Drum Samples/Hihat Samples/Erkan Hihat/Zildjian Avedis 14 New Beat Hihat")
+            crash_1_id = _pick_sample_id_by_prefix("E:/Drum Samples/Crash Samples/Erkan Crash/Istanbul Radiant 16 Crash")
+            crash_2_id = _pick_sample_id_by_prefix("E:/Drum Samples/Crash Samples/Erkan Crash/Masterwork Custom 18 Crash")
+            china_id = _pick_sample_id_by_prefix("E:/Drum Samples/Effect Cymbal Samples/China Samples/Erkan China/Masterwork Custom 18 China")
+            bell_id = _pick_sample_id_by_prefix("E:/Drum Samples/Effect Cymbal Samples/Bell Samples/Erkan Bell/Homemade 7 Bell")
+
+            kick_url = _url_for_sample_id(kick_id, fallback)
+            snare_url = _url_for_sample_id(snare_id, fallback)
+            tom_high_url = _url_for_sample_id(tom_high_id, fallback)
+            tom_mid_url = _url_for_sample_id(tom_mid_id, fallback)
+            tom_floor_url = _url_for_sample_id(tom_floor_id, fallback)
+            hat_url = _url_for_sample_id(hat_id, fallback)
+            crash_1_url = _url_for_sample_id(crash_1_id, fallback)
+            crash_2_url = _url_for_sample_id(crash_2_id, fallback)
+            china_url = _url_for_sample_id(china_id, fallback)
+            bell_url = _url_for_sample_id(bell_id, fallback)
+
+            manifest = {
+                "kitId": kit_id,
+                "name": "Andy Sneap + Erkan (Local Samples)",
+                "version": "v1",
+                "mics": [
+                    {"id": "close", "label": "Close", "defaultGainDb": 0},
+                    {"id": "oh", "label": "Overheads", "defaultGainDb": -6},
+                    {"id": "room", "label": "Room", "defaultGainDb": -10},
+                ],
+                "chokeGroups": {
+                    "cymbals": ["crash_1", "crash_2", "crash_china"],
+                    "hihat": ["hihat_closed", "hihat_open", "hihat_pedal"],
+                },
+                "articulations": {
+                    "kick": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [kick_url]}]}
+                        }
+                    },
+                    "snare_center": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [snare_url]}]}
+                        }
+                    },
+                    "tom_high": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [tom_high_url]}]}
+                        }
+                    },
+                    "tom_mid": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [tom_mid_url]}]}
+                        }
+                    },
+                    "tom_floor": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [tom_floor_url]}]}
+                        }
+                    },
+                    "hihat_closed": {
+                        "mics": {
+                            "close": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [hat_url]}]}
+                        }
+                    },
+                    "ride_bell": {
+                        "mics": {
+                            "oh": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [bell_url]}]}
+                        }
+                    },
+                    "crash_1": {
+                        "mics": {
+                            "oh": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [crash_1_url]}]},
+                            "room": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [crash_1_url]}]},
+                        }
+                    },
+                    "crash_2": {
+                        "mics": {
+                            "oh": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [crash_2_url]}]},
+                            "room": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [crash_2_url]}]},
+                        }
+                    },
+                    "crash_china": {
+                        "mics": {
+                            "oh": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [china_url]}]},
+                            "room": {"velocityLayers": [{"min": 1, "max": 127, "roundRobin": [china_url]}]},
+                        }
+                    },
+                },
+                "mixDefaults": {
+                    "masterGainDb": -6,
+                    "micGainsDb": {"close": 0, "oh": -6, "room": -10},
+                },
+            }
+            return web.json_response(manifest)
+
+        manifest_path = (KITS_ROOT / kit_id / "manifest.json").resolve()
+        if not manifest_path.exists() or not manifest_path.is_file():
+            return web.json_response({"error": "manifest not found", "kitId": kit_id}, status=404)
+
+        if not _is_under_root(manifest_path, KITS_ROOT):
+            return web.json_response({"error": "kit path not allowed"}, status=403)
+
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        return web.json_response(manifest)
+    except Exception as e:
+        LOG.error(f"api_get_kit_manifest failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 # Auto-detect Rust binary if environment variable not explicitly set
@@ -895,66 +1292,112 @@ def compute_waveform(path: Path, max_points: int = 3000):
     Returns separate L/R channel peaks for stereo visualization.
     Python libraries (numpy/soundfile) cause heap corruption (exit code 3221226356) - DO NOT USE.
     """
-    # ALWAYS use Rust - Python libs cause heap corruption
-    if USE_RUST:
-        try:
-            result = run_audio_core(["peaks", str(path), "--max-points", str(max_points)])
-            result["key"] = str(path.relative_to(UPLOAD_DIR))
-            
-            # ALWAYS create stereo waveform data (L/R channels) for visualization
-            # Rust returns mono peaks - create stereo by duplicating
-            if "peaks" in result:
-                peaks = result["peaks"]
-                # Create stereo channels - duplicate mono to both L/R
-                result["peaksL"] = list(peaks)  # Left channel
-                result["peaksR"] = list(peaks)  # Right channel  
-                result["stereo"] = True
-                LOG.info(f"✅ Rust waveform with STEREO visualization data for {path.name}")
-            
-            return result
-        except Exception as e:
-            LOG.error(f"❌ Rust waveform failed for {path.name}: {e}")
-            # Fallback to mock stereo data if Rust fails
-            mock_peaks = [0.5 + 0.3 * ((i % 20) / 20.0) for i in range(1000)]
-            return {
-                "sr": 44100,
-                "peaks": list(mock_peaks),
-                "peaksL": list(mock_peaks),
-                "peaksR": list(mock_peaks),
-                "stereo": True,
-                "key": str(path.relative_to(UPLOAD_DIR)),
-                "duration": 30.0
-            }
-    else:
-        # Rust not available - DO NOT use Python libraries, they cause heap corruption
-        LOG.warning(f"⚠️ Rust not available, using mock stereo waveform for {path.name}")
-        mock_peaks = [0.5 + 0.3 * ((i % 20) / 20.0) for i in range(1000)]
-        return {
-            "sr": 44100,
-            "peaks": list(mock_peaks),
-            "peaksL": list(mock_peaks),
-            "peaksR": list(mock_peaks),
-            "stereo": True,
-            "key": str(path.relative_to(UPLOAD_DIR)),
-            "duration": 30.0
-        }
+    if not USE_RUST:
+        raise Exception("waveform_requires_rust")
+
+    result = run_audio_core(["peaks", str(path), "--max-points", str(max_points)])
+    result["key"] = str(path.relative_to(UPLOAD_DIR))
+    peaks_l = result.get("peaksL")
+    peaks_r = result.get("peaksR")
+    if isinstance(peaks_l, list) and isinstance(peaks_r, list) and len(peaks_l) and len(peaks_r):
+        result["stereo"] = True
+    elif "peaks" in result:
+        peaks = result["peaks"]
+        result["peaksL"] = list(peaks)
+        result["peaksR"] = list(peaks)
+        result["stereo"] = True
+    return result
 
 # ---------- Routes ----------
 async def healthz(_):
     return web.json_response(
         {
             "ok": True,
-            "ts": time.time(),
-            "drum_generation": {
-                "requests": int(DRUM_GEN_STATS.get("requests", 0) or 0),
-                "ok": int(DRUM_GEN_STATS.get("ok", 0) or 0),
-                "fallback": int(DRUM_GEN_STATS.get("fallback", 0) or 0),
-                "last_backend": DRUM_GEN_STATS.get("last_backend"),
-                "last_fallback_reason": DRUM_GEN_STATS.get("last_fallback_reason"),
-                "last_fallback_ts": DRUM_GEN_STATS.get("last_fallback_ts"),
-            },
+            "service": "dcsm_backend",
+            "version": "1.1.17",
+            "time": time.time(),
+            "stats": DRUM_GEN_STATS,
         }
     )
+
+
+async def api_llm_status(_request: web.Request):
+    provider = str(os.getenv("LLM_PROVIDER", "")).strip()
+    base_url = str(os.getenv("LOCAL_LLM_URL", "")).strip().rstrip("/")
+
+    def _post_json(url: str, payload: dict, timeout_s: float = 2.5) -> dict:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        return json.loads(raw)
+
+    out = {
+        "ok": True,
+        "llm_provider": provider,
+        "local_llm_url": base_url,
+        "checks": {},
+    }
+
+    if provider != "local_service":
+        out["ok"] = False
+        out["error"] = "LLM_PROVIDER is not 'local_service'"
+        return web.json_response(out)
+
+    if not base_url:
+        out["ok"] = False
+        out["error"] = "LOCAL_LLM_URL is not set"
+        return web.json_response(out)
+
+    payload = {
+        "cfg": {
+            "style": "rock",
+            "tempos": [120],
+            "timeSignature": [4, 4],
+            "humanizeAmount": 0.7,
+            "ghostNoteAmount": 0.5,
+            "swingAmount": 0.1,
+            "intensity": 0.7,
+            "variation": 0.6,
+            "songSections": [{"name": "verse", "bars": 4}, {"name": "chorus", "bars": 4}],
+            "chorusRidePreference": 0.5,
+        },
+        "songmap_summary": {"bars": 8, "sections": []},
+        "drummer_profile": {"preferred_feel": "straight"},
+    }
+
+    try:
+        t0 = time.time()
+        data = _post_json(f"{base_url}/v1/performance_spec", payload)
+        out["checks"]["performance_spec"] = {
+            "ok": bool(isinstance(data, dict) and data.get("ok") is True),
+            "ms": int((time.time() - t0) * 1000),
+        }
+        if isinstance(data, dict) and isinstance(data.get("metadata"), dict):
+            out["checks"]["performance_spec"]["backend"] = data["metadata"].get("backend")
+    except Exception as e:
+        out["checks"]["performance_spec"] = {"ok": False, "error": str(e)}
+        out["ok"] = False
+
+    try:
+        t0 = time.time()
+        data = _post_json(f"{base_url}/v1/song_roadmap", payload)
+        out["checks"]["song_roadmap"] = {
+            "ok": bool(isinstance(data, dict) and data.get("ok") is True),
+            "ms": int((time.time() - t0) * 1000),
+        }
+        if isinstance(data, dict) and isinstance(data.get("metadata"), dict):
+            out["checks"]["song_roadmap"]["backend"] = data["metadata"].get("backend")
+    except Exception as e:
+        out["checks"]["song_roadmap"] = {"ok": False, "error": str(e)}
+        out["ok"] = False
+
+    return web.json_response(out)
 
 async def upload(request: web.Request):
     try:
@@ -977,24 +1420,32 @@ async def upload(request: web.Request):
 
         LOG.info(f"File uploaded successfully: {key}")
 
-        # Generate waveform data - skip for now to avoid crashes
-        # Just return success with minimal data
-        waveform = {
-            "sr": 44100,
-            "peaks": [0.5] * 1000,  # Simple mock data
-            "key": key,
-            "duration": 30.0
-        }
+        waveform = compute_waveform(dest, max_points=1000)
 
-        return web.json_response({
+        payload = {
             "success": True,
             "key": key,
             "file_id": key,
-            "waveform": waveform,
-            "message": "File uploaded successfully"
-        })
+            "message": "File uploaded successfully",
+        }
+        if waveform:
+            payload["waveform"] = waveform
+        return web.json_response(payload)
     except Exception as e:
         LOG.error(f"Upload failed: {e}", exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_render_plugin_midi(request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    try:
+        result = render_articulated_notes_to_midi(payload)
+        return web.json_response(result)
+    except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def waveform(request: web.Request):
@@ -1004,21 +1455,14 @@ async def waveform(request: web.Request):
     path = (UPLOAD_DIR / key).resolve()
     if not path.exists() or not str(path).startswith(str(UPLOAD_DIR)):
         return web.json_response({"error": "not found"}, status=404)
+    max_points = int(request.query.get("max_points", "3000"))
     
     try:
-        # Try to compute waveform, but use mock data if it fails
-        wf = compute_waveform(path)
+        wf = compute_waveform(path, max_points=max_points)
         return web.json_response(wf)
     except Exception as e:
-        LOG.warning(f"Waveform generation failed for {key}: {e}, returning mock data")
-        # Return mock waveform data instead of error
-        mock_wf = {
-            "sr": 44100,
-            "peaks": [0.5] * 1000,
-            "key": key,
-            "duration": 30.0
-        }
-        return web.json_response(mock_wf)
+        LOG.warning(f"Waveform generation failed for {key}: {e}")
+        return web.json_response({"error": "waveform_failed", "detail": str(e)}, status=500)
 
 async def beatbox_translate(request: web.Request):
     """Translate a beatbox/vocal percussion recording into a drum groove."""
@@ -1288,6 +1732,24 @@ async def list_drummer_personas(request: web.Request):
     return web.json_response({"source": source, "personas": personas})
 
 
+async def list_drummer_presets(request: web.Request):
+    profile_type = str(request.query.get("profileType") or request.query.get("profile_type") or "").strip().lower()
+    if not profile_type:
+        return web.json_response({"ok": False, "error": "profileType required"}, status=400)
+
+    if not ADMIN_DB_AVAILABLE:
+        return web.json_response({"ok": True, "source": "unavailable", "profileType": profile_type, "items": []})
+
+    try:
+        db = get_admin_db_service()
+        db.initialize()
+        items = db.list_drummer_presets(profile_type)
+        return web.json_response({"ok": True, "source": "admin_db", "profileType": profile_type, "items": items})
+    except Exception as exc:
+        LOG.warning(f"Unable to list drummer presets: {exc}")
+        return web.json_response({"ok": True, "source": "error", "profileType": profile_type, "items": []})
+
+
 async def beatbox_tap_input(request: web.Request):
     """Accept structured pad hits from the frontend and render a groove."""
     try:
@@ -1425,10 +1887,735 @@ async def beatprompt_render(request: web.Request):
 
         return web.json_response(response_payload)
 
+
+async def api_grooves_search(request: web.Request):
+    q = str(request.query.get("q") or "").strip()
+    tags_raw = str(request.query.get("tags") or "").strip()
+    sources_raw = str(request.query.get("sources") or "").strip()
+    style_group = str(request.query.get("style_group") or "").strip().lower()
+    sort = str(request.query.get("sort") or "").strip().lower()
+
+    complexity_min_raw = str(request.query.get("complexity_min") or "").strip()
+    complexity_max_raw = str(request.query.get("complexity_max") or "").strip()
+    try:
+        complexity_min = float(complexity_min_raw) if complexity_min_raw else None
+    except Exception:
+        complexity_min = None
+    try:
+        complexity_max = float(complexity_max_raw) if complexity_max_raw else None
+    except Exception:
+        complexity_max = None
+
+    # Drum-terminology filters (more interpretable than a single complexity score)
+    def _qfloat(name: str) -> float | None:
+        raw = str(request.query.get(name) or "").strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except Exception:
+            return None
+
+    hits_per_bar_min = _qfloat("hits_per_bar_min")
+    hits_per_bar_max = _qfloat("hits_per_bar_max")
+    active_instruments_min = _qfloat("active_instruments_min")
+    active_instruments_max = _qfloat("active_instruments_max")
+    offbeat_ratio_min = _qfloat("offbeat_ratio_min")
+    offbeat_ratio_max = _qfloat("offbeat_ratio_max")
+    snare_backbeat_ratio_min = _qfloat("snare_backbeat_ratio_min")
+    snare_backbeat_ratio_max = _qfloat("snare_backbeat_ratio_max")
+
+    snare_share_min = _qfloat("snare_share_min")
+    snare_share_max = _qfloat("snare_share_max")
+
+    kick_snare_share_min = _qfloat("kick_snare_share_min")
+    kick_snare_share_max = _qfloat("kick_snare_share_max")
+    cymbal_share_min = _qfloat("cymbal_share_min")
+    cymbal_share_max = _qfloat("cymbal_share_max")
+    tom_share_min = _qfloat("tom_share_min")
+    tom_share_max = _qfloat("tom_share_max")
+
+    limit_raw = str(request.query.get("limit") or "10").strip()
+
+    try:
+        limit = max(1, min(50, int(limit_raw)))
+    except Exception:
+        limit = 10
+
+    tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+    sources = [s.strip() for s in sources_raw.split(",") if s.strip()] if sources_raw else []
+
+    is_browse_mode = (not q) and (not tags)
+    egmd_only = (len(sources) == 1 and str(sources[0]).strip().lower() == "egmd")
+
+    # Important: style_group filtering must happen before applying the final limit.
+    # GrooveCatalog.search() applies its own ordering/scoring, so if we limit first,
+    # we may accidentally exclude all candidates for the requested style_group.
+    internal_limit = limit
+    if style_group:
+        # EGMD manifests are ordered by source/drummer/session; a given style_group (e.g. jazz)
+        # may be far beyond the first few thousand rows. Pull a much larger candidate set so
+        # style filtering doesn't accidentally yield zero results.
+        internal_limit = max(limit, 50000)
+    elif is_browse_mode and egmd_only:
+        # In browse mode, the EGMD manifest is grouped by style_detail, so the first N rows can all be
+        # the same groove number (e.g. many variants of "Soul Groove 10"). Pull a larger candidate
+        # set and diversify below.
+        internal_limit = max(limit, 50000)
+
+    if complexity_min is not None or complexity_max is not None or sort in {"complexity_asc", "complexity_desc"}:
+        # Complexity filtering/sorting requires a broad candidate pool so we don't miss low-complexity
+        # grooves that appear later in the manifest ordering.
+        internal_limit = max(internal_limit, 50000)
+
+    if (
+        hits_per_bar_min is not None
+        or hits_per_bar_max is not None
+        or active_instruments_min is not None
+        or active_instruments_max is not None
+        or offbeat_ratio_min is not None
+        or offbeat_ratio_max is not None
+        or snare_backbeat_ratio_min is not None
+        or snare_backbeat_ratio_max is not None
+        or snare_share_min is not None
+        or snare_share_max is not None
+        or kick_snare_share_min is not None
+        or kick_snare_share_max is not None
+        or cymbal_share_min is not None
+        or cymbal_share_max is not None
+        or tom_share_min is not None
+        or tom_share_max is not None
+    ):
+        internal_limit = max(internal_limit, 50000)
+
+    # Share-metric filters can be expensive when the EGMD cache is cold because they require
+    # scanning many entries and (re)computing MIDI-derived metrics. Cap the candidate pool
+    # to keep UI searches responsive.
+    share_filter_active = (
+        snare_share_min is not None
+        or snare_share_max is not None
+        or kick_snare_share_min is not None
+        or kick_snare_share_max is not None
+        or cymbal_share_min is not None
+        or cymbal_share_max is not None
+        or tom_share_min is not None
+        or tom_share_max is not None
+    )
+    if share_filter_active and egmd_only:
+        internal_limit = min(int(internal_limit), 12000)
+
+    cards = _GROOVE_CATALOG.search(query=q or None, tags=tags or None, sources=sources or None, limit=internal_limit)
+    if style_group:
+        filtered = []
+        for c in cards:
+            try:
+                sg = str(getattr(c, "style_group", "") or "").strip().lower()
+                if sg and sg == style_group:
+                    filtered.append(c)
+            except Exception:
+                continue
+        cards = filtered
+
+    if (
+        hits_per_bar_min is not None
+        or hits_per_bar_max is not None
+        or active_instruments_min is not None
+        or active_instruments_max is not None
+        or offbeat_ratio_min is not None
+        or offbeat_ratio_max is not None
+        or snare_backbeat_ratio_min is not None
+        or snare_backbeat_ratio_max is not None
+        or snare_share_min is not None
+        or snare_share_max is not None
+        or kick_snare_share_min is not None
+        or kick_snare_share_max is not None
+        or cymbal_share_min is not None
+        or cymbal_share_max is not None
+        or tom_share_min is not None
+        or tom_share_max is not None
+    ):
+        filtered = []
+        for c in cards:
+            try:
+                hpb = getattr(c, "hits_per_bar", None)
+                ai = getattr(c, "active_instruments", None)
+                obr = getattr(c, "offbeat_ratio", None)
+                sbr = getattr(c, "snare_backbeat_ratio", None)
+                snshare = getattr(c, "snare_share", None)
+                kss = getattr(c, "kick_snare_share", None)
+                cym = getattr(c, "cymbal_share", None)
+                tom = getattr(c, "tom_share", None)
+
+                # Only filter if the metric is present; EGMD entries should have them.
+                if hpb is not None:
+                    v = float(hpb)
+                    if hits_per_bar_min is not None and v < float(hits_per_bar_min):
+                        continue
+                    if hits_per_bar_max is not None and v > float(hits_per_bar_max):
+                        continue
+                if ai is not None:
+                    v = float(ai)
+                    if active_instruments_min is not None and v < float(active_instruments_min):
+                        continue
+                    if active_instruments_max is not None and v > float(active_instruments_max):
+                        continue
+                if obr is not None:
+                    v = float(obr)
+                    if offbeat_ratio_min is not None and v < float(offbeat_ratio_min):
+                        continue
+                    if offbeat_ratio_max is not None and v > float(offbeat_ratio_max):
+                        continue
+                if sbr is not None:
+                    v = float(sbr)
+                    if snare_backbeat_ratio_min is not None and v < float(snare_backbeat_ratio_min):
+                        continue
+                    if snare_backbeat_ratio_max is not None and v > float(snare_backbeat_ratio_max):
+                        continue
+
+                if snshare is not None:
+                    v = float(snshare)
+                    if snare_share_min is not None and v < float(snare_share_min):
+                        continue
+                    if snare_share_max is not None and v > float(snare_share_max):
+                        continue
+
+                if kss is not None:
+                    v = float(kss)
+                    if kick_snare_share_min is not None and v < float(kick_snare_share_min):
+                        continue
+                    if kick_snare_share_max is not None and v > float(kick_snare_share_max):
+                        continue
+                if cym is not None:
+                    v = float(cym)
+                    if cymbal_share_min is not None and v < float(cymbal_share_min):
+                        continue
+                    if cymbal_share_max is not None and v > float(cymbal_share_max):
+                        continue
+                if tom is not None:
+                    v = float(tom)
+                    if tom_share_min is not None and v < float(tom_share_min):
+                        continue
+                    if tom_share_max is not None and v > float(tom_share_max):
+                        continue
+
+                filtered.append(c)
+            except Exception:
+                continue
+        cards = filtered
+
+    if complexity_min is not None or complexity_max is not None:
+        filtered = []
+        for c in cards:
+            try:
+                cs = getattr(c, "complexity_score", None)
+                if cs is None:
+                    continue
+                v = float(cs)
+                if complexity_min is not None and v < float(complexity_min):
+                    continue
+                if complexity_max is not None and v > float(complexity_max):
+                    continue
+                filtered.append(c)
+            except Exception:
+                continue
+        cards = filtered
+
+    if sort in {"complexity_asc", "complexity_desc"}:
+        reverse = sort == "complexity_desc"
+
+        def _key(c):
+            try:
+                v = getattr(c, "complexity_score", None)
+                if v is None:
+                    return float("inf") if not reverse else float("-inf")
+                return float(v)
+            except Exception:
+                return float("inf") if not reverse else float("-inf")
+
+        cards = sorted(cards, key=_key, reverse=reverse)
+
+    def _path_blob(card) -> str:
+        try:
+            return " ".join(
+                [
+                    str(getattr(card, "audio_path", "") or ""),
+                    str(getattr(card, "midi_path", "") or ""),
+                    str(getattr(card, "basename", "") or ""),
+                    str(getattr(card, "extracted_dir", "") or ""),
+                ]
+            ).strip().lower()
+        except Exception:
+            return ""
+
+    def _egmd_session(card) -> int | None:
+        blob = _path_blob(card)
+        if not blob:
+            return None
+        if "session_3" in blob or "session 3" in blob or "session3" in blob:
+            return 3
+        if "session_2" in blob or "session 2" in blob or "session2" in blob:
+            return 2
+        if "session_1" in blob or "session 1" in blob or "session1" in blob:
+            return 1
+        return None
+
+    # Diversify EGMD browse results (including style_group browse):
+    # Goal: return "spread out" variants (avoid sequential phrase_ids) while also preferring
+    # unique visible titles first.
+    if is_browse_mode and egmd_only:
+        # EGMD content note:
+        # - Session 2 is fills (not suitable as default groove).
+        # - Session 3 tends to have longer clips (better default groove candidates).
+        # Prefer session 3 and exclude session 2 before diversification.
+        try:
+            no_s2 = [c for c in cards if _egmd_session(c) != 2]
+            s3 = [c for c in no_s2 if _egmd_session(c) == 3]
+            cards = s3 if s3 else no_s2
+        except Exception:
+            pass
+
+        def _norm_title(card) -> str:
+            try:
+                t = getattr(card, "title", None) or getattr(card, "name", None) or ""
+                return str(t).strip().lower()
+            except Exception:
+                return ""
+
+        def _variant_key(card) -> str:
+            try:
+                source = str(getattr(card, "source", "") or "").strip().lower()
+                phrase_id = getattr(card, "phrase_id", None)
+                midi_path = str(getattr(card, "midi_path", "") or "").strip()
+                audio_path = str(getattr(card, "audio_path", "") or "").strip()
+                cid = str(getattr(card, "id", "") or "").strip()
+                if phrase_id is not None and str(phrase_id).strip() != "":
+                    return f"{source}|phrase:{phrase_id}"
+                if midi_path:
+                    return f"{source}|midi:{midi_path}"
+                if audio_path:
+                    return f"{source}|audio:{audio_path}"
+                return cid
+            except Exception:
+                return str(getattr(card, "id", "") or "").strip()
+
+        def _phrase_sort_key(card):
+            try:
+                pid = getattr(card, "phrase_id", None)
+                if pid is None or str(pid).strip() == "":
+                    pid = getattr(card, "egmd_phrase_id", None)
+                n = int(pid) if pid is not None and str(pid).strip().isdigit() else None
+                if n is not None:
+                    return (0, n)
+            except Exception:
+                pass
+            try:
+                cid = str(getattr(card, "id", "") or "").strip()
+                return (1, cid)
+            except Exception:
+                return (2, "")
+
+        def _spread_indices(n: int, k: int):
+            if n <= 0 or k <= 0:
+                return []
+            if n <= k:
+                return list(range(n))
+            if k == 1:
+                return [n // 2]
+            # Evenly spaced indices across [0, n-1]
+            return [int(round(i * (n - 1) / (k - 1))) for i in range(k)]
+
+        cards_sorted = list(cards)
+        try:
+            cards_sorted.sort(key=_phrase_sort_key)
+        except Exception:
+            pass
+
+        idxs = _spread_indices(len(cards_sorted), limit)
+        seen_titles = set()
+        seen_variants = set()
+        selected = []
+        leftovers = []
+
+        # Pass 1: spread out + unique title
+        for ix in idxs:
+            try:
+                c = cards_sorted[ix]
+            except Exception:
+                continue
+            sg = str(getattr(c, "style_group", "") or "").strip().lower()
+            nt = _norm_title(c)
+            vt = _variant_key(c)
+            title_key = f"{sg}|{nt}" if (sg or nt) else nt
+            if nt and title_key not in seen_titles and vt and vt not in seen_variants:
+                seen_titles.add(title_key)
+                seen_variants.add(vt)
+                selected.append(c)
+            else:
+                leftovers.append(c)
+            if len(selected) >= limit:
+                break
+
+        # Pass 1b: scan remaining (still preferring unique titles) to fill gaps
+        if len(selected) < limit:
+            for c in cards_sorted:
+                sg = str(getattr(c, "style_group", "") or "").strip().lower()
+                nt = _norm_title(c)
+                vt = _variant_key(c)
+                title_key = f"{sg}|{nt}" if (sg or nt) else nt
+                if nt and title_key in seen_titles:
+                    continue
+                if vt and vt in seen_variants:
+                    continue
+                if nt:
+                    seen_titles.add(title_key)
+                if vt:
+                    seen_variants.add(vt)
+                selected.append(c)
+                if len(selected) >= limit:
+                    break
+
+        # Pass 2: fill remaining with other spread-out variants (allow duplicate titles)
+        if len(selected) < limit:
+            for c in cards_sorted:
+                vt = _variant_key(c)
+                if vt and vt in seen_variants:
+                    continue
+                if vt:
+                    seen_variants.add(vt)
+                selected.append(c)
+                if len(selected) >= limit:
+                    break
+
+        cards = selected[:limit]
+
+    # If style_group was requested, ensure we still respect the limit after diversification.
+    if style_group:
+        cards = cards[:limit]
+
+    items = [c.to_dict() for c in cards]
+    # If many items share the same visible title (common in EGMD browse mode),
+    # disambiguate titles so the UI can present meaningful choices.
+    if is_browse_mode and egmd_only:
+        try:
+            def _session_label_from_item(it) -> str:
+                try:
+                    blob = " ".join(
+                        [
+                            str(it.get("audio_path") or ""),
+                            str(it.get("midi_path") or ""),
+                            str(it.get("basename") or ""),
+                            str(it.get("extracted_dir") or ""),
+                        ]
+                    ).strip().lower()
+                    if "session_3" in blob or "session 3" in blob or "session3" in blob:
+                        return "S3"
+                    if "session_2" in blob or "session 2" in blob or "session2" in blob:
+                        return "S2"
+                    if "session_1" in blob or "session 1" in blob or "session1" in blob:
+                        return "S1"
+                    return ""
+                except Exception:
+                    return ""
+
+            # First, rewrite EGMD titles to be human-friendly (not phrase-id-centric).
+            for it in items:
+                src = str(it.get("source") or "").strip().lower()
+                if src != "egmd":
+                    continue
+                sg = str(it.get("style_group") or "").strip()
+                sd = str(it.get("style_detail") or "").strip()
+                sess = _session_label_from_item(it)
+                bpm = it.get("tempo_bpm")
+                bars = it.get("bars")
+
+                parts = []
+                if sg:
+                    parts.append(str(sg).title())
+                if sd:
+                    parts.append(sd)
+                if sess:
+                    parts.append(sess)
+                if isinstance(bars, int) and bars > 0:
+                    parts.append(f"{bars} bars")
+                if isinstance(bpm, (int, float)) and bpm:
+                    parts.append(f"{int(round(float(bpm)))} bpm")
+
+                if parts:
+                    it["title"] = " · ".join(parts)
+
+            title_counts = {}
+            for it in items:
+                t = str(it.get("title") or it.get("name") or "").strip().lower()
+                if not t:
+                    continue
+                title_counts[t] = title_counts.get(t, 0) + 1
+
+            for it in items:
+                src = str(it.get("source") or "").strip().lower()
+                if src != "egmd":
+                    continue
+
+                raw_title = str(it.get("title") or it.get("name") or "").strip()
+                tkey = raw_title.strip().lower()
+                if not raw_title or title_counts.get(tkey, 0) <= 1:
+                    continue
+
+                style_detail = str(it.get("style_detail") or "").strip()
+                phrase_id = it.get("phrase_id")
+                if phrase_id is None or str(phrase_id).strip() == "":
+                    phrase_id = it.get("egmd_phrase_id")
+                suffix_parts = []
+                if style_detail:
+                    suffix_parts.append(style_detail)
+                sess = _session_label_from_item(it)
+                if sess:
+                    suffix_parts.append(sess)
+                # Only add phrase id as a last-resort disambiguator.
+                if phrase_id is not None and str(phrase_id).strip() != "":
+                    suffix_parts.append(f"phrase {phrase_id}")
+
+                if suffix_parts:
+                    it["title"] = f"{raw_title} \u00b7 " + " \u00b7 ".join(suffix_parts)
+        except Exception:
+            pass
+
+    return web.json_response(
+        {
+            "ok": True,
+            "query": {"q": q, "tags": tags, "sources": sources, "style_group": style_group, "limit": limit},
+            "items": items,
+        }
+    )
+
+
+async def api_grooves_get(request: web.Request):
+    groove_id = str(request.match_info.get("groove_id") or "").strip()
+    if not groove_id:
+        return web.json_response({"ok": False, "error": "groove_id required"}, status=400)
+
+    card = _GROOVE_CATALOG.get_by_id(groove_id)
+    if not card:
+        return web.json_response({"ok": False, "error": "not found"}, status=404)
+
+    return web.json_response({"ok": True, "item": card.to_dict()})
+
+
+def _resolve_groove_audio_path(card: "GrooveCard") -> Optional[Path]:
+    try:
+        audio_path = getattr(card, "audio_path", None)
+        if not audio_path:
+            return None
+        p = Path(str(audio_path)).expanduser()
+        if not p.exists() or not p.is_file():
+            return None
+        return p
+    except Exception:
+        return None
+
+
+async def api_grooves_audio(request: web.Request):
+    groove_id = str(request.match_info.get("groove_id") or "").strip()
+    if not groove_id:
+        return web.json_response({"ok": False, "error": "groove_id required"}, status=400)
+
+    card = _GROOVE_CATALOG.get_by_id(groove_id)
+    if not card:
+        return web.json_response({"ok": False, "error": "not found"}, status=404)
+
+    # Only support audio audition where we have an explicit audio path (EGMD, etc.)
+    p = _resolve_groove_audio_path(card)
+    if not p:
+        return web.json_response({"ok": False, "error": "audio not available"}, status=404)
+
+    content_type, _ = mimetypes.guess_type(str(p))
+    ext = str(p.suffix or "").lower()
+    if ext in {".wav", ".wave"}:
+        content_type = "audio/wav"
+    elif ext in {".mp3"}:
+        content_type = "audio/mpeg"
+    elif ext in {".ogg"}:
+        content_type = "audio/ogg"
+    else:
+        content_type = content_type or "application/octet-stream"
+
+    try:
+        hdr_midi = str(getattr(card, "midi_path", "") or "")
+    except Exception:
+        hdr_midi = ""
+    try:
+        hdr_audio = str(getattr(card, "audio_path", "") or "")
+    except Exception:
+        hdr_audio = ""
+    try:
+        hdr_phrase_id = str(getattr(card, "phrase_id", "") or "")
+    except Exception:
+        hdr_phrase_id = ""
+
+    return web.FileResponse(
+        path=str(p),
+        headers={
+            "Content-Type": content_type,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'inline; filename="{p.name}"',
+            "X-Groove-Id": str(getattr(card, "id", groove_id) or groove_id),
+            "X-Egmd-Phrase-Id": hdr_phrase_id,
+            "X-Egmd-Midi-Path": hdr_midi,
+            "X-Egmd-Audio-Path": hdr_audio,
+        },
+    )
+
+
+async def api_groove_analyze(request: web.Request):
+    """Return groove metrics + coaching suggestions.
+
+    This endpoint is used by web-frontend/src/daw/ui/GrooveCoachPanel.tsx.
+
+    v1 implementation:
+    - deterministic placeholder scores
+    - coaching suggestions derived from admin/data/knowledge_sources/coaching_taxonomy.json
+    """
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    job_id = None
+    section_id = None
+    section_label = None
+    goals = None
+    current_config = None
+    try:
+        job_id = data.get("job_id") or data.get("jobId")
+        section_id = data.get("section_id") or data.get("sectionId")
+        section_label = data.get("section_label") or data.get("sectionLabel")
+        raw_goals = data.get("goals")
+        if isinstance(raw_goals, list):
+            goals = [str(g) for g in raw_goals if str(g).strip()]
+        raw_cfg = data.get("current_config") or data.get("currentConfig")
+        if isinstance(raw_cfg, dict):
+            current_config = raw_cfg
+    except Exception:
+        pass
+
+    if not GROOVE_COACH_AVAILABLE or build_groove_coach_response is None:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "groove coach not available",
+                "job_id": job_id,
+                "section_id": section_id,
+                "timing_score": 0.0,
+                "velocity_score": 0.0,
+                "humanization_score": 0.0,
+                "overall_score": 0.0,
+                "suggestions": [],
+            },
+            status=503,
+        )
+
+    payload = build_groove_coach_response(
+        job_id=job_id,
+        section_id=section_id,
+        section_label=section_label,
+        goals=goals,
+        current_config=current_config,
+    )
+    payload["ok"] = True
+    return web.json_response(payload)
+
+
+async def api_groove_goals(_request: web.Request):
+    if not GROOVE_COACH_AVAILABLE or list_available_goals is None:
+        return web.json_response({"ok": False, "error": "groove coach not available"}, status=503)
+    return web.json_response({"ok": True, **list_available_goals()})
+
+
+async def api_groove_apply_patch(request: web.Request):
+    if not GROOVE_COACH_AVAILABLE or apply_config_patch is None:
+        return web.json_response({"ok": False, "error": "groove coach not available"}, status=503)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    cfg = data.get("config")
+    patch = data.get("config_patch")
+    if not isinstance(cfg, dict) or not isinstance(patch, dict):
+        return web.json_response(
+            {"ok": False, "error": "Expected JSON body: {config: {...}, config_patch: {...}}"},
+            status=400,
+        )
+
+    patched = apply_config_patch(base_config=cfg, config_patch=patch)
+    return web.json_response({"ok": True, "patched_config": patched})
+
+
+async def api_preset_preview_knowledge(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    profile_type = str(data.get("profileType") or data.get("profile_type") or "").strip()
+    drummer_id = str(data.get("drummerId") or data.get("drummer_id") or "").strip()
+    preset_stack = data.get("presetStack") or data.get("preset_stack") or []
+    preset_names = data.get("presetNames") or data.get("preset_names") or []
+
+    if not isinstance(preset_stack, list):
+        preset_stack = []
+    if not isinstance(preset_names, list):
+        preset_names = []
+
+    try:
+        from backend.groove_coach_engine import knowledge_search
+    except Exception:
+        knowledge_search = None  # type: ignore
+
+    q_parts = []
+    if profile_type:
+        q_parts.append(profile_type)
+    if drummer_id:
+        q_parts.append(drummer_id)
+    for n in preset_names:
+        s = str(n or "").strip()
+        if s:
+            q_parts.append(s)
+    for item in preset_stack:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("presetId") or item.get("preset_id") or "").strip()
+        tier = str(item.get("tier") or "").strip()
+        if pid:
+            q_parts.append(pid)
+        if tier:
+            q_parts.append(tier)
+    query = " ".join(q_parts).strip()
+
+    citations = []
+    if knowledge_search and query:
+        citations = knowledge_search(query=query, top_k=5)
+
+    # Lightweight “what to listen for”: extract a few short snippets from citations.
+    listen_for = []
+    for c in citations[:3]:
+        t = str((c or {}).get("text") or "").strip()
+        if not t:
+            continue
+        t = t.replace("\n", " ").strip()
+        if len(t) > 220:
+            t = t[:217].rstrip() + "..."
+        listen_for.append(t)
+
+    return web.json_response({"ok": True, "query": query, "what_to_listen_for": listen_for, "citations": citations})
+
 def make_app() -> web.Application:
     app = web.Application()
     app.add_routes([
         web.get("/healthz", healthz),
+        web.get("/api/llm/status", api_llm_status),
         # keep both paths for compatibility with your frontend(s)
         web.post("/api/upload", upload),
         web.post("/files/upload", upload),
@@ -1467,6 +2654,7 @@ def make_app() -> web.Application:
         web.post("/api/sectionize_smart", api_sectionize_smart),
         # Drummer personas (analysis/brain visualization)
         web.get("/api/drummer-personas", list_drummer_personas),
+        web.get("/api/drummer-presets", list_drummer_presets),
         web.post("/api/beatbox/translate", beatbox_translate),
         web.post("/api/beatbox/tap-input", beatbox_tap_input),
         web.post("/api/beatprompt/render", beatprompt_render),
@@ -1474,7 +2662,21 @@ def make_app() -> web.Application:
         web.get("/api/song-lookup", song_lookup),
         # Drum generation endpoint
         web.post("/api/generate-drums", handle_generate_drums),
+        web.post("/api/preset-preview/knowledge", api_preset_preview_knowledge),
+        web.post("/api/conform-to-instrument", api_conform_to_instrument),
+        web.post("/api/mvsep/start", api_mvsep_start),
+        web.get("/api/mvsep/status", api_mvsep_status),
+        web.get("/api/mvsep/stems", api_mvsep_stems),
+        web.post("/api/render-plugin-midi", api_render_plugin_midi),
         web.get("/api/egmd/phrases", api_list_egmd_phrases),
+        web.get("/api/egmd/style-groups", api_list_egmd_style_groups),
+
+        web.get("/api/grooves/search", api_grooves_search),
+        web.get("/api/grooves/{groove_id}", api_grooves_get),
+        web.get("/api/grooves/{groove_id}/audio", api_grooves_audio),
+        web.post("/api/groove/analyze", api_groove_analyze),
+        web.get("/api/groove/goals", api_groove_goals),
+        web.post("/api/groove/apply-patch", api_groove_apply_patch),
         # Jamstix brain endpoints
         web.post("/api/jamstix/enrich", jamstix_enrich_pattern),
         web.post("/api/jamstix/build-track", jamstix_build_track),
@@ -1484,6 +2686,9 @@ def make_app() -> web.Application:
         web.get("/api/sample-collections", api_sample_collections),
         web.get("/api/drum-samples", api_drum_samples),
         web.get("/api/drum-samples/{sample_id}/audio", api_drum_sample_audio),
+
+        web.get("/api/kits", api_list_kits),
+        web.get("/api/kits/{kit_id}/manifest", api_get_kit_manifest),
     ])
 
     # Initialize AI system and register AI routes
@@ -1626,6 +2831,145 @@ async def align_sections(request):
     except Exception as e:
         LOG.error(f"Section alignment failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_conform_to_instrument(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    key = data.get("key")
+    instrument = str(data.get("instrument") or "bass").strip().lower()
+    strength = float(data.get("strength") or 0.5)
+    strength = max(0.0, min(1.0, strength))
+    drum_track = data.get("drum_track") or data.get("drumTrack")
+    mvsep_job_id = data.get("mvsep_job_id") or data.get("mvsepJobId")
+
+    if not key:
+        return web.json_response({"error": "key required"}, status=400)
+    if not isinstance(drum_track, dict) or not isinstance(drum_track.get("notes"), list):
+        return web.json_response({"error": "Expected JSON body with drum_track.notes"}, status=400)
+
+    audio_path = (UPLOAD_DIR / str(key)).resolve()
+    if not audio_path.exists() or not str(audio_path).startswith(str(UPLOAD_DIR)):
+        return web.json_response({"error": "audio not found"}, status=404)
+
+    if not USE_RUST:
+        return web.json_response({"error": "Rust audio-core required"}, status=503)
+
+    # If MVSEP job id is provided and bass stem exists, analyze bass stem instead of full mix.
+    analyze_path = audio_path
+    try:
+        if mvsep_job_id and str(mvsep_job_id) in MVSEP_JOBS:
+            job = MVSEP_JOBS.get(str(mvsep_job_id)) or {}
+            stems = job.get("stems") if isinstance(job, dict) else None
+            if isinstance(stems, dict):
+                bass_path = stems.get("bass")
+                if bass_path and isinstance(bass_path, str) and os.path.exists(bass_path):
+                    analyze_path = Path(bass_path)
+    except Exception:
+        pass
+
+    try:
+        analysis = run_audio_core(["analyze", str(analyze_path)])
+        bpm = float(analysis.get("tempo", 0.0) or 0.0)
+        onsets = analysis.get("onsets", []) or []
+        if bpm <= 0.0 or not isinstance(onsets, list) or not onsets:
+            return web.json_response({"error": "analysis produced no tempo/onsets"}, status=500)
+        onsets = sorted([float(t) for t in onsets if isinstance(t, (int, float))])
+    except Exception as e:
+        LOG.error(f"audio-core analyze failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+    ppq = float(drum_track.get("resolution_ppq") or 960)
+    if ppq <= 0:
+        ppq = 960.0
+    bar_ticks = 4.0 * ppq
+    ticks_per_sec = ppq * (bpm / 60.0)
+
+    # Conform parameters
+    max_window_sec = float(data.get("max_window_sec") or 0.08)
+    max_window_sec = max(0.0, min(0.25, max_window_sec))
+    max_shift_ticks = float(data.get("max_shift_ticks") or (0.25 * ppq))
+    max_shift_ticks = max(0.0, min(ppq, max_shift_ticks))
+
+    target_instruments = {"kick", "snare_center", "snare_rim", "snare_ghost"}
+    if instrument not in {"bass", "other", "mix"}:
+        instrument = "bass"
+
+    def _nearest_onset(t: float) -> float:
+        # Binary search nearest onset
+        lo = 0
+        hi = len(onsets) - 1
+        if hi <= 0:
+            return onsets[0]
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if onsets[mid] < t:
+                lo = mid + 1
+            else:
+                hi = mid
+        idx = lo
+        best = onsets[idx]
+        if idx > 0 and abs(onsets[idx - 1] - t) < abs(best - t):
+            best = onsets[idx - 1]
+        return best
+
+    moved = 0
+    out_notes = []
+    for n in drum_track.get("notes", []) or []:
+        if not isinstance(n, dict):
+            out_notes.append(n)
+            continue
+        inst = str(n.get("instrumentId") or "").strip().lower()
+        if inst not in target_instruments:
+            out_notes.append(n)
+            continue
+
+        try:
+            bar_i = int(n.get("barIndex") or 0)
+            tick_in_bar = float(n.get("tickInBar") or 0.0)
+        except Exception:
+            out_notes.append(n)
+            continue
+
+        abs_ticks = bar_i * bar_ticks + tick_in_bar
+        t_sec = (abs_ticks / ppq) * (60.0 / bpm)
+        onset = _nearest_onset(t_sec)
+        dt = onset - t_sec
+        if abs(dt) > max_window_sec:
+            out_notes.append(n)
+            continue
+
+        delta_ticks = dt * ticks_per_sec * strength
+        if delta_ticks > max_shift_ticks:
+            delta_ticks = max_shift_ticks
+        if delta_ticks < -max_shift_ticks:
+            delta_ticks = -max_shift_ticks
+
+        new_abs_ticks = abs_ticks + delta_ticks
+        if new_abs_ticks < 0:
+            new_abs_ticks = 0.0
+        new_bar = int(new_abs_ticks // bar_ticks)
+        new_tick_in_bar = float(new_abs_ticks - (new_bar * bar_ticks))
+        nn = dict(n)
+        nn["barIndex"] = new_bar
+        nn["tickInBar"] = new_tick_in_bar
+        out_notes.append(nn)
+        moved += 1
+
+    out_track = dict(drum_track)
+    out_track["notes"] = out_notes
+    return web.json_response(
+        {
+            "ok": True,
+            "instrument": instrument,
+            "bpm": bpm,
+            "moved_notes": moved,
+            "drum_track": out_track,
+        }
+    )
 
 # --- Session Save/Load ---
 class SessionModel(BaseModel):
@@ -2435,6 +3779,53 @@ async def handle_generate_drums(request):
         if not section_id:
             LOG.warning("/api/generate-drums received payload without sectionId; continuing in global mode")
         
+        selected_groove_id = data.get("selectedGrooveId") or data.get("selected_groove_id")
+        groove_use = data.get("grooveUse") or data.get("groove_use")
+        fill_groove_id = data.get("fillGrooveId") or data.get("fill_groove_id")
+        fill_bar_index = data.get("fillBarIndex") or data.get("fill_bar_index")
+
+        # v3 Groove Library: if a groove card (often EGMD) is selected, translate it into
+        # a forced EGMD phrase id so the backend deterministically uses that groove.
+        # This is the smallest reliable bridge without reworking the entire planner.
+        try:
+            if selected_groove_id and not (data.get("egmdPhraseId") or data.get("egmd_phrase_id")):
+                card = _GROOVE_CATALOG.get_by_id(str(selected_groove_id))
+                if card and str(getattr(card, "source", "")).strip().lower() == "egmd" and getattr(card, "phrase_id", None) is not None:
+                    data["egmdPhraseId"] = int(card.phrase_id)
+                    try:
+                        midi_path = getattr(card, "midi_path", None)
+                        if midi_path and not (data.get("egmdMidiPath") or data.get("egmd_midi_path")):
+                            data["egmdMidiPath"] = str(midi_path)
+                    except Exception:
+                        pass
+                    # Encourage exact EGMD playback when explicitly selecting a groove.
+                    data.setdefault("grooveSource", "egmd_phrases")
+                    data.setdefault("grooveMode", "exact")
+                    try:
+                        LOG.info(
+                            "EGMD groove bridge: selectedGrooveId=%s -> phrase_id=%s midi_path=%s grooveSource=%s grooveMode=%s",
+                            str(selected_groove_id),
+                            getattr(card, "phrase_id", None),
+                            getattr(card, "midi_path", None),
+                            data.get("grooveSource"),
+                            data.get("grooveMode"),
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        LOG.warning(
+                            "Groove bridge skipped: selectedGrooveId=%s card_found=%s card_source=%s phrase_id=%s",
+                            str(selected_groove_id),
+                            bool(card),
+                            str(getattr(card, "source", None) if card else None),
+                            getattr(card, "phrase_id", None) if card else None,
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # Create config object
         config = DrumGenerationConfig(data)
         
@@ -2442,6 +3833,66 @@ async def handle_generate_drums(request):
 
         # Generate drums using integrated system
         result = generate_drums(config)
+
+        # Optional: apply a 1-bar fill at an explicit bar index.
+        try:
+            if fill_groove_id and fill_bar_index is not None and isinstance(result, dict):
+                drum_track = result.get("drum_track") if isinstance(result.get("drum_track"), dict) else None
+                if drum_track and isinstance(drum_track.get("notes"), list):
+                    try:
+                        target_bar = int(fill_bar_index)
+                    except Exception:
+                        target_bar = None
+
+                    if target_bar is not None:
+                        ppq = int(drum_track.get("resolution_ppq") or 960) or 960
+                        tick_per_16th = max(1, ppq // 4)
+
+                        # Remove existing notes in that bar (treat fill as a replacement).
+                        original_notes = drum_track.get("notes") or []
+                        kept_notes = [n for n in original_notes if int(n.get("barIndex") or -1) != target_bar]
+
+                        fill_pattern, fill_pattern_id = get_fill_pattern(str(fill_groove_id))
+                        new_notes = []
+                        for inst_id, steps in (fill_pattern.steps or {}).items():
+                            for s in steps or []:
+                                ss = int(s)
+                                if ss < 0 or ss >= 16:
+                                    continue
+                                tick_in_bar = ss * tick_per_16th
+                                vel = 110 if (ss == 0 or inst_id.startswith("crash")) else 92
+                                if inst_id.endswith("ghost"):
+                                    vel = 34
+                                new_notes.append(
+                                    {
+                                        "id": make_note_id(),
+                                        "barIndex": target_bar,
+                                        "tickInBar": int(tick_in_bar),
+                                        "tickLength": int(tick_per_16th),
+                                        "channel": 9,
+                                        "midiPitch": int(instrument_id_to_midi_pitch(inst_id)),
+                                        "velocity": int(vel),
+                                        "instrumentId": inst_id,
+                                        "aspect": "fill",
+                                        "isGhost": bool(inst_id.endswith("ghost")),
+                                        "isAccent": bool(ss == 0 or inst_id.startswith("crash")),
+                                        "isFlam": False,
+                                        "isDrag": False,
+                                    }
+                                )
+
+                        drum_track["notes"] = kept_notes + new_notes
+                        result["drum_track"] = drum_track
+
+                        md = result.get("metadata") or {}
+                        if isinstance(md, dict):
+                            md["fill_applied"] = True
+                            md["fill_applied_barIndex"] = target_bar
+                            md["fill_applied_pattern_id"] = fill_pattern_id
+                            result["metadata"] = md
+        except Exception as _exc:
+            # Do not fail drum generation if fill insertion has an edge case.
+            pass
 
         metadata = result.get('metadata') or {}
         builder_version = str(metadata.get("builder_version") or "").strip().lower()
@@ -2478,6 +3929,10 @@ async def handle_generate_drums(request):
         metadata['generation_backend'] = generation_backend
         metadata['fallback_used'] = bool(fallback_used)
         metadata['fallback_reason'] = fallback_reason
+        metadata['selectedGrooveId'] = selected_groove_id
+        metadata['grooveUse'] = groove_use
+        metadata['fillGrooveId'] = fill_groove_id
+        metadata['fillBarIndex'] = fill_bar_index
         result['metadata'] = metadata
         
         LOG.info(f"✅ Generated drums in {result['metadata']['generation_time_ms']}ms")

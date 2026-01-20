@@ -1,5 +1,6 @@
 import React, { useRef } from 'react'
 import { useDawStore } from '../../state/dawStore'
+import { Tooltip } from '../Tooltip'
 
 export default function Playhead() {
   const { cursorSec, pxPerSecond, setCursor } = useDawStore()
@@ -22,7 +23,6 @@ export default function Playhead() {
       const newCursorSec = Math.max(0, mouseX / pxPerSecond)
       
       setCursor(newCursorSec)
-      if ((window as any).Tone) (window as any).Tone.Transport.seconds = newCursorSec
     }
     
     const handleMouseUp = () => {
@@ -38,11 +38,12 @@ export default function Playhead() {
   return (
     <div className="absolute top-0 bottom-0 z-30 cursor-ew-resize" style={{ left: x }}>
       <div className="w-[2px] h-full bg-red-500/80 pointer-events-none" />
-      <div 
-        className="-translate-x-1 -translate-y-1 w-3 h-3 bg-red-500 rounded-full border border-white cursor-ew-resize hover:bg-red-400"
-        onMouseDown={handleMouseDown}
-        title="Drag to seek"
-      />
+      <Tooltip content="Drag to seek" placement="top" maxWidthClassName="w-28">
+        <div 
+          className="-translate-x-1 -translate-y-1 w-3 h-3 bg-red-500 rounded-full border border-white cursor-ew-resize hover:bg-red-400"
+          onMouseDown={handleMouseDown}
+        />
+      </Tooltip>
     </div>
   )
 }

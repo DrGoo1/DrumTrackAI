@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import * as Tone from 'tone'
 import { useDawStore } from '../../state/dawStore'
 import { useEngine } from '../../audio/useEngine'
+import { Tooltip } from '../Tooltip'
 
 function fmtBBT(sec: number, bpm: number, ts: [number, number]) {
   const [num, den] = ts
@@ -81,7 +82,9 @@ export default function TransportBar() {
         <button className="px-3 py-1 rounded bg-rose-600" onClick={() => pause()}>⏸</button>
       )}
       <button className="px-2 py-1 rounded bg-slate-700" onClick={() => { Tone.Transport.stop(); stop() }}>⏹</button>
-      <button className={`px-2 py-1 rounded ${loopEnabled ? 'bg-amber-500' : 'bg-slate-700'}`} onClick={() => toggleLoop()} title="Toggle Loop">🔁</button>
+      <Tooltip content="Toggle Loop" placement="top" maxWidthClassName="w-28">
+        <button className={`px-2 py-1 rounded ${loopEnabled ? 'bg-amber-500' : 'bg-slate-700'}`} onClick={() => toggleLoop()}>🔁</button>
+      </Tooltip>
       <div className="ml-3 font-mono text-sm">{fmtBBT(cursorSec, bpm, ts)}</div>
       <div className="ml-auto text-slate-400">BPM {bpm} • {ts[0]}/{ts[1]}</div>
     </div>

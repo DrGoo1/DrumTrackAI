@@ -2,15 +2,45 @@
 
 import React from "react";
 import { DrumNoteEvent, LimbId, HitStyle } from "../../types/drumTrack";
+import { getTicksPerSubdivision, type GridResolution } from "../../utils/pianoRollGrid";
+import { Tooltip } from "../Tooltip";
+
+const INSTRUMENT_ORDER: string[] = [
+  "kick",
+  "snare_center",
+  "snare_ghost",
+  "snare_rim",
+  "hihat_closed",
+  "hihat_open",
+  "hihat_pedal",
+  "ride_bow",
+  "ride_bell",
+  "ride_edge",
+  "tom_high",
+  "tom_mid",
+  "tom_floor",
+  "crash_1",
+  "crash_2",
+];
 
 interface NoteInspectorProps {
   selectedNotes: DrumNoteEvent[];
   onUpdateNotes?: (patch: Partial<DrumNoteEvent>) => void;
+  onNudgeTicks?: (deltaTicks: number) => void;
+  gridResolution?: GridResolution;
+  ppq?: number;
+  timeSignature?: [number, number];
+  onClose?: () => void;
 }
 
 export const NoteInspector: React.FC<NoteInspectorProps> = ({
   selectedNotes,
   onUpdateNotes,
+  onNudgeTicks,
+  gridResolution,
+  ppq,
+  timeSignature,
+  onClose,
 }) => {
   if (selectedNotes.length === 0) {
     return (
@@ -36,19 +66,96 @@ export const NoteInspector: React.FC<NoteInspectorProps> = ({
     }
   };
 
+  const nudgeStepTicks = (() => {
+    if (!onNudgeTicks) return null;
+    if (!gridResolution) return null;
+    const resolvedPpq = Number(ppq);
+    if (!Number.isFinite(resolvedPpq) || resolvedPpq <= 0) return null;
+    const ts = timeSignature ?? [4, 4];
+    try {
+      return getTicksPerSubdivision(resolvedPpq, ts, gridResolution);
+    } catch {
+      return null;
+    }
+  })();
+
   return (
     <div className="w-64 border-l border-slate-700 bg-slate-950 flex flex-col overflow-y-auto">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-800">
-        <div className="text-xs font-semibold text-slate-200">
-          Note Inspector
+      <div className="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-slate-200">Note Inspector</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">
+            {multiSelect
+              ? `${selectedNotes.length} notes selected`
+              : `${firstNote.instrumentId} @ bar ${firstNote.barIndex + 1}`}
+          </div>
         </div>
-        <div className="text-[10px] text-slate-500 mt-0.5">
-          {multiSelect
-            ? `${selectedNotes.length} notes selected`
-            : `${firstNote.instrumentId} @ bar ${firstNote.barIndex + 1}`}
-        </div>
+        {onClose && (
+          <Tooltip content="Close" placement="top" maxWidthClassName="w-20">
+            <button
+              type="button"
+              className="w-6 h-6 rounded border border-slate-700 bg-slate-900 text-slate-200 text-xs leading-none"
+              onClick={onClose}
+            >
+              ×
+            </button>
+          </Tooltip>
+        )}
       </div>
+
+      <div className="px-4 py-2 border-b border-slate-800">
+        <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Debug</div>
+        {(() => {
+          const laneHeight = 28;
+          const idx = INSTRUMENT_ORDER.indexOf(String(firstNote.instrumentId));
+          const h = Math.max(2, laneHeight - 6);
+          const y = (idx >= 0 ? idx : -1) * laneHeight + Math.max(0, Math.floor((laneHeight - h) / 2));
+          const dpr = typeof window !== "undefined" ? window.devicePixelRatio : undefined;
+          return (
+            <div className="text-[10px] text-slate-400 font-mono leading-snug">
+              <div>id: {String(firstNote.id)}</div>
+              <div>instrumentId: {String(firstNote.instrumentId)}</div>
+              <div>midiPitch: {String(firstNote.midiPitch)}</div>
+              <div>laneIdx: {idx}</div>
+              <div>expected y/h: {y}/{h} (laneHeight {laneHeight})</div>
+              <div>dpr: {String(dpr)}</div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Timing Nudges */}
+      {onNudgeTicks && nudgeStepTicks !== null && (
+        <div className="px-4 py-3 border-b border-slate-800">
+          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-2">
+            Nudge (Grid)
+          </div>
+          <div className="flex items-center gap-2">
+            <Tooltip content="Move earlier by one grid step" placement="top" maxWidthClassName="w-56">
+              <button
+                type="button"
+                className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                onClick={() => onNudgeTicks(-nudgeStepTicks)}
+              >
+                -{gridResolution}
+              </button>
+            </Tooltip>
+            <Tooltip content="Move later by one grid step" placement="top" maxWidthClassName="w-52">
+              <button
+                type="button"
+                className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                onClick={() => onNudgeTicks(nudgeStepTicks)}
+              >
+                +{gridResolution}
+              </button>
+            </Tooltip>
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">
+            Step: {nudgeStepTicks} ticks
+          </div>
+        </div>
+      )}
 
       {/* Velocity */}
       <div className="px-4 py-3 border-b border-slate-800">

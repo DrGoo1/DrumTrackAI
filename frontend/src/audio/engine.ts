@@ -177,6 +177,14 @@ export const Engine = {
     // DON'T start Transport - not needed for plain HTML5 audio
     // Tone.Transport.start();
   },
+  getCurrentTimeSeconds() {
+    // Use any existing player as the time source.
+    // This is the authoritative clock for DCSM playback while HTML5 audio is running.
+    const first = Array.from(players.values())[0];
+    if (!first || !first.audioElement) return 0;
+    const t = first.audioElement.currentTime;
+    return typeof t === "number" && Number.isFinite(t) ? t : 0;
+  },
   async pause() {
     await this.ensureStarted();
     

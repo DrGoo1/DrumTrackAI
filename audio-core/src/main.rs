@@ -89,6 +89,10 @@ struct PeaksOut {
     sr: u32,
     duration: f32,
     peaks: Vec<f32>,
+    #[serde(rename = "peaksL")]
+    peaks_l: Vec<f32>,
+    #[serde(rename = "peaksR")]
+    peaks_r: Vec<f32>,
 }
 #[derive(Serialize)]
 struct AnalyzeOut {
@@ -129,10 +133,27 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Peaks { file, max_points } => {
-            let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;
-            let duration = pcm.len() as f32 / sr as f32;
-            let peaks = dsp::downsample_peaks(&pcm, max_points);
-            serde_json::to_writer(std::io::stdout(), &PeaksOut { sr, duration, peaks })?;
+            let ((l, r), sr) = decoder::decode_to_stereo_f32(&file)?;
+            let duration = l.len() as f32 / sr as f32;
+            let peaks_l = dsp::downsample_peaks(&l, max_points);
+            let peaks_r = dsp::downsample_peaks(&r, max_points);
+
+            let mut mono = Vec::<f32>::with_capacity(l.len().min(r.len()));
+            for (a, b) in l.iter().zip(r.iter()) {
+                mono.push((a + b) * 0.5);
+            }
+            let peaks = dsp::downsample_peaks(&mono, max_points);
+
+            serde_json::to_writer(
+                std::io::stdout(),
+                &PeaksOut {
+                    sr,
+                    duration,
+                    peaks,
+                    peaks_l,
+                    peaks_r,
+                },
+            )?;
         }
         Cmd::Analyze { file, min_bpm, max_bpm } => {
             let (pcm, sr) = decoder::decode_to_mono_f32(&file)?;

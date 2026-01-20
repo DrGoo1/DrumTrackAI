@@ -33,6 +33,7 @@ type ChannelState = {
   sendOhNode: GainNode;
   sendRoomNode: GainNode;
   analyser: AnalyserNode;
+  activeSources: Set<AudioBufferSourceNode>;
 };
 
 export class DrumPlayerEngine {
@@ -43,6 +44,8 @@ export class DrumPlayerEngine {
   private analyser: AnalyserNode;
   private ohAnalyser: AnalyserNode;
   private roomAnalyser: AnalyserNode;
+
+  private resumeHookInstalled = false;
 
   private channels: Map<DrumPlayerChannelId, ChannelState> = new Map();
 
@@ -78,15 +81,61 @@ export class DrumPlayerEngine {
     // Master -> analyser -> destination
     this.masterGain.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
+
+    this.installResumeHook();
   }
 
   get audioContext() {
     return this.ctx;
   }
 
+  private installResumeHook() {
+    if (this.resumeHookInstalled) return;
+    this.resumeHookInstalled = true;
+
+    const attempt = async () => {
+      try {
+        if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+          await this.ctx.resume();
+        }
+      } catch {
+        // ignore
+      }
+      if (this.ctx.state !== "suspended" && this.ctx.state !== "interrupted") {
+        try {
+          window.removeEventListener("pointerdown", onGesture, true);
+          window.removeEventListener("touchstart", onGesture, true);
+          window.removeEventListener("keydown", onGesture, true);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    const onGesture = () => {
+      void attempt();
+    };
+
+    try {
+      window.addEventListener("pointerdown", onGesture, true);
+      window.addEventListener("touchstart", onGesture, true);
+      window.addEventListener("keydown", onGesture, true);
+    } catch {
+      // ignore
+    }
+  }
+
   async ensureRunning() {
-    if (this.ctx.state !== "running") {
+    if (this.ctx.state !== "suspended" && this.ctx.state !== "interrupted") return;
+    this.installResumeHook();
+    try {
       await this.ctx.resume();
+    } catch (e) {
+      // keep hook installed; caller may retry after a gesture
+      throw e;
+    }
+    if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+      throw new Error("AudioContext is not running. Click anywhere in the page, then try Play again.");
     }
   }
 
@@ -145,10 +194,29 @@ export class DrumPlayerEngine {
       sendOhNode,
       sendRoomNode,
       analyser,
+      activeSources: new Set(),
     };
 
     this.channels.set(id, state);
     return state;
+  }
+
+  stopChannel(id: DrumPlayerChannelId) {
+    const ch = this.ensureChannel(id);
+    for (const src of Array.from(ch.activeSources)) {
+      try {
+        src.stop();
+      } catch {
+        // ignore
+      }
+    }
+    ch.activeSources.clear();
+  }
+
+  stopAll() {
+    for (const id of Array.from(this.channels.keys())) {
+      this.stopChannel(id);
+    }
   }
 
   setMasterGain(value: number) {
@@ -207,6 +275,17 @@ export class DrumPlayerEngine {
   }
 
   playChannelOneShot(id: DrumPlayerChannelId, opts?: { whenSec?: number; gain?: number }) {
+    // Some browsers require a user gesture to start audio. If samples were preloaded before a
+    // gesture, the AudioContext can remain suspended and playback will be silent.
+    // Resume opportunistically on play.
+    try {
+      if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+        void this.ctx.resume();
+      }
+    } catch {
+      // ignore
+    }
+
     const ch = this.ensureChannel(id);
     if (!ch.buffer) return;
 
@@ -218,6 +297,21 @@ export class DrumPlayerEngine {
 
     src.connect(oneShotGain);
     oneShotGain.connect(ch.gainNode);
+
+    ch.activeSources.add(src);
+    src.onended = () => {
+      ch.activeSources.delete(src);
+      try {
+        oneShotGain.disconnect();
+      } catch {
+        // ignore
+      }
+      try {
+        src.disconnect();
+      } catch {
+        // ignore
+      }
+    };
 
     const when = typeof opts?.whenSec === "number" ? opts.whenSec : this.ctx.currentTime;
     src.start(when);

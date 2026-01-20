@@ -1,12 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import WebDAWApp from './components/WebDAWApp';
 import BenchPage from './pages/BenchPage';
 import { WebDAW } from './pages/WebDAW';
+import WebDAWAppV3 from './pages/WebDAWAppV3';
 import { UploadWithWaveform } from './components/UploadWithWaveform';
+import { initializeTransportBridge } from './integration/tempoBridge';
 import './App.css';
 
 function App() {
+  useEffect(() => {
+    initializeTransportBridge();
+  }, []);
+
   return (
     <Router>
       <div className="App min-h-screen bg-slate-950">
@@ -36,6 +42,7 @@ function App() {
         <Routes>
           <Route path="/upload" element={<UploadWithWaveform />} />
           <Route path="/" element={<WebDAWApp />} />
+          <Route path="/v3" element={<WebDAWAppV3 />} />
           <Route path="/bench" element={<BenchPage />} />
           <Route path="/webdaw" element={<WebDAW />} />
         </Routes>

@@ -17,6 +17,11 @@ ArticulationProfile = Literal["balanced", "ghosty", "tight_hats", "crashy"]
 LimbId = Literal["LH", "RH", "LF", "RF"]
 ShuffleMode = Literal["straight", "swing_8th", "swing_16th"]
 
+FootHatPulseSubdivision = Literal["off", "quarter", "eighth", "sixteenth"]
+FootHatPulseApply = Literal["transition", "ride_bars", "both"]
+
+CymbalFocusMode = Literal["continuous", "section_rule"]
+
 # High-level song style presets for Song Mode generation.
 SongStyle = Literal[
     "pop",
@@ -328,6 +333,20 @@ class DrumGenerationConfig:
     # 0.0 = neutral, 1.0 = strongly ride-focused in choruses only.
     chorusRidePreference: float = 0.0
 
+    # Continuous cymbal blend control (0 = hats, 1 = ride). Used by transforms.
+    cymbalFocusMode: CymbalFocusMode = "continuous"
+    hatsToRideBlend: float = 0.0
+    hatsToRideThreshold: float = 0.6
+    rideBellPercent: float = 0.2
+
+    # Left-foot hat (hihat_pedal) pulse while on ride.
+    footHatPulseSubdivision: FootHatPulseSubdivision = "off"
+    footHatPulseApply: FootHatPulseApply = "both"
+
+    # Per-bar fill directives (absolute bar indices)
+    forceFillBars: Optional[List[int]] = None
+    suppressFillBars: Optional[List[int]] = None
+
     # ================================================================
     # SONG MODE (High-level full-song generation)
     # ================================================================
@@ -367,6 +386,14 @@ class DrumGenerationConfig:
             "fillDensity": self.fillDensity,
             "articulationProfile": self.articulationProfile,
             "chorusRidePreference": self.chorusRidePreference,
+            "cymbalFocusMode": self.cymbalFocusMode,
+            "hatsToRideBlend": self.hatsToRideBlend,
+            "hatsToRideThreshold": self.hatsToRideThreshold,
+            "rideBellPercent": self.rideBellPercent,
+            "footHatPulseSubdivision": self.footHatPulseSubdivision,
+            "footHatPulseApply": self.footHatPulseApply,
+            "forceFillBars": self.forceFillBars,
+            "suppressFillBars": self.suppressFillBars,
             "styleSourceMode": self.styleSourceMode,
         }
         if self.euclideanLanes is not None:
@@ -558,6 +585,14 @@ class DrumGenerationConfig:
             fillDensity=data.get("fillDensity", 0.7),
             articulationProfile=data.get("articulationProfile", "balanced"),
             chorusRidePreference=data.get("chorusRidePreference", 0.0),
+            cymbalFocusMode=data.get("cymbalFocusMode", "continuous"),
+            hatsToRideBlend=data.get("hatsToRideBlend", 0.0),
+            hatsToRideThreshold=data.get("hatsToRideThreshold", 0.6),
+            rideBellPercent=data.get("rideBellPercent", 0.2),
+            footHatPulseSubdivision=data.get("footHatPulseSubdivision", "off"),
+            footHatPulseApply=data.get("footHatPulseApply", "both"),
+            forceFillBars=data.get("forceFillBars"),
+            suppressFillBars=data.get("suppressFillBars"),
             styleSourceMode=data.get("styleSourceMode", "combined"),
             euclideanLanes=euclidean_lanes,
             bars=bars,

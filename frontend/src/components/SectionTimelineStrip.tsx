@@ -3,6 +3,7 @@
  * Part of Drum Builder v2.0 UI Components
  */
 import React from 'react';
+import { Tooltip } from './Tooltip';
 
 export interface Section {
   id: string;
@@ -140,39 +141,43 @@ export const SectionTimelineStrip: React.FC<SectionTimelineStripProps> = ({
                     {/* Status Indicators */}
                     <div className="flex flex-col space-y-1">
                       {lockInfo.hasTrack && (
-                        <div 
-                          className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-xs"
-                          title="Has drum track"
-                        >
-                          ✓
-                        </div>
+                        <Tooltip content="Has drum track" placement="top" maxWidthClassName="w-28">
+                          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-xs">
+                            ✓
+                          </div>
+                        </Tooltip>
                       )}
                       {lockInfo.locked && (
-                        <div 
-                          className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center text-xs"
-                          title="Locked"
-                        >
-                          🔒
-                        </div>
+                        <Tooltip content="Locked" placement="top" maxWidthClassName="w-20">
+                          <div className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center text-xs">
+                            🔒
+                          </div>
+                        </Tooltip>
                       )}
                     </div>
                   </div>
 
                   {/* Lock Toggle Button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onLockToggle(section.id);
-                    }}
-                    className={`mt-auto text-xs px-2 py-1 rounded transition-all ${
-                      lockInfo.locked
-                        ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                        : 'bg-white/20 hover:bg-white/30 text-white'
-                    }`}
-                    title={lockInfo.locked ? 'Unlock section' : 'Lock section'}
+                  <Tooltip
+                    content={lockInfo.locked ? 'Unlock section' : 'Lock section'}
+                    placement="top"
+                    maxWidthClassName="w-28"
+                    wrapperClassName="mt-auto"
                   >
-                    {lockInfo.locked ? '🔒 Locked' : '🔓 Lock'}
-                  </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onLockToggle(section.id);
+                      }}
+                      className={`text-xs px-2 py-1 rounded transition-all ${
+                        lockInfo.locked
+                          ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                          : 'bg-white/20 hover:bg-white/30 text-white'
+                      }`}
+                    >
+                      {lockInfo.locked ? '🔒 Locked' : '🔓 Lock'}
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
 

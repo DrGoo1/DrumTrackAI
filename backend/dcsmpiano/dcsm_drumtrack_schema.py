@@ -61,6 +61,9 @@ class DrumNoteEvent:
     
     # Drum-specific identification
     instrumentId: str                  # e.g., "kick", "snare_center", "hihat_closed"
+
+    # Optional articulation identifier (for plugin mapping / CC rendering)
+    articulationId: Optional[str] = None
     
     # Optional aspect classification
     aspect: Optional[NoteAspect] = None
@@ -320,6 +323,70 @@ GM_DRUM_MAP = {
 }
 
 
+MIDI_PITCH_TO_INSTRUMENT_ID = {
+    35: 'kick',
+    36: 'kick',
+
+    38: 'snare_center',
+    40: 'snare_center',
+    37: 'snare_rim',
+    39: 'snare_rim',
+
+    42: 'hihat_closed',
+    44: 'hihat_pedal',
+    54: 'hihat_closed',
+    68: 'hihat_closed',
+    69: 'hihat_closed',
+    70: 'hihat_closed',
+    71: 'hihat_closed',
+    73: 'hihat_closed',
+    78: 'hihat_closed',
+    80: 'hihat_closed',
+    22: 'hihat_closed',
+
+    46: 'hihat_open',
+    67: 'hihat_open',
+    72: 'hihat_open',
+    74: 'hihat_open',
+    79: 'hihat_open',
+    81: 'hihat_open',
+    26: 'hihat_open',
+
+    45: 'tom_low',
+    29: 'tom_low',
+    41: 'tom_low',
+    43: 'tom_low',
+    61: 'tom_low',
+    64: 'tom_low',
+    84: 'tom_low',
+
+    48: 'tom_mid',
+    47: 'tom_mid',
+    60: 'tom_mid',
+    63: 'tom_mid',
+    77: 'tom_mid',
+    86: 'tom_mid',
+    87: 'tom_mid',
+
+    50: 'tom_high',
+    30: 'tom_high',
+    62: 'tom_high',
+    76: 'tom_high',
+    83: 'tom_high',
+
+    49: 'crash_1',
+    52: 'crash_1',
+    55: 'crash_1',
+    57: 'crash_2',
+    58: 'crash_1',
+
+    51: 'ride_bow',
+    53: 'ride_bell',
+    59: 'ride_edge',
+    82: 'ride_bow',
+}
+
+
 def instrument_id_to_midi_pitch(instrument_id: str) -> int:
     """
     Convert instrument ID to GM MIDI pitch.
@@ -354,10 +421,12 @@ def midi_pitch_to_instrument_id(midi_pitch: int) -> str:
     Returns:
         Instrument identifier string
     """
-    # Reverse lookup
-    for inst_id, pitch in GM_DRUM_MAP.items():
-        if pitch == midi_pitch:
-            return inst_id
-    
+    try:
+        p = int(midi_pitch)
+    except Exception:
+        return ""
+    inst = MIDI_PITCH_TO_INSTRUMENT_ID.get(p)
+    if inst:
+        return inst
     # Fallback: generic mapping
-    return f"drum_{midi_pitch}"
+    return f"drum_{p}"

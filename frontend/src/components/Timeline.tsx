@@ -60,6 +60,8 @@ export type Section = {
 
 interface TimelineProps {
   bpm: number;
+  tempoMap?: Array<{ tSec: number; bpm: number }>;
+  beatTimes?: number[];
   tracks: UploadedTrack[];
   sections: Section[];
   onSectionsChange: (sections: Section[]) => void;
@@ -73,9 +75,10 @@ interface TimelineProps {
   onAutoSectionize?: (trackKey: string) => void;
   selectedSectionIds?: Set<string>;
   onSelectSection?: (sectionId: string, multi: boolean) => void;
+  onSectionContextMenu?: (sectionId: string) => void;
   pixelsPerBeat: number;
   timeSignature?: [number, number];
-  scrollSyncRef?: React.RefObject<HTMLDivElement>;
+  scrollSyncRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 const resolvePeakMagnitude = (value: any): number => {
@@ -119,6 +122,121 @@ const clampSigned = (value: number): number => {
   return value;
 };
 
+type TempoPoint = { tSec: number; bpm: number };
+
+function normalizeTempoMap(tempoMap?: Array<{ tSec: number; bpm: number }>): TempoPoint[] {
+  const pts = Array.isArray(tempoMap)
+    ? tempoMap
+        .map((p) => ({ tSec: Number((p as any)?.tSec) || 0, bpm: Number((p as any)?.bpm) || 0 }))
+        .filter((p) => Number.isFinite(p.tSec) && Number.isFinite(p.bpm) && p.bpm > 0)
+        .sort((a, b) => a.tSec - b.tSec)
+    : [];
+  return pts;
+}
+
+function makeTimeBeatMapper(tempoPts: TempoPoint[], fallbackBpm: number) {
+  const bpm0 = Number.isFinite(fallbackBpm) && fallbackBpm > 0 ? fallbackBpm : 120;
+  const pts = tempoPts.length ? tempoPts : [{ tSec: 0, bpm: bpm0 }];
+
+  const beatsAtPoint: number[] = new Array(pts.length);
+  beatsAtPoint[0] = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    const dt = Math.max(0, cur.tSec - prev.tSec);
+    beatsAtPoint[i] = beatsAtPoint[i - 1] + (dt * prev.bpm) / 60;
+  }
+
+  const beatsAtTime = (tSec: number): number => {
+    const t = Math.max(0, Number.isFinite(tSec) ? tSec : 0);
+    if (pts.length === 1) {
+      return (t * pts[0].bpm) / 60;
+    }
+    for (let i = 1; i < pts.length; i++) {
+      const cur = pts[i];
+      if (t <= cur.tSec) {
+        const prev = pts[i - 1];
+        const dt = Math.max(0, t - prev.tSec);
+        return beatsAtPoint[i - 1] + (dt * prev.bpm) / 60;
+      }
+    }
+    const last = pts[pts.length - 1];
+    const dt = Math.max(0, t - last.tSec);
+    return beatsAtPoint[beatsAtPoint.length - 1] + (dt * last.bpm) / 60;
+  };
+
+  const timeAtBeats = (beatsIn: number): number => {
+    const beats = Math.max(0, Number.isFinite(beatsIn) ? beatsIn : 0);
+    if (pts.length === 1) {
+      return (beats * 60) / pts[0].bpm;
+    }
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const b0 = beatsAtPoint[i - 1];
+      const b1 = beatsAtPoint[i];
+      if (beats <= b1) {
+        const db = Math.max(0, beats - b0);
+        return prev.tSec + (db * 60) / prev.bpm;
+      }
+    }
+    const last = pts[pts.length - 1];
+    const bLast = beatsAtPoint[beatsAtPoint.length - 1];
+    const db = Math.max(0, beats - bLast);
+    return last.tSec + (db * 60) / last.bpm;
+  };
+
+  return { beatsAtTime, timeAtBeats };
+}
+
+function normalizeBeatTimes(beatTimes?: number[]): number[] {
+  if (!Array.isArray(beatTimes) || beatTimes.length < 2) return [];
+  const out = beatTimes
+    .map((t) => Number(t))
+    .filter((t) => Number.isFinite(t))
+    .sort((a, b) => a - b);
+  return out.length >= 2 ? out : [];
+}
+
+function makeTimeBeatMapperFromBeatTimes(beatTimes: number[]) {
+  const bt = normalizeBeatTimes(beatTimes);
+  const beatsAtTime = (tSec: number): number => {
+    const t = Math.max(0, Number.isFinite(tSec) ? tSec : 0);
+    if (bt.length < 2) return 0;
+    let lo = 0;
+    let hi = bt.length - 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (bt[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    const idx = lo;
+    if (idx <= 0) return 0;
+    if (idx >= bt.length) return bt.length - 1;
+    const prev = idx - 1;
+    const t0 = bt[prev];
+    const t1 = bt[idx];
+    if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) return prev;
+    const frac = Math.max(0, Math.min(1, (t - t0) / (t1 - t0)));
+    return prev + frac;
+  };
+
+  const timeAtBeats = (beatsIn: number): number => {
+    const beats = Math.max(0, Number.isFinite(beatsIn) ? beatsIn : 0);
+    if (bt.length < 2) return 0;
+    const maxIdx = bt.length - 1;
+    const idx0 = Math.max(0, Math.min(maxIdx, Math.floor(beats)));
+    const idx1 = Math.max(0, Math.min(maxIdx, idx0 + 1));
+    const t0 = bt[idx0] ?? 0;
+    const t1 = bt[idx1] ?? t0;
+    const frac = Math.max(0, Math.min(1, beats - idx0));
+    if (idx0 === idx1) return Number.isFinite(t0) ? t0 : 0;
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return Number.isFinite(t0) ? t0 : 0;
+    return t0 + (t1 - t0) * frac;
+  };
+
+  return { beatsAtTime, timeAtBeats };
+}
+
 type WaveformChannelSource = {
   extents?: WaveformExtent[];
   magnitudes?: any[];
@@ -158,7 +276,10 @@ const drawWaveformChannel = (
   width: number,
   centerY: number,
   amplitude: number,
-  color: string
+  color: string,
+  timeAtBeat: (beat: number) => number,
+  trackDurationSec: number,
+  pixelsPerBeat: number
 ) => {
   if ((!source.extents || !source.extents.length) && (!source.magnitudes || !source.magnitudes.length)) {
     return;
@@ -167,17 +288,62 @@ const drawWaveformChannel = (
     return;
   }
 
+  const durationSec = Math.max(1e-6, Number.isFinite(trackDurationSec) ? trackDurationSec : 0);
+
+  const sampleAtNormalized = (norm: number): WaveformExtent => {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(norm) ? norm : 0));
+    const { extents, magnitudes } = source;
+    if (extents?.length) {
+      if (extents.length === 1) return extents[0];
+      const rawIndex = clamped * (extents.length - 1);
+      const floorIndex = Math.floor(rawIndex);
+      const ceilIndex = Math.min(extents.length - 1, floorIndex + 1);
+      const t = rawIndex - floorIndex;
+      const start = extents[floorIndex];
+      const end = extents[ceilIndex];
+      return {
+        min: start.min + (end.min - start.min) * t,
+        max: start.max + (end.max - start.max) * t,
+      };
+    }
+    if (magnitudes?.length) {
+      const idx = Math.max(0, Math.min(magnitudes.length - 1, Math.round(clamped * (magnitudes.length - 1))));
+      const magnitude = resolvePeakMagnitude(magnitudes[idx]);
+      return { min: -magnitude, max: magnitude };
+    }
+    return { min: 0, max: 0 };
+  };
+
   const topY: number[] = new Array(width);
   const bottomY: number[] = new Array(width);
 
   for (let x = 0; x < width; x++) {
-    const { min, max } = sampleWaveformPoint(source, x, width);
+    const beat = pixelsPerBeat > 0 ? x / pixelsPerBeat : 0;
+    const tSec = timeAtBeat(beat);
+    const norm = tSec / durationSec;
+    const { min, max } = sampleAtNormalized(norm);
     topY[x] = centerY - clampSigned(max) * amplitude;
     bottomY[x] = centerY - clampSigned(min) * amplitude;
   }
 
+  // Fill first for better perceived density, then outline.
+  ctx.save();
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, topY[0]);
+  for (let x = 1; x < width; x++) {
+    ctx.lineTo(x, topY[x]);
+  }
+  for (let x = width - 1; x >= 0; x--) {
+    ctx.lineTo(x, bottomY[x]);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(0, topY[0]);
   for (let x = 1; x < width; x++) {
@@ -191,25 +357,12 @@ const drawWaveformChannel = (
     ctx.lineTo(x, bottomY[x]);
   }
   ctx.stroke();
-
-  ctx.save();
-  ctx.globalAlpha = 0.45;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(0, topY[0]);
-  for (let x = 1; x < width; x++) {
-    ctx.lineTo(x, topY[x]);
-  }
-  for (let x = width - 1; x >= 0; x--) {
-    ctx.lineTo(x, bottomY[x]);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
 };
 
 const Timeline: React.FC<TimelineProps> = ({
   bpm,
+  tempoMap,
+  beatTimes,
   tracks,
   sections,
   onSectionsChange,
@@ -223,6 +376,7 @@ const Timeline: React.FC<TimelineProps> = ({
   onAutoSectionize,
   selectedSectionIds = new Set(),
   onSelectSection,
+  onSectionContextMenu,
   pixelsPerBeat,
   timeSignature = [4, 4],
   scrollSyncRef,
@@ -232,6 +386,7 @@ const Timeline: React.FC<TimelineProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentWidthRef = useRef<number>(0);
   const timelineDurationRef = useRef<number>(0);
+  const lastTimelineDebugRef = useRef<string>('');
   const blocksBySection = useRudimentBlockStore((state) => state.blocksBySection);
   const [viewportWidth, setViewportWidth] = useState(0);
 
@@ -265,16 +420,6 @@ const Timeline: React.FC<TimelineProps> = ({
     };
   }, []);
 
-  useEffect(() => {
-    if (!scrollSyncRef) return;
-    scrollSyncRef.current = scrollContainerRef.current;
-    return () => {
-      if (scrollSyncRef.current === scrollContainerRef.current) {
-        scrollSyncRef.current = null;
-      }
-    };
-  }, [scrollSyncRef]);
-
   // Draw timeline and waveforms
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -283,20 +428,23 @@ const Timeline: React.FC<TimelineProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const beatsPerSecond = bpm > 0 ? bpm / 60 : 120 / 60;
-    const pxPerSecond = Math.max(1, pixelsPerBeat) * beatsPerSecond;
-    const trackDurations = tracks.length ? tracks.map((t) => t.seconds || 0) : [0];
-    const waveformDuration = Math.max(...trackDurations, 0);
-    const sectionDuration = sections.length ? Math.max(...sections.map((s) => s.end || 0)) : 0;
-    const loopExtent = loop?.end ?? 0;
-    const timelineDuration = Math.max(10, waveformDuration, sectionDuration, loopExtent);
-    timelineDurationRef.current = timelineDuration;
+    const tempoPts = normalizeTempoMap(tempoMap);
+    const normalizedBeatTimes = normalizeBeatTimes(beatTimes);
+    const mapper = normalizedBeatTimes.length ? makeTimeBeatMapperFromBeatTimes(normalizedBeatTimes) : makeTimeBeatMapper(tempoPts, bpm);
+    const trackDurations = tracks.length ? tracks.map((t) => Number(t.seconds) || 0) : [0];
+    const waveformDurationSec = Math.max(...trackDurations, 0);
+    const sectionDurationSec = sections.length ? Math.max(...sections.map((s) => Number(s.end) || 0)) : 0;
+    const loopExtentSec = loop?.end ?? 0;
+    const timelineDurationSec = Math.max(10, waveformDurationSec, sectionDurationSec, loopExtentSec);
+    timelineDurationRef.current = timelineDurationSec;
+
+    const timelineBeats = Math.max(1, mapper.beatsAtTime(timelineDurationSec));
 
     const parentWidth = viewportWidth
       || viewportRef.current?.clientWidth
       || canvas.parentElement?.clientWidth
       || 800;
-    const displayWidth = Math.max(parentWidth, Math.ceil(timelineDuration * pxPerSecond));
+    const displayWidth = Math.max(parentWidth, Math.ceil(timelineBeats * Math.max(1, pixelsPerBeat)));
     contentWidthRef.current = displayWidth;
 
     const displayHeight = Math.max(180, Math.max(1, tracks.length) * 55);
@@ -319,12 +467,11 @@ const Timeline: React.FC<TimelineProps> = ({
     const headerHeight = 32;
     const contentHeight = height - headerHeight;
     const beatsPerBar = timeSignature?.[0] ?? 4;
-    const pxForTime = (time: number) => Math.max(0, time * pxPerSecond);
-    const secPerBeat = bpm > 0 ? 60 / bpm : 0.5;
-    const secPerBar = secPerBeat * beatsPerBar;
-    const totalBars = Math.ceil(timelineDuration / Math.max(secPerBar, 0.001));
-    const totalBeats = Math.ceil(timelineDuration / Math.max(secPerBeat, 0.001));
-    const barWidthPx = pxPerSecond * secPerBar;
+    const pxPerBeatLocal = Math.max(1, pixelsPerBeat);
+    const pxForBeat = (beat: number) => Math.max(0, beat * pxPerBeatLocal);
+    const totalBeats = Math.ceil(timelineBeats);
+    const totalBars = Math.ceil(totalBeats / Math.max(1, beatsPerBar));
+    const barWidthPx = pxPerBeatLocal * beatsPerBar;
 
     const drawBarGrid = () => {
       ctx.save();
@@ -334,7 +481,7 @@ const Timeline: React.FC<TimelineProps> = ({
         if (beat % beatsPerBar === 0) {
           continue;
         }
-        const x = pxForTime(beat * secPerBeat);
+        const x = pxForBeat(beat);
         if (x > width + 1) {
           break;
         }
@@ -347,7 +494,7 @@ const Timeline: React.FC<TimelineProps> = ({
 
       ctx.globalAlpha = 0.55;
       for (let bar = 0; bar <= totalBars; bar += 1) {
-        const x = pxForTime(bar * secPerBar);
+        const x = pxForBeat(bar * beatsPerBar);
         if (x > width + 1) {
           break;
         }
@@ -361,8 +508,10 @@ const Timeline: React.FC<TimelineProps> = ({
       ctx.restore();
     };
 
-    if (sections.length > 0) {
-      console.log(`🎨 Timeline rendering ${sections.length} sections at ${pxPerSecond.toFixed(2)}px/sec`);
+    const timelineDebugKey = `${sections.length}|${bpm}|${pixelsPerBeat}|${timeSignature?.[0] ?? 4}/${timeSignature?.[1] ?? 4}|beats=${timelineBeats.toFixed(2)}|sec=${timelineDurationSec.toFixed(3)}`;
+    if (sections.length > 0 && lastTimelineDebugRef.current !== timelineDebugKey) {
+      lastTimelineDebugRef.current = timelineDebugKey;
+      console.log(`🎨 Timeline rendering ${sections.length} sections at ${pxPerBeatLocal.toFixed(1)}px/beat (tempo-map aware)`);
     }
 
     drawBarGrid();
@@ -372,8 +521,9 @@ const Timeline: React.FC<TimelineProps> = ({
     tracks.forEach((track, i) => {
       const y = headerHeight + i * trackHeight;
       const waveformColor = track.color || '#38bdf8';
-      const trackDuration = Math.max(0.1, track.seconds || timelineDuration);
-      const waveformWidth = Math.min(width, Math.max(1, Math.round(pxForTime(trackDuration))));
+      const trackDuration = Math.max(0.1, track.seconds || timelineDurationSec);
+      const waveformBeats = Math.max(0.1, mapper.beatsAtTime(trackDuration));
+      const waveformWidth = Math.min(width, Math.max(1, Math.round(pxForBeat(waveformBeats))));
       const bgColor = `${waveformColor}20`;
 
       ctx.fillStyle = bgColor;
@@ -417,6 +567,9 @@ const Timeline: React.FC<TimelineProps> = ({
           leftCenter,
           channelAmplitude,
           waveformColor,
+          mapper.timeAtBeats,
+          trackDuration,
+          pxPerBeatLocal,
         );
         drawWaveformChannel(
           ctx,
@@ -425,6 +578,9 @@ const Timeline: React.FC<TimelineProps> = ({
           rightCenter,
           channelAmplitude,
           waveformColor,
+          mapper.timeAtBeats,
+          trackDuration,
+          pxPerBeatLocal,
         );
 
         const dividerY = y + halfHeight;
@@ -445,6 +601,9 @@ const Timeline: React.FC<TimelineProps> = ({
           centerY,
           amplitude,
           waveformColor,
+          mapper.timeAtBeats,
+          trackDuration,
+          pxPerBeatLocal,
         );
       } else {
         ctx.fillStyle = '#475569';
@@ -462,11 +621,70 @@ const Timeline: React.FC<TimelineProps> = ({
     ctx.fillStyle = BAR_GRID_THEME.background;
     ctx.fillRect(0, 0, width, headerHeight);
 
-    sections.forEach((section, idx) => {
-      const startX = pxForTime(section.start);
-      const endX = pxForTime(section.end);
+    // Tempo curve overlay (if available)
+    if (tempoMap && tempoMap.length >= 2) {
+      const pts = tempoMap
+        .map((p) => ({ tSec: Number((p as any)?.tSec) || 0, bpm: Number((p as any)?.bpm) || 0 }))
+        .filter((p) => Number.isFinite(p.tSec) && Number.isFinite(p.bpm) && p.bpm > 0)
+        .sort((a, b) => a.tSec - b.tSec);
 
-      if (idx === 0) {
+      if (pts.length >= 2) {
+        let minBpm = Infinity;
+        let maxBpm = -Infinity;
+        for (const p of pts) {
+          if (p.bpm < minBpm) minBpm = p.bpm;
+          if (p.bpm > maxBpm) maxBpm = p.bpm;
+        }
+        const range = Math.max(0, maxBpm - minBpm);
+        const stable = range <= 1.5;
+        const pad = Math.max(0.25, range * 0.15);
+        const lo = minBpm - pad;
+        const hi = maxBpm + pad;
+        const denom = Math.max(1e-6, hi - lo);
+
+        const yTop = 3;
+        const yBottom = headerHeight - 3;
+
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = stable ? 'rgba(16, 185, 129, 0.9)' : 'rgba(245, 158, 11, 0.95)';
+        ctx.shadowColor = stable ? 'rgba(16, 185, 129, 0.35)' : 'rgba(245, 158, 11, 0.35)';
+        ctx.shadowBlur = 6;
+
+        ctx.beginPath();
+        pts.forEach((p, idx) => {
+          const x = pxForBeat(mapper.beatsAtTime(p.tSec));
+          const norm = (p.bpm - lo) / denom;
+          const y = yBottom - norm * (yBottom - yTop);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Subtle baseline
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = '#334155';
+        ctx.beginPath();
+        ctx.moveTo(0, yBottom);
+        ctx.lineTo(width, yBottom);
+        ctx.stroke();
+
+        // Label
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = stable ? '#34d399' : '#fbbf24';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(`tempo curve (range ${range.toFixed(1)} bpm)`, 8, headerHeight - 6);
+        ctx.restore();
+      }
+    }
+
+    sections.forEach((section, idx) => {
+      const startX = pxForBeat(mapper.beatsAtTime(section.start));
+      const endX = pxForBeat(mapper.beatsAtTime(section.end));
+
+      if (idx === 0 && lastTimelineDebugRef.current === timelineDebugKey) {
         console.log(`🎯 First section ${section.label} spans ${endX - startX}px`);
       }
 
@@ -513,9 +731,10 @@ const Timeline: React.FC<TimelineProps> = ({
         const tempoTextX = startX + (endX - startX - tempoTextWidth) / 2;
         ctx.fillText(tempoText, tempoTextX, 22);
 
-        const durationSec = section.end - section.start;
-        const secPerBeat = 60 / Math.max(1, microTempo);
-        const bars = Math.max(1, Math.round(durationSec / (secPerBeat * beatsPerBar)));
+        const startB = mapper.beatsAtTime(section.start);
+        const endB = mapper.beatsAtTime(section.end);
+        const beatsSpan = Math.max(0, endB - startB);
+        const bars = Math.max(1, Math.round(beatsSpan / Math.max(1, beatsPerBar)));
         ctx.font = '9px sans-serif';
         ctx.fillStyle = '#cbd5e1';
         const barText = `${bars}`;
@@ -526,23 +745,24 @@ const Timeline: React.FC<TimelineProps> = ({
 
       const sectionBlocks = blocksBySection[section.id] || [];
       if (sectionBlocks.length) {
-        const microTempo = section.tempo || bpm || 120;
-        const secPerBeat = 60 / Math.max(1, microTempo);
-        const secPerBar = secPerBeat * beatsPerBar;
+        const sectionStartBeat = mapper.beatsAtTime(section.start);
         sectionBlocks.forEach((block) => {
           if (!block.lengthBars || block.lengthBars <= 0) {
             return;
           }
-          const blockStartSec = section.start + Math.max(0, block.startBar) * secPerBar;
-          const rawEndSec = blockStartSec + block.lengthBars * secPerBar;
+
+          const blockStartBeat = sectionStartBeat + Math.max(0, block.startBar) * Math.max(1, beatsPerBar);
+          const rawEndBeat = blockStartBeat + block.lengthBars * Math.max(1, beatsPerBar);
+          const blockStartSec = mapper.timeAtBeats(blockStartBeat);
+          const rawEndSec = mapper.timeAtBeats(rawEndBeat);
           const clampedStart = Math.max(section.start, blockStartSec);
           const clampedEnd = Math.min(section.end, rawEndSec);
           if (clampedEnd <= clampedStart) {
             return;
           }
 
-          const blockStartX = pxForTime(clampedStart);
-          const blockEndX = pxForTime(clampedEnd);
+          const blockStartX = pxForBeat(mapper.beatsAtTime(clampedStart));
+          const blockEndX = pxForBeat(mapper.beatsAtTime(clampedEnd));
           const blockWidth = Math.max(4, blockEndX - blockStartX);
 
           ctx.fillStyle = 'rgba(147, 51, 234, 0.6)';
@@ -568,8 +788,8 @@ const Timeline: React.FC<TimelineProps> = ({
     ctx.fillStyle = BAR_GRID_THEME.label;
     ctx.font = '10px sans-serif';
     for (let bar = 0; bar < totalBars; bar += 1) {
-      const startX = pxForTime(bar * secPerBar);
-      const nextX = pxForTime((bar + 1) * secPerBar);
+      const startX = pxForBeat(bar * beatsPerBar);
+      const nextX = pxForBeat((bar + 1) * beatsPerBar);
       if (nextX - startX < 36) {
         continue;
       }
@@ -577,14 +797,14 @@ const Timeline: React.FC<TimelineProps> = ({
     }
     ctx.restore();
 
-    const playheadX = pxForTime(playhead);
+    const playheadX = pxForBeat(mapper.beatsAtTime(playhead));
     ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(playheadX, 0);
     ctx.lineTo(playheadX, height);
     ctx.stroke();
-  }, [tracks, playhead, sections, bpm, blocksBySection, viewportWidth, pixelsPerBeat, loop, timeSignature]);
+  }, [tracks, playhead, sections, bpm, tempoMap, beatTimes, blocksBySection, viewportWidth, pixelsPerBeat, loop, timeSignature]);
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -593,33 +813,69 @@ const Timeline: React.FC<TimelineProps> = ({
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const duration = timelineDurationRef.current || Math.max(...tracks.map((t) => t.seconds), 10);
+
+    const durationSec = timelineDurationRef.current || Math.max(...tracks.map((t) => t.seconds), 10);
+    const tempoPts = normalizeTempoMap(tempoMap);
+    const normalizedBeatTimes = normalizeBeatTimes(beatTimes);
+    const mapper = normalizedBeatTimes.length
+      ? makeTimeBeatMapperFromBeatTimes(normalizedBeatTimes)
+      : makeTimeBeatMapper(tempoPts, bpm);
+    const totalBeats = Math.max(1, mapper.beatsAtTime(durationSec));
     const canvasWidth = canvas.clientWidth || contentWidthRef.current || 1;
-    const clickTime = (x / canvasWidth) * duration;
-    
+    const clickBeat = (x / canvasWidth) * totalBeats;
+    const clickTime = mapper.timeAtBeats(clickBeat);
+
     const headerHeight = 32;
-    
-    // Check if click was in section header area
+
     if (y <= headerHeight && onSelectSection) {
-      // Find which section was clicked
       for (const section of sections) {
-        const startX = (section.start / duration) * canvasWidth;
-        const endX = (section.end / duration) * canvasWidth;
-        
+        const startB = mapper.beatsAtTime(section.start);
+        const endB = mapper.beatsAtTime(section.end);
+        const startX = (startB / totalBeats) * canvasWidth;
+        const endX = (endB / totalBeats) * canvasWidth;
         if (x >= startX && x <= endX) {
-          // Multi-select with Ctrl/Cmd key
           const isMulti = event.ctrlKey || event.metaKey;
           onSelectSection(section.id, isMulti);
           return;
         }
       }
-      // Clicked in header but not on a section - clear selection
-      if (onSelectSection) {
-        onSelectSection('', false);
+      onSelectSection('', false);
+      return;
+    }
+
+    setPlayhead(clickTime);
+  };
+
+  const handleCanvasContextMenu = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!onSectionContextMenu) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const headerHeight = 32;
+    if (y > headerHeight) return;
+
+    const durationSec = timelineDurationRef.current || Math.max(...tracks.map((t) => t.seconds), 10);
+    const tempoPts = normalizeTempoMap(tempoMap);
+    const normalizedBeatTimes = normalizeBeatTimes(beatTimes);
+    const mapper = normalizedBeatTimes.length
+      ? makeTimeBeatMapperFromBeatTimes(normalizedBeatTimes)
+      : makeTimeBeatMapper(tempoPts, bpm);
+    const totalBeats = Math.max(1, mapper.beatsAtTime(durationSec));
+    const canvasWidth = canvas.clientWidth || contentWidthRef.current || 1;
+
+    for (const section of sections) {
+      const startB = mapper.beatsAtTime(section.start);
+      const endB = mapper.beatsAtTime(section.end);
+      const startX = (startB / totalBeats) * canvasWidth;
+      const endX = (endB / totalBeats) * canvasWidth;
+      if (x >= startX && x <= endX) {
+        event.preventDefault();
+        onSectionContextMenu(section.id);
+        return;
       }
-    } else {
-      // Click in waveform area - set playhead
-      setPlayhead(clickTime);
     }
   };
 
@@ -642,7 +898,7 @@ const Timeline: React.FC<TimelineProps> = ({
       end: playhead + 4,
       density: 0.5,
       fillIn: false,
-      fillOut: false
+      fillOut: false,
     };
     onSectionsChange([...sections, newSection]);
   };
@@ -685,6 +941,7 @@ const Timeline: React.FC<TimelineProps> = ({
               ref={canvasRef}
               className="w-full cursor-pointer"
               onClick={handleCanvasClick}
+              onContextMenu={handleCanvasContextMenu}
             />
           </div>
         </div>

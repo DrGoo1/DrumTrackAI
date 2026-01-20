@@ -12,6 +12,65 @@ DrumTracKAI v1.1.17 builds on v1.1.16 by introducing a **new AppDAW-based DCSM p
 - **Section Generation Rename**: Per-section generator button is now labeled **"Generate Section Specific Track"**.
 - **Mixer/Metering**: Drum engine strip meters tap **post-pan/post-fader** for more accurate visual levels.
 
+## Recent Progress (Jan 10, 2026) — WebDAWApp v3 Drum Grid + Limb Sync
+
+This checkpoint focused on making the **Drum Performance grid** and **4-limb grid** visually and logically consistent in the v3 UI.
+
+### What was fixed / added
+
+- **Performance grid note positioning + horizontal sync**
+  - Refactored the performance-grid note DOM so the **absolute positioning is owned by a plain container element**, not by the `Tooltip` wrapper.
+  - This removes subtle wrapper/CSS-induced offsets and makes the **performance grid notes line up with the limb grid hits**.
+  - File: `frontend/src/components/drums/DrumPianoRoll.tsx`
+
+- **4-limb inference now matches musical sticking**
+  - Implemented improved inferred limb assignment:
+    - Cymbal/hat timekeeping updates the "last hand" clock.
+    - Snare/toms alternate hands when hits are close in time; otherwise default to conventional sticking.
+  - Made inferred limb assignment **authoritative for the 4-limb grid** (can override unreliable upstream `limbId`).
+  - Result: 4-limb grid is now aligned with performance hits and shows correct sticking for common patterns.
+  - File: `frontend/src/components/drums/DrumPianoRoll.tsx`
+
+- **Debug instrumentation for diagnosing grid issues**
+  - Added/extended debug readouts (gated behind `localStorage.drpDebug=1`) to measure:
+    - computed vs DOM X alignment for a selected note
+    - lane heights, scroll metrics, per-instrument counts, and limb assignment counts
+  - File: `frontend/src/components/drums/DrumPianoRoll.tsx`
+
+- **Mode + Scope UI: dropdowns replaced with always-visible either/or options**
+  - Replaced "Mode" and "Scope" `<select>` dropdowns with **two-option radio-style controls** so both options are visible at all times.
+  - Scope controls remain disabled outside scratch mode.
+  - File: `frontend/src/components/v3/V3ImportAnalysisHeader.tsx`
+
+### SD3 support + “Advanced Articulation Mode” (backend MIDI render)
+
+- SD3 articulation map is available:
+  - File: `config/articulation_maps/superior_drummer3.json`
+- Backend MIDI renderer now supports an explicit flag:
+  - Payload field: `advancedArticulations: bool`
+  - When `false`: emits only the mapped note pitches.
+  - When `true`: additionally emits articulation-map events like:
+    - `cc` (e.g. CC4 hat openness)
+    - `aftertouch` (rendered as MIDI `polytouch`)
+  - File: `backend/render_to_plugin_midi.py`
+
+### Quick test checklist (v3)
+
+- Start the app (recommended):
+  - Run `STOP_ALL.bat` then `LAUNCH_WORKING.bat` from repo root.
+- In v3, load/generate a drum track and verify:
+  - Performance grid notes are aligned in their instrument rows.
+  - 4-limb grid hits are time-aligned with performance notes.
+  - Typical backbeat snare hits appear on LH in the 4-limb grid.
+  - Mode/Scope controls show both choices at once.
+
+### Next steps (building out v3)
+
+- Finish limb-lane alignment polish and remove any remaining spacer/offset inconsistencies between label column and grid.
+- Add articulation legend/shading in the UI (different shades per instrument articulation) and decide final articulation encoding strategy.
+- Wire UI to expose SD3 export settings (plugin selection + `advancedArticulations` flag) and validate SD3 playback.
+- Confirm groove selection actually influences generation for v3 (ensure selected groove id is passed and honored).
+
 Key additions in v1.1.17:
 
 - **New DCSM DAW page at `/`** powered by `AppDAW.tsx`

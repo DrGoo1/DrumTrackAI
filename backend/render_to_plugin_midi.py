@@ -25,6 +25,7 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
     Expected payload shape:
       {
         "plugin": "jamstix" | "sd3" | "ssd5" | ...,
+        "advancedArticulations": bool,
         "ppq": 480,
         "notes": [
           {"t0": int, "t1": int, "pitch": int, "vel": int, "chan": int,
@@ -35,6 +36,7 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     plugin = str(payload.get("plugin", "jamstix"))
     ppq = int(payload.get("ppq", 480)) or 480
+    advanced = bool(payload.get("advancedArticulations", False))
     notes_in: List[Dict[str, Any]] = list(payload.get("notes", []))
 
     mapper = _load_mapper(plugin)
@@ -60,7 +62,8 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Look up articulation mapping (note + optional CCs)
         art = mapper.get_articulation(art_id) if art_id else None
         note_num = int(art.get("note", n.get("pitch", 36))) if art else int(n.get("pitch", 36))
-        ccs = list(art.get("cc", [])) if art else []
+        ccs = list(art.get("cc", [])) if (advanced and art) else []
+        aftertouch = int(art.get("aftertouch")) if (advanced and art and art.get("aftertouch") is not None) else None
 
         # Program any static CC state at note-on
         events.append({
@@ -70,6 +73,7 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
             "vel": vel,
             "chan": chan,
             "ccs": ccs,
+            "aftertouch": aftertouch,
         })
         events.append({
             "tick": t1,
@@ -78,6 +82,7 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
             "vel": 0,
             "chan": chan,
             "ccs": [],
+            "aftertouch": None,
         })
 
     events.sort(key=lambda e: e["tick"])
@@ -102,6 +107,22 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
             first_cc = False
             dt = 0
+
+        # Optional per-note aftertouch (polytouch) next
+        at = ev.get("aftertouch")
+        if at is not None:
+            track.append(
+                Message(
+                    "polytouch",
+                    note=int(ev["note"]),
+                    value=int(at),
+                    channel=ev["chan"],
+                    time=dt if first_cc else 0,
+                )
+            )
+            first_cc = False
+            dt = 0
+
         # Then the note event
         msg_type = "note_on" if ev["kind"] == "note_on" else "note_off"
         track.append(

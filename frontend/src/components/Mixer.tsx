@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Engine } from "../audio/engine";
+import { Tooltip } from "./Tooltip";
 
 export type MixerTrack = { key: string; name: string; color?: string };
 
@@ -65,7 +66,9 @@ export default function Mixer({ tracks }: { tracks: MixerTrack[] }) {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full" style={{ background: t.color || "#60a5fa" }} />
-              <div className="text-sm text-slate-200 truncate font-medium" title={t.name}>{t.name}</div>
+              <Tooltip content={t.name} placement="top" maxWidthClassName="w-56">
+                <div className="text-sm text-slate-200 truncate font-medium">{t.name}</div>
+              </Tooltip>
             </div>
             <div className="flex gap-1">
               <button 

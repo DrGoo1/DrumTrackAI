@@ -1,6 +1,7 @@
 import React from 'react'
 import PanKnob from './PanKnob'
 import Meter from './Meter'
+import { Tooltip } from '../Tooltip'
 
 export default function Strip({ 
   id, name, gainDb, pan, mute, solo, onGain, onPan, onMute, onSolo, getAnalyser 
@@ -20,7 +21,9 @@ export default function Strip({
   return (
     <div className="p-2 bg-slate-700 rounded-xl text-slate-50 w-[260px]">
       <div className="flex items-center justify-between mb-2 text-sm">
-        <span className="truncate" title={name}>{name}</span>
+        <Tooltip content={name} placement="top" maxWidthClassName="w-56">
+          <span className="truncate">{name}</span>
+        </Tooltip>
         <div className="flex gap-1">
           <button onClick={onMute} className={`px-2 py-0.5 rounded ${mute ? 'bg-rose-600' : 'bg-slate-600'}`}>M</button>
           <button onClick={onSolo} className={`px-2 py-0.5 rounded ${solo ? 'bg-amber-500' : 'bg-slate-600'}`}>S</button>

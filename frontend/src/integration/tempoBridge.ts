@@ -4,6 +4,7 @@
 import * as Tone from 'tone'
 import { useDawStore } from '../state/dawStore'
 import { useMidi } from '../midi/midiStore'
+import { useV3Store } from '../state/v3/store'
 import { MidiScheduler } from '../midi/scheduler'
 import { getDefaultPlayer } from '../midi/players'
 
@@ -91,6 +92,7 @@ export class TransportBridge {
    */
   private syncTempoMap() {
     const unsubscribe = useDawStore.subscribe((state) => {
+      if (useV3Store.getState().ui.arrangementOwner === 'v3') return
       const tempoMap = state.project?.analytics?.tempoMap || []
       if (tempoMap.length > 0) {
         const stableTempoMap = this.simplifyTempoMap(tempoMap)
@@ -112,6 +114,7 @@ export class TransportBridge {
    */
   private syncArrangementSections() {
     const unsubscribe = useDawStore.subscribe((state) => {
+      if (useV3Store.getState().ui.arrangementOwner === 'v3') return
       const sections = state.project?.analytics?.sections || []
       if (sections.length > 0) {
         console.log('Syncing arrangement sections to MIDI:', sections.length, 'sections')
@@ -131,7 +134,8 @@ export class TransportBridge {
       const playing = state.playing
       if (playing) {
         if (Tone.Transport.state !== 'started') {
-          Tone.Transport.start()
+          const startAt = Math.max(0, Number(state.cursorSec) || 0)
+          Tone.Transport.start('+0', startAt)
           this.midiScheduler.start()
         }
       } else {
@@ -146,7 +150,11 @@ export class TransportBridge {
     const cursorUnsub = useDawStore.subscribe((state) => {
       const cursorSec = state.cursorSec
       const transportSeconds = Tone.Transport.seconds
-      if (Math.abs(transportSeconds - cursorSec) > 0.1) {
+      const diff = Math.abs(transportSeconds - cursorSec)
+      // While playing, avoid constantly forcing Tone.Transport to chase the waveform-playlist clock.
+      // That feedback loop can cause audible jitter / worse sync. Only correct large drift.
+      const threshold = state.playing ? 0.25 : 0.05
+      if (diff > threshold) {
         Tone.Transport.seconds = cursorSec
         this.midiScheduler.seek(cursorSec)
       }
@@ -213,20 +221,8 @@ export class TransportBridge {
       console.log('Tone.Transport paused')
     })
     
-    // Sync transport time back to DAW store
-    const syncInterval = setInterval(() => {
-      if (Tone.Transport.state === 'started') {
-        const transportTime = Tone.Transport.seconds
-        const dawTime = useDawStore.getState().cursorSec
-        
-        if (Math.abs(transportTime - dawTime) > 0.1) {
-          useDawStore.getState().setCursor(transportTime)
-        }
-      }
-    }, 100) // Update 10 times per second
-    
-    // Clean up interval on dispose
-    this.unsubscribers.push(() => clearInterval(syncInterval))
+    // NOTE: Do not sync Tone.Transport time back into the DAW cursor.
+    // waveform-playlist (audio timeline) is the master clock; Tone follows it.
   }
   
   /**

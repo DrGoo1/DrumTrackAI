@@ -4,9 +4,12 @@ echo DrumTracKAI v1.1.16 Hybrid - Working Launch
 echo ================================================
 echo.
 
-:: Kill any existing processes
-taskkill /f /im python.exe >nul 2>&1
-taskkill /f /im node.exe >nul 2>&1
+:: Clean stop (free ports) to avoid multiple backends/frontends fighting over ports
+if exist "%~dp0STOP_ALL.bat" (
+    call "%~dp0STOP_ALL.bat" /NOPAUSE
+) else (
+    echo WARNING: STOP_ALL.bat not found. Continuing without pre-stop.
+)
 timeout /t 2 /nobreak >nul
 
 :: Check if Python environment exists
@@ -34,7 +37,13 @@ echo Starting backend server with FFI integration...
 set USE_TRACKTION_FFI=1
 set TRACKTION_FFI_LIB=%CD%\tracktion-hybrid\rust\audio-core-ffi\target\release\audio_core_ffi.dll
 
-start "DrumTracKAI Backend" cmd /k "cd /d %CD% && set USE_TRACKTION_FFI=1 && set TRACKTION_FFI_LIB=%TRACKTION_FFI_LIB% && echo Starting backend... && drumtrackai_env\Scripts\python.exe dcsm_backend.py"
+:: Start local LLM service (FastAPI) for performance spec generation
+:: NOTE: llm_service must be runnable in the same Python env (fastapi/uvicorn/torch installed).
+echo Starting local LLM service on port 9000...
+start "DrumTracKAI LLM" cmd /k "cd /d %CD% && set PORT=9000 && drumtrackai_env\Scripts\python.exe -m uvicorn llm_service.app:app --host 127.0.0.1 --port 9000"
+timeout /t 2 /nobreak >nul
+
+start "DrumTracKAI Backend" cmd /k "cd /d %CD% && set USE_TRACKTION_FFI=1 && set TRACKTION_FFI_LIB=%TRACKTION_FFI_LIB% && set LLM_PROVIDER=local_service && set LOCAL_LLM_URL=http://localhost:9000 && echo Starting backend... && drumtrackai_env\Scripts\python.exe dcsm_backend.py"
 
 echo Waiting for backend to initialize...
 timeout /t 8 /nobreak

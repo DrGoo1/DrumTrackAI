@@ -36,6 +36,11 @@ export const SimpleWaveform: React.FC<SimpleWaveformProps> = ({
     canvas.height = height * dpr;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
+    if ((ctx as any).resetTransform) {
+      (ctx as any).resetTransform();
+    } else {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
     ctx.scale(dpr, dpr);
 
     // Clear canvas

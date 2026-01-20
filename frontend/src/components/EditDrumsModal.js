@@ -2,6 +2,110 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as Tone from 'tone';
 import { Play, Square, Volume2, Settings, X } from 'lucide-react';
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const DragSlider = ({
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+}) => {
+  const ref = useRef(null);
+  const draggingRef = useRef(false);
+
+  const updateFromClientX = (clientX) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return;
+    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const raw = min + ratio * (max - min);
+    const snapped = Math.round(raw / step) * step;
+    onChange(Number(clamp(snapped, min, max).toFixed(6)));
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (event) => {
+      if (!draggingRef.current) return;
+      event.preventDefault();
+      updateFromClientX(event.clientX);
+    };
+
+    const handleMouseUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+    };
+
+    const handleTouchMove = (event) => {
+      if (!draggingRef.current) return;
+      if (!event.touches?.length) return;
+      event.preventDefault();
+      updateFromClientX(event.touches[0].clientX);
+    };
+
+    const handleTouchEnd = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, []);
+
+  const startDragging = (clientX) => {
+    draggingRef.current = true;
+    updateFromClientX(clientX);
+  };
+
+  const handleMouseDown = (event) => {
+    event.preventDefault();
+    startDragging(event.clientX);
+  };
+
+  const handleTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    event.preventDefault();
+    startDragging(event.touches[0].clientX);
+  };
+
+  const percent = clamp((value - min) / (max - min), 0, 1) * 100;
+
+  return (
+    <div
+      ref={ref}
+      role="slider"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      className="relative w-full h-2 bg-gray-700 rounded cursor-pointer select-none"
+      style={{ touchAction: 'none' }}
+      onMouseDownCapture={handleMouseDown}
+      onTouchStartCapture={handleTouchStart}
+      onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+    >
+      <div
+        className="absolute left-0 top-0 bottom-0 bg-blue-500 rounded pointer-events-none"
+        style={{ width: `${percent}%` }}
+      />
+      <div
+        className="absolute top-1/2 h-4 w-4 rounded-full bg-white border border-blue-500 pointer-events-none"
+        style={{ left: `calc(${percent}% - 8px)`, transform: 'translateY(-50%)' }}
+      />
+    </div>
+  );
+};
+
 const EditDrumsModal = ({ 
   isOpen, 
   onClose, 
@@ -260,14 +364,12 @@ const EditDrumsModal = ({
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Complexity
               </label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
+              <DragSlider
                 value={form.complexity}
-                onChange={(e) => setForm(f => ({ ...f, complexity: parseFloat(e.target.value) }))}
-                className="w-full"
+                min={0}
+                max={1}
+                step={0.1}
+                onChange={(next) => setForm((f) => ({ ...f, complexity: next }))}
               />
               <span className="text-xs text-gray-400">{Math.round(form.complexity * 100)}%</span>
             </div>
@@ -276,14 +378,12 @@ const EditDrumsModal = ({
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Energy
               </label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
+              <DragSlider
                 value={form.energy}
-                onChange={(e) => setForm(f => ({ ...f, energy: parseFloat(e.target.value) }))}
-                className="w-full"
+                min={0}
+                max={1}
+                step={0.1}
+                onChange={(next) => setForm((f) => ({ ...f, energy: next }))}
               />
               <span className="text-xs text-gray-400">{Math.round(form.energy * 100)}%</span>
             </div>
@@ -292,14 +392,12 @@ const EditDrumsModal = ({
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Swing
               </label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
+              <DragSlider
                 value={form.swing}
-                onChange={(e) => setForm(f => ({ ...f, swing: parseFloat(e.target.value) }))}
-                className="w-full"
+                min={0}
+                max={1}
+                step={0.1}
+                onChange={(next) => setForm((f) => ({ ...f, swing: next }))}
               />
               <span className="text-xs text-gray-400">{Math.round(form.swing * 100)}%</span>
             </div>
@@ -308,14 +406,12 @@ const EditDrumsModal = ({
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Humanize
               </label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
+              <DragSlider
                 value={form.humanize}
-                onChange={(e) => setForm(f => ({ ...f, humanize: parseFloat(e.target.value) }))}
-                className="w-full"
+                min={0}
+                max={1}
+                step={0.1}
+                onChange={(next) => setForm((f) => ({ ...f, humanize: next }))}
               />
               <span className="text-xs text-gray-400">{Math.round(form.humanize * 100)}%</span>
             </div>

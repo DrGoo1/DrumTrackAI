@@ -4,6 +4,7 @@ import {
   Upload, Download, Save, FolderOpen, Edit, Undo, Redo,
   ZoomIn, ZoomOut, Grid, Music, Headphones, ArrowLeft
 } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 // Import ChatGPT-5 DAW components
 import EditDrumsModal from './EditDrumsModal';
@@ -308,46 +309,51 @@ const ProfessionalDAW = ({ onBack, systemStatus }) => {
             {/* MIDI Operations */}
             <div className="flex items-center space-x-2 ml-6">
               <div className="flex items-center space-x-1">
-                <button
-                  onClick={handleUndo}
-                  disabled={!canUndo}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 rounded"
-                  title="Undo"
-                >
-                  <Undo className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleRedo}
-                  disabled={!canRedo}
-                  className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 rounded"
-                  title="Redo"
-                >
-                  <Redo className="w-4 h-4" />
-                </button>
+                <Tooltip content="Undo" placement="top" maxWidthClassName="w-20">
+                  <button
+                    onClick={handleUndo}
+                    disabled={!canUndo}
+                    className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 rounded"
+                  >
+                    <Undo className="w-4 h-4" />
+                  </button>
+                </Tooltip>
+                <Tooltip content="Redo" placement="top" maxWidthClassName="w-20">
+                  <button
+                    onClick={handleRedo}
+                    disabled={!canRedo}
+                    className="p-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 rounded"
+                  >
+                    <Redo className="w-4 h-4" />
+                  </button>
+                </Tooltip>
               </div>
               
               <div className="flex items-center space-x-1">
-                <button
-                  onClick={() => quantize(0.8)}
-                  className="px-3 py-1 bg-gray-700 hover:bg-green-600 rounded text-xs"
-                  title="Quantize 80%"
-                >
-                  Quantize
-                </button>
-                <button
-                  onClick={() => swing(0.5)}
-                  className="px-3 py-1 bg-gray-700 hover:bg-blue-600 rounded text-xs"
-                  title="Swing 50%"
-                >
-                  Swing
-                </button>
-                <button
-                  onClick={() => humanize(0.15)}
-                  className="px-3 py-1 bg-gray-700 hover:bg-purple-600 rounded text-xs"
-                  title="Humanize 15%"
-                >
-                  Humanize
-                </button>
+                <Tooltip content="Quantize 80%" placement="top" maxWidthClassName="w-28">
+                  <button
+                    onClick={() => quantize(0.8)}
+                    className="px-3 py-1 bg-gray-700 hover:bg-green-600 rounded text-xs"
+                  >
+                    Quantize
+                  </button>
+                </Tooltip>
+                <Tooltip content="Swing 50%" placement="top" maxWidthClassName="w-24">
+                  <button
+                    onClick={() => swing(0.5)}
+                    className="px-3 py-1 bg-gray-700 hover:bg-blue-600 rounded text-xs"
+                  >
+                    Swing
+                  </button>
+                </Tooltip>
+                <Tooltip content="Humanize 15%" placement="top" maxWidthClassName="w-32">
+                  <button
+                    onClick={() => humanize(0.15)}
+                    className="px-3 py-1 bg-gray-700 hover:bg-purple-600 rounded text-xs"
+                  >
+                    Humanize
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </div>

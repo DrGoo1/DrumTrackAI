@@ -2,7 +2,6 @@
 // Integrates open source timeline with our existing infrastructure
 
 import React, { useEffect, useRef, useState } from 'react'
-import * as Tone from 'tone'
 import { useDawStore } from '../../state/dawStore'
 import { useMidi } from '../../midi/midiStore'
 
@@ -24,7 +23,6 @@ export default function TimelineHost({ className = '' }: TimelineHostProps) {
   
   // DAW state
   const { project, pxPerSecond, cursorSec, playing } = useDawStore()
-  const { song: midiSong } = useMidi()
   
   // Initialize waveform-playlist
   useEffect(() => {

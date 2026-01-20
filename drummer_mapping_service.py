@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 # Fictional drummer definitions mapped to real drummer analysis
 DRUMTRACKAI_DRUMMERS = {
+    "default_neutral": {
+        "display_name": "Default (Preserve Style)",
+        "tagline": "Neutral drummer that preserves the selected groove",
+        "genre_tags": ["All"],
+        "difficulty": "Beginner",
+        "icon": "🎯",
+        "color": "#64748B",
+        "description": "A neutral drummer profile intended for validation and groove preservation. Minimal humanization and no stylistic embellishments.",
+        "best_for": ["Verifying groove selection", "Preserving EGMD Basic Drum Style", "Neutral playback"],
+        "signature_techniques": ["None"],
+        "source_drummers": ["jeff_porcaro"],
+        "blend_weights": [1.0],
+    },
     "studio_groove_master": {
         "display_name": "Studio Groove Master",
         "tagline": "Precision pocket playing with legendary studio chops",
@@ -172,11 +185,14 @@ class DrummerMappingService:
         """
         drummers = []
         for drummer_id, drummer_data in DRUMTRACKAI_DRUMMERS.items():
+            style = self.map_to_rust_style(drummer_id)
             drummers.append({
                 "id": drummer_id,
                 "display_name": drummer_data["display_name"],
                 "tagline": drummer_data["tagline"],
                 "genre_tags": drummer_data["genre_tags"],
+                "style": style,
+                "profileType": style,
                 "difficulty": drummer_data["difficulty"],
                 "icon": drummer_data["icon"],
                 "color": drummer_data["color"],

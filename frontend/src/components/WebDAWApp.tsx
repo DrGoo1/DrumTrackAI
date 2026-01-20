@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import webdawApi, { alignSections, loadSession, saveSession, sectionizeAudio, dcsmSectionizeSmart } from "../services/api";
 import Timeline from "./Timeline";
 import { Engine } from "../audio/engine";
@@ -25,16 +25,21 @@ import {
 import { GrooveWeightMap } from "../types/grooveWeight";
 import { DrumEditorPane } from "./drums/DrumEditorPane";
 import { resolveApiBaseNormalized } from "../utils/apiBase";
-import { GridResolution } from "../utils/pianoRollGrid";
+import { GridResolution, getTicksPerSubdivision, getSubdivisionsPerBar } from "../utils/pianoRollGrid";
 import { inferLimbFromInstrument, inferLimbFromLane, type LimbId } from "../constants/limbs";
-import type { DrumSectionRegion } from "./drums/DrumPianoRoll";
+import { DrumPianoRoll, type DrumSectionRegion } from "./drums/DrumPianoRoll";
 import { useMidi } from "../midi/midiStore";
 import type { MidiClip, MidiNote as MidiClipNote } from "../midi/types";
+import { getMidiPitchForInstrument } from "../utils/drumTrackUtils";
 import {
   applyDrumGenerationResult,
   DrumGenerationDebugSnapshot,
   DrumTrackPlacementContext,
 } from "./drumGenerationHandlers";
+import StylometerFlower, { type StylometerValues } from "./StylometerFlower";
+import { GROOVE_WEIGHT_PRESETS } from "../types/grooveWeight";
+import { NoteInspector } from "./drums/NoteInspector";
+import { Tooltip } from "./Tooltip";
 
 function HoverTip({ text, children }: { text: string; children: React.ReactNode }) {
   return (
@@ -60,36 +65,31 @@ function DrummerPersonaModal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-xl max-h-[85vh] overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-slate-800 p-4">
           <div>
-            <div className="text-sm font-semibold text-white">Choose a Drum Personality</div>
-            <div className="mt-1 text-xs text-slate-400">
-              This step selects the drummer persona (feel, time, dynamics, limb tendencies) that will guide every
-              generation.
+            <div className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-amber-300 via-fuchsia-400 to-purple-400 bg-clip-text text-transparent">
+              Choose Your Drummer!
             </div>
           </div>
-          <button
-            className="text-slate-400 hover:text-slate-100"
-            onClick={onClose}
-            title="Close"
-            type="button"
-          >
-            ✕
-          </button>
+          <Tooltip content="Close" placement="top" maxWidthClassName="w-20">
+            <button
+              className="text-slate-400 hover:text-slate-100"
+              onClick={onClose}
+              type="button"
+            >
+              ✕
+            </button>
+          </Tooltip>
         </div>
 
-        <div className="p-4 space-y-3">
-          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-300">
-            <div>
-              <span className="font-semibold text-slate-100">What it is:</span> a drummer model/persona used to keep grooves stylistically consistent.
-            </div>
-            <div className="mt-1">
-              <span className="font-semibold text-slate-100">Why it matters:</span> prevents random feel changes and improves musical continuity across sections.
-            </div>
-            <div className="mt-1">
-              <span className="font-semibold text-slate-100">When to change:</span> only if you intentionally want a different drummer feel.
+        <div className="p-4 space-y-3 overflow-y-auto max-h-[calc(85vh-64px)]">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-200 leading-relaxed">
+            DrumTracKAI has analyzed signature drum tracks from famous drummers to determine the specific stylistic
+            nuances that make them special, and incorporated these techniques into focused stylistic profiles.
+            <div className="mt-2">
+              Each profile represents a combination of multiple drummer styles from similar genres.
             </div>
           </div>
 
@@ -292,6 +292,93 @@ const clamp01 = (value: number): number => {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
+};
+
+const MacroSlider = ({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  ariaLabel: string;
+}) => {
+  const sliderRef = React.useRef<HTMLDivElement | null>(null);
+  const pointerRef = React.useRef<number | null>(null);
+
+  const updateFromClientX = React.useCallback(
+    (clientX: number) => {
+      const rect = sliderRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const ratio = clamp01((clientX - rect.left) / rect.width);
+      onChange(Number(ratio.toFixed(4)));
+    },
+    [onChange],
+  );
+
+  const finishDrag = React.useCallback(() => {
+    if (pointerRef.current !== null && sliderRef.current) {
+      try {
+        sliderRef.current.releasePointerCapture(pointerRef.current);
+      } catch {
+        // ignore
+      }
+    }
+    pointerRef.current = null;
+  }, []);
+
+  return (
+    <div
+      ref={sliderRef}
+      role="slider"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-valuemin={0}
+      aria-valuemax={1}
+      aria-valuenow={Number(value.toFixed(3))}
+      className="relative w-full h-6 cursor-pointer select-none focus:outline-none focus:ring-2 focus:ring-cyan-400/70 rounded"
+      style={{ touchAction: "none" }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        pointerRef.current = e.pointerId;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        updateFromClientX(e.clientX);
+      }}
+      onPointerMove={(e) => {
+        if (pointerRef.current !== e.pointerId) return;
+        e.preventDefault();
+        updateFromClientX(e.clientX);
+      }}
+      onPointerUp={(e) => {
+        if (pointerRef.current !== e.pointerId) return;
+        finishDrag();
+      }}
+      onPointerCancel={(e) => {
+        if (pointerRef.current !== e.pointerId) return;
+        finishDrag();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        const dir = e.key === "ArrowRight" ? 1 : -1;
+        const step = e.shiftKey ? 0.05 : 0.01;
+        onChange(clamp01(value + dir * step));
+      }}
+    >
+      <div
+        className="absolute top-1/2 left-0 right-0 h-1 bg-slate-700/80 rounded-full pointer-events-none"
+        style={{ transform: "translateY(-50%)" }}
+      />
+      <div
+        className="absolute top-1/2 left-0 h-1 bg-cyan-400 rounded-full pointer-events-none"
+        style={{ width: `${clamp01(value) * 100}%`, transform: "translateY(-50%)" }}
+      />
+      <div
+        className="absolute top-1/2 h-3 w-3 rounded-full bg-white border border-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.7)] pointer-events-none"
+        style={{ left: `calc(${clamp01(value) * 100}% - 6px)`, transform: "translateY(-50%)" }}
+      />
+    </div>
+  );
 };
 
 type SongMapSummary = {
@@ -1128,6 +1215,7 @@ export default function WebDAWApp() {
   const [notes, setNotes] = useState<PianoRollNote[]>([]);
   const [sectionDrumTracks, setSectionDrumTracks] = useState<Record<string, DrumTrackForDCSM>>({});
   const [sectionGrooveMaps, setSectionGrooveMaps] = useState<Record<string, GrooveWeightMap | undefined>>({});
+  const [sectionGenConfigs, setSectionGenConfigs] = useState<Record<string, DrumGenerationConfig>>({});
   const [sectionPlacementContexts, setSectionPlacementContexts] = useState<Record<string, DrumTrackPlacementContext>>({});
   const [sectionNoteIds, setSectionNoteIds] = useState<Record<string, string[]>>({});
   const sectionNoteIdsRef = useRef<Record<string, string[]>>({});
@@ -1140,6 +1228,45 @@ export default function WebDAWApp() {
   const [drumClipId, setDrumClipId] = useState<string | null>(null);
   const [debugDrumGen, setDebugDrumGen] = useState<DrumGenerationDebugSnapshot | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const [selectedBarIndex, setSelectedBarIndex] = useState<number | null>(null);
+  const [miniSelectedNoteIds, setMiniSelectedNoteIds] = useState<string[]>([]);
+  const [barClipboard, setBarClipboard] = useState<DrumNoteEvent[] | null>(null);
+  const [barAddInstrumentId, setBarAddInstrumentId] = useState<DrumInstrumentId>("snare_center");
+  const [barAddStepIndex, setBarAddStepIndex] = useState<number>(0);
+
+  const stylometerSongBaselineRef = useRef<{ style: string; drummerStyle: string } | null>(null);
+  const stylometerSectionBaselineRef = useRef<Record<string, { style: string; drummerStyle: string }>>({});
+
+  const [stylometerOpen, setStylometerOpen] = useState<boolean>(false);
+  const [stylometerPos, setStylometerPos] = useState<{ x: number; y: number }>({ x: 24, y: 72 });
+  const stylometerDragRef = useRef<
+    | {
+        pointerId: number;
+        offsetX: number;
+        offsetY: number;
+      }
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key !== "s" && ev.key !== "S") return;
+
+      const target = ev.target as HTMLElement | null;
+      const tag = (target?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || (target as any)?.isContentEditable) {
+        return;
+      }
+
+      ev.preventDefault();
+      setStylometerOpen((v) => !v);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const midiSong = useMidi((state) => state.song);
   const addMidiTrack = useMidi((state) => state.addTrack);
@@ -1215,6 +1342,9 @@ export default function WebDAWApp() {
   const drumLoadedRef = useRef<Record<string, number>>({});
   const activeDrumTrackRef = useRef<DrumTrackForDCSM | null>(null);
   const lastDrumScheduleSecRef = useRef<number>(0);
+  const drumPlaybackStartCtxSecRef = useRef<number>(0);
+  const drumPlaybackStartPlayheadSecRef = useRef<number>(0);
+  const playheadClockModeRef = useRef<"engine" | "raf">("engine");
 
   const instrumentToChannel = useCallback(
     (instrumentId: DrumInstrumentId | string | undefined | null): DrumPlayerChannelId | null => {
@@ -1246,6 +1376,45 @@ export default function WebDAWApp() {
       map = raw ? (JSON.parse(raw) as Record<string, number>) : {};
     } catch {
       map = {};
+    }
+
+    const builtInDefaults: Record<DrumPlayerChannelId, string> = {
+      kick: "/samples/drums/kick.wav",
+      kick_sub: "/samples/drums/kick.wav",
+      snare_top: "/samples/drums/snare.wav",
+      snare_bottom: "/samples/drums/snare.wav",
+      tom1: "/samples/drums/tom.wav",
+      tom2: "/samples/drums/tom.wav",
+      tom3: "/samples/drums/tom.wav",
+      tom4: "/samples/drums/tom.wav",
+      tom5: "/samples/drums/tom.wav",
+      tom_fx: "/samples/drums/tom.wav",
+      hat: "/samples/drums/hihat.wav",
+      ride: "/samples/drums/ride.wav",
+      spot_ride: "/samples/drums/ride.wav",
+      crash: "/samples/drums/crash.wav",
+    };
+
+    const hasAnySavedMapping = Object.keys(map).length > 0;
+    const requiredChannels: DrumPlayerChannelId[] = [
+      "kick",
+      "snare_top",
+      "hat",
+      "tom1",
+      "ride",
+      "crash",
+    ];
+    const missingRequired = requiredChannels.some((ch) => !(ch in map));
+
+    // If the user hasn't picked a kit yet (or mapping is partial), load a built-in kit
+    // so EGMD playback is audible on all core instruments.
+    if (!hasAnySavedMapping || missingRequired) {
+      for (const [ch, url] of Object.entries(builtInDefaults)) {
+        const channel = ch as DrumPlayerChannelId;
+        if (drumLoadedRef.current[channel] === -1) continue;
+        await eng.loadSampleForChannel(channel, url);
+        drumLoadedRef.current[channel] = -1;
+      }
     }
 
     for (const [ch, sid] of Object.entries(map)) {
@@ -1515,71 +1684,24 @@ export default function WebDAWApp() {
     [midiSong.ppq, midiSong.tempoMap, bpm],
   );
 
+  type SectionGrooveOverrides = {
+    grooveSource?: string;
+    grooveMode?: string;
+    styleGroup?: string;
+    selectedEgmdPhraseId?: number | null;
+    egmdOverrideMode?: 'single' | 'by_type' | 'by_index';
+    egmdPhraseByType?: Record<string, number>;
+    egmdPhraseByIndex?: Record<string, number>;
+  };
+
   const [grooveSource, setGrooveSource] = useState<string>("pattern");
-  const [grooveMode, setGrooveMode] = useState<string>("exact");
+  const [grooveMode, setGrooveMode] = useState<string>("enhanced");
   const [styleGroup, setStyleGroup] = useState<string>("rock");
   const [lastEgmdPhraseInfo, setLastEgmdPhraseInfo] = useState<any | null>(null);
 
+  const [sectionGrooveOverrides, setSectionGrooveOverrides] = useState<Record<string, SectionGrooveOverrides>>({});
+
   // EGMD clip picker state/effects are declared further below (after arrangementSource)
-
-  const applyTrackToMidiClip = useCallback(
-    (track?: DrumTrackForDCSM | null, legacyNotes?: any[] | null, placement?: DrumTrackPlacementContext) => {
-      if (!drumTrackId || !drumClipId) {
-        return;
-      }
-      const clip = getMidiClip(drumTrackId, drumClipId);
-      if (!clip) {
-        return;
-      }
-
-      let sectionNotes: MidiClipNote[] = [];
-      if (track?.notes?.length) {
-        sectionNotes = convertTrackToMidiClipNotes(track);
-      } else if (Array.isArray(legacyNotes) && legacyNotes.length) {
-        sectionNotes = convertLegacyMidiNotesToClip(legacyNotes);
-      }
-
-      if (!sectionNotes.length) {
-        return;
-      }
-
-      let mergedNotes = sectionNotes;
-      if (placement && typeof placement.startMeasure === "number" && typeof placement.endMeasure === "number") {
-        const ppq = midiSong.ppq || 480;
-        const beatsPerMeasure = placement.timeSignature?.[0] ?? beatsPerBar;
-        const ticksPerMeasure = ppq * beatsPerMeasure;
-        const rangeStartTick = Math.max(0, Math.round(placement.startMeasure * ticksPerMeasure));
-        const rangeEndTick = Math.max(rangeStartTick, Math.round((placement.endMeasure + 1) * ticksPerMeasure));
-        const existing = Array.isArray(clip.notes) ? clip.notes : [];
-        const preserved = existing.filter((n) => n.t1 <= rangeStartTick || n.t0 >= rangeEndTick);
-        mergedNotes = [...preserved, ...sectionNotes].sort((a, b) => a.t0 - b.t0);
-      }
-
-      updateMidiNotes(drumTrackId, drumClipId, mergedNotes);
-      const clipEndTick = mergedNotes.reduce((max, note) => Math.max(max, note.t1), clip.endTick ?? 0);
-      const updates: Partial<MidiClip> = {
-        endTick: clipEndTick,
-      };
-      if (track) {
-        updates.dcsmTrack = track;
-        updates.disableGrooveShaping = grooveSource === "egmd_phrases" && grooveMode === "exact";
-      }
-      updateMidiClip(drumTrackId, drumClipId, updates);
-    },
-    [
-      drumTrackId,
-      drumClipId,
-      getMidiClip,
-      convertTrackToMidiClipNotes,
-      convertLegacyMidiNotesToClip,
-      updateMidiNotes,
-      updateMidiClip,
-      midiSong.ppq,
-      beatsPerBar,
-      grooveSource,
-      grooveMode,
-    ],
-  );
 
   const syncSectionMidiNotes = useCallback(
     (sectionId: string, track: DrumTrackForDCSM, overridePlacement?: DrumTrackPlacementContext) => {
@@ -1588,14 +1710,22 @@ export default function WebDAWApp() {
       }
       const placement = overridePlacement ?? sectionPlacementContexts[sectionId];
       const midiNotes = convertTrackToMidiNotes(track, placement);
+      const nextIds = midiNotes.map((note) => note.id);
       setNotes((prev) => {
         const existingIds = new Set(sectionNoteIdsRef.current[sectionId] ?? []);
         const preserved = existingIds.size ? prev.filter((note) => !existingIds.has(note.id)) : prev;
         return [...preserved, ...midiNotes];
       });
+
+      // Update the ref after we used it to compute the preserved set.
+      // This prevents the replacement pass from accidentally preserving old notes.
+      sectionNoteIdsRef.current = {
+        ...sectionNoteIdsRef.current,
+        [sectionId]: nextIds,
+      };
       setSectionNoteIds((prev) => ({
         ...prev,
-        [sectionId]: midiNotes.map((note) => note.id),
+        [sectionId]: nextIds,
       }));
     },
     [convertTrackToMidiNotes, sectionPlacementContexts],
@@ -1647,6 +1777,14 @@ export default function WebDAWApp() {
   const [lastGeneratedMidiBase64, setLastGeneratedMidiBase64] = useState<string | null>(null);
   const [lastGeneratedMidiLabel, setLastGeneratedMidiLabel] = useState<string | null>(null);
   const [showDrummerPersonaModal, setShowDrummerPersonaModal] = useState(false);
+
+  const openDrummerPersonaModal = useCallback(() => {
+    console.log('[DCSM] Opening Drummer Persona modal');
+    setShowManualModal(false);
+    setShowLookupModal(false);
+    setShowDrumPlayer(false);
+    setShowDrummerPersonaModal(true);
+  }, [setShowManualModal, setShowLookupModal, setShowDrumPlayer]);
   
   // NEW: Track arrangement source for conflict handling
   const [arrangementSource, setArrangementSource] = useState<string | null>(null);
@@ -1662,24 +1800,126 @@ export default function WebDAWApp() {
   >([]);
   const [selectedEgmdPhraseId, setSelectedEgmdPhraseId] = useState<number | null>(null);
 
+  const [egmdOverrideMode, setEgmdOverrideMode] = useState<'single' | 'by_type' | 'by_index'>('single');
+  const [egmdPhraseByType, setEgmdPhraseByType] = useState<Record<string, number>>({});
+  const [egmdPhraseByIndex, setEgmdPhraseByIndex] = useState<Record<string, number>>({});
+
+  const resolveGrooveSettings = useCallback(
+    (sectionId?: string | null) => {
+      const ov = sectionId ? sectionGrooveOverrides?.[sectionId] ?? null : null;
+      const effGrooveSource = (ov?.grooveSource ?? grooveSource) as string;
+      const effGrooveMode = (ov?.grooveMode ?? grooveMode) as string;
+      const effStyleGroup = (ov?.styleGroup ?? styleGroup) as string;
+      const effPhraseId =
+        typeof ov?.selectedEgmdPhraseId !== "undefined" ? ov.selectedEgmdPhraseId : selectedEgmdPhraseId;
+      const effOverrideMode = (ov?.egmdOverrideMode ?? egmdOverrideMode) as 'single' | 'by_type' | 'by_index';
+      const effByType = ov?.egmdPhraseByType ?? egmdPhraseByType;
+      const effByIndex = ov?.egmdPhraseByIndex ?? egmdPhraseByIndex;
+      return {
+        grooveSource: effGrooveSource,
+        grooveMode: effGrooveMode,
+        styleGroup: effStyleGroup,
+        selectedEgmdPhraseId: effPhraseId,
+        egmdOverrideMode: effOverrideMode,
+        egmdPhraseByType: effByType,
+        egmdPhraseByIndex: effByIndex,
+      };
+    },
+    [
+      egmdOverrideMode,
+      egmdPhraseByIndex,
+      egmdPhraseByType,
+      grooveMode,
+      grooveSource,
+      sectionGrooveOverrides,
+      selectedEgmdPhraseId,
+      styleGroup,
+    ],
+  );
+
+  const applyTrackToMidiClip = useCallback(
+    (
+      sectionId?: string | null,
+      track?: DrumTrackForDCSM | null,
+      legacyNotes?: any[] | null,
+      placement?: DrumTrackPlacementContext,
+    ) => {
+      if (!drumTrackId || !drumClipId) {
+        return;
+      }
+      const clip = getMidiClip(drumTrackId, drumClipId);
+      if (!clip) {
+        return;
+      }
+
+      let sectionNotes: MidiClipNote[] = [];
+      if (track?.notes?.length) {
+        sectionNotes = convertTrackToMidiClipNotes(track);
+      } else if (Array.isArray(legacyNotes) && legacyNotes.length) {
+        sectionNotes = convertLegacyMidiNotesToClip(legacyNotes);
+      }
+
+      if (!sectionNotes.length) {
+        return;
+      }
+
+      let mergedNotes = sectionNotes;
+      if (placement && typeof placement.startMeasure === "number" && typeof placement.endMeasure === "number") {
+        const ppq = midiSong.ppq || 480;
+        const beatsPerMeasure = placement.timeSignature?.[0] ?? beatsPerBar;
+        const ticksPerMeasure = ppq * beatsPerMeasure;
+        const rangeStartTick = Math.max(0, Math.round(placement.startMeasure * ticksPerMeasure));
+        const rangeEndTick = Math.max(rangeStartTick, Math.round((placement.endMeasure + 1) * ticksPerMeasure));
+        const existing = Array.isArray(clip.notes) ? clip.notes : [];
+        const preserved = existing.filter((n) => n.t1 <= rangeStartTick || n.t0 >= rangeEndTick);
+        mergedNotes = [...preserved, ...sectionNotes].sort((a, b) => a.t0 - b.t0);
+      }
+
+      updateMidiNotes(drumTrackId, drumClipId, mergedNotes);
+      const clipEndTick = mergedNotes.reduce((max, note) => Math.max(max, note.t1), clip.endTick ?? 0);
+      const updates: Partial<MidiClip> = {
+        endTick: clipEndTick,
+      };
+      if (track) {
+        updates.dcsmTrack = track;
+        const resolved = resolveGrooveSettings(sectionId);
+        updates.disableGrooveShaping =
+          resolved.grooveSource === "egmd_phrases" && String(resolved.grooveMode || "").toLowerCase() === "exact";
+      }
+      updateMidiClip(drumTrackId, drumClipId, updates);
+    },
+    [
+      drumTrackId,
+      drumClipId,
+      getMidiClip,
+      convertTrackToMidiClipNotes,
+      convertLegacyMidiNotesToClip,
+      updateMidiNotes,
+      updateMidiClip,
+      midiSong.ppq,
+      beatsPerBar,
+      resolveGrooveSettings,
+    ],
+  );
+
   const isScratchEntry = tracks.length === 0;
   const isScratchWorkflow = arrangementSource === "scratch" || isScratchEntry;
 
   useEffect(() => {
     if (!isScratchWorkflow) return;
-    // Scratch workflow: always EGMD Exact Clip
+    // Scratch workflow: default to EGMD phrases, but allow groove mode selection.
     if (grooveSource !== "egmd_phrases") {
       setGrooveSource("egmd_phrases");
     }
-    if (grooveMode !== "exact") {
-      setGrooveMode("exact");
-    }
-  }, [isScratchWorkflow, grooveSource, grooveMode]);
+  }, [isScratchWorkflow, grooveSource]);
 
   useEffect(() => {
     if (grooveSource !== "egmd_phrases") {
       setEgmdPhraseOptions([]);
       setSelectedEgmdPhraseId(null);
+      setEgmdOverrideMode('single');
+      setEgmdPhraseByType({});
+      setEgmdPhraseByIndex({});
       return;
     }
     const controller = new AbortController();
@@ -1713,6 +1953,88 @@ export default function WebDAWApp() {
 
   // NEW: Drum Builder - measure range selection
   const [selectedMeasureRange, setSelectedMeasureRange] = useState<MeasureRange | null>(null);
+
+  const ensureSectionSelection = useCallback(
+    (sectionId?: string | null) => {
+      if (!sectionId) return;
+      setSelectedSectionIds(new Set([sectionId]));
+      const targetSection = sections.find((s) => s.id === sectionId) || null;
+      if (targetSection) {
+        const nextRange = sectionToMeasureRange(
+          targetSection,
+          bpm,
+          timeSig,
+          songMap,
+          tempoFlattenToleranceBpm,
+          drumTempoMode,
+        );
+        if (nextRange) {
+          setSelectedMeasureRange(nextRange);
+        }
+      }
+    },
+    [
+      sections,
+      bpm,
+      timeSig,
+      songMap,
+      tempoFlattenToleranceBpm,
+      drumTempoMode,
+      setSelectedSectionIds,
+      setSelectedMeasureRange,
+    ],
+  );
+
+  const handleClearAudio = useCallback(() => {
+    const confirmed = window.confirm('Clear all uploaded audio tracks?');
+    if (!confirmed) return;
+    setTracks([]);
+    setSections([]);
+    setNotes([]);
+    setSongMap(null);
+    setSelectedSectionIds(new Set());
+    setSelectedMeasureRange(null);
+    setArrangementSource(null);
+  }, [setTracks, setSections, setNotes, setSongMap, setSelectedSectionIds, setSelectedMeasureRange, setArrangementSource]);
+
+  const injectDebugTestGroove = useCallback(() => {
+    console.log('[DrumGenDebug] injectDebugTestGroove requested');
+  }, []);
+
+  const sectionDebugSummaries = useMemo(() => {
+    const summaries: Array<{
+      id: string;
+      noteCount: number;
+      minBar: number | null;
+      maxBar: number | null;
+      instruments: string[];
+    }> = [];
+    for (const [sectionId, track] of Object.entries(sectionDrumTracks || {})) {
+      const events: any[] = Array.isArray((track as any)?.events) ? (track as any).events : [];
+      const noteCount = events.length;
+      let minBar: number | null = null;
+      let maxBar: number | null = null;
+      const instruments = new Set<string>();
+      for (const e of events) {
+        const barIndex = typeof e?.barIndex === 'number' ? e.barIndex : null;
+        if (barIndex !== null) {
+          minBar = minBar === null ? barIndex : Math.min(minBar, barIndex);
+          maxBar = maxBar === null ? barIndex : Math.max(maxBar, barIndex);
+        }
+        if (typeof e?.instrument_id === 'string') instruments.add(e.instrument_id);
+        if (typeof e?.instrumentId === 'string') instruments.add(e.instrumentId);
+      }
+      summaries.push({
+        id: sectionId,
+        noteCount,
+        minBar,
+        maxBar,
+        instruments: Array.from(instruments).slice(0, 10),
+      });
+    }
+    summaries.sort((a, b) => a.id.localeCompare(b.id));
+    return summaries;
+  }, [sectionDrumTracks]);
   const buildScratchSong = useCallback(() => {
     const resolvedBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
     const beatsPerBarLocal = timeSig[0] || 4;
@@ -1838,6 +2160,15 @@ export default function WebDAWApp() {
     activeDrumTrackRef.current = fullSongDrumTrack;
   }, [fullSongDrumTrack]);
 
+  const hasGeneratedDrums = useMemo(() => {
+    if (fullSongDrumTrack?.notes?.length) return true;
+    return Object.entries(sectionDrumTracks ?? {}).some(([id, track]) => {
+      if (id === "__global__") return false;
+      if (!track) return false;
+      return Array.isArray(track.notes) && track.notes.length > 0;
+    });
+  }, [fullSongDrumTrack, sectionDrumTracks]);
+
   const scheduleDrumsBetween = useCallback(
     async (fromSec: number, toSec: number) => {
       const eng = drumEngineRef.current;
@@ -1846,20 +2177,87 @@ export default function WebDAWApp() {
       if (!Array.isArray(track.notes) || track.notes.length === 0) return;
       if (!(bpm > 0)) return;
 
+      // Align drum scheduling to the same clock as the cursor: Engine's currentTime.
+      // We schedule into the drum AudioContext relative to "now".
+      const ctx = eng.audioContext;
+      if (!ctx) return;
+      const ctxNow = ctx.currentTime;
+
+      // If we don't have a running HTML5 audio clock (no stems loaded), fall back
+      // to playhead seconds which advances via RAF.
+      const engineNow =
+        playheadClockModeRef.current === "engine"
+          ? Engine.getCurrentTimeSeconds()
+          : toSec;
+
       const beatsPerBarLocal = (timeSig?.[0] ?? 4) || 4;
       const ticksPerBeat = track.resolution_ppq || 960;
       const ticksPerBarLocal = ticksPerBeat * beatsPerBarLocal;
+
+      const beatTimes = Array.isArray(songMap?.beatTimes) ? songMap!.beatTimes! : [];
+      const tempoPts = Array.isArray(midiSong?.tempoMap)
+        ? midiSong.tempoMap
+            .map((p: any) => ({ tSec: Number(p?.tSec) || 0, bpm: Number(p?.bpm) || 0 }))
+            .filter((p: any) => Number.isFinite(p.tSec) && Number.isFinite(p.bpm) && p.bpm > 0)
+            .sort((a: any, b: any) => a.tSec - b.tSec)
+        : [];
+
+      const timeAtBeats = (beatsIn: number): number => {
+        const beats = Math.max(0, Number.isFinite(beatsIn) ? beatsIn : 0);
+
+        // Prefer beatTimes (authoritative from analysis/align).
+        if (beatTimes.length >= 2) {
+          const maxIdx = beatTimes.length - 1;
+          const idx0 = Math.max(0, Math.min(maxIdx, Math.floor(beats)));
+          const idx1 = Math.max(0, Math.min(maxIdx, idx0 + 1));
+          const t0 = Number(beatTimes[idx0] ?? 0);
+          const t1 = Number(beatTimes[idx1] ?? t0);
+          const frac = Math.max(0, Math.min(1, beats - idx0));
+          if (idx0 === idx1) return Number.isFinite(t0) ? t0 : 0;
+          if (!Number.isFinite(t0) || !Number.isFinite(t1)) return Number.isFinite(t0) ? t0 : 0;
+          return t0 + (t1 - t0) * frac;
+        }
+
+        // Otherwise use tempo map (piecewise-constant bpm segments).
+        if (tempoPts.length >= 1) {
+          let remaining = beats;
+          for (let i = 0; i < tempoPts.length; i++) {
+            const cur = tempoPts[i];
+            const next = tempoPts[i + 1];
+            const span = next ? Math.max(0, next.tSec - cur.tSec) : Number.POSITIVE_INFINITY;
+            const segBeats = (span / 60) * cur.bpm;
+            if (remaining <= segBeats) {
+              return cur.tSec + (remaining * 60) / cur.bpm;
+            }
+            remaining -= segBeats;
+          }
+          const last = tempoPts[tempoPts.length - 1];
+          return last.tSec + (remaining * 60) / last.bpm;
+        }
+
+        // Final fallback: constant bpm.
+        return (beats * 60) / bpm;
+      };
 
       for (const n of track.notes) {
         const bar = n.barIndex ?? 0;
         const tick = n.tickInBar ?? 0;
         const totalTicks = bar * ticksPerBarLocal + tick;
         const beats = totalTicks / ticksPerBeat;
-        const tSec = (beats * 60) / bpm;
+        const tSec = timeAtBeats(beats);
         if (tSec < fromSec || tSec >= toSec) continue;
         const ch = instrumentToChannel(n.instrumentId as any);
         if (!ch) continue;
-        eng.playChannelOneShot(ch, { gain: Math.max(0.2, Math.min(1.5, (n.velocity ?? 100) / 100)) });
+
+        // Schedule relative to current Engine time so the hit occurs when the cursor reaches tSec.
+        const delta = tSec - engineNow;
+        const whenSec = ctxNow + delta;
+        const safeWhen = Math.max(ctxNow + 0.002, whenSec);
+
+        eng.playChannelOneShot(ch, {
+          whenSec: safeWhen,
+          gain: Math.max(0.2, Math.min(1.5, (n.velocity ?? 100) / 100)),
+        });
       }
     },
     [bpm, instrumentToChannel, timeSig],
@@ -1882,6 +2280,16 @@ export default function WebDAWApp() {
     activeSectionId && sectionGrooveMaps[activeSectionId]
       ? sectionGrooveMaps[activeSectionId]
       : undefined;
+
+  useEffect(() => {
+    // Reset bar scope selection when section changes.
+    setSelectedBarIndex(null);
+    setMiniSelectedNoteIds([]);
+  }, [activeSectionId]);
+
+  useEffect(() => {
+    setMiniSelectedNoteIds([]);
+  }, [selectedBarIndex]);
   const fallbackPlacementContext = useMemo(() => {
     if (!selectedMeasureRange) {
       return undefined;
@@ -1992,268 +2400,6 @@ export default function WebDAWApp() {
   }, [tracks, sections, notes.length, sectionDrumTracks, activeSectionId, selectedMeasureRange?.sectionId]);
 
   useEffect(() => {
-    if (!selectedMeasureRange?.sectionId) {
-      lastSectionSyncSignatureRef.current = null;
-      return;
-    }
-
-    const sectionId = selectedMeasureRange.sectionId;
-    const track = sectionDrumTracks[sectionId];
-    if (!track) {
-      lastSectionSyncSignatureRef.current = null;
-      return;
-    }
-
-    const placement = activePlacementContext ?? fallbackPlacementContext;
-    if (!placement) {
-      return;
-    }
-
-    const noteCount = track.notes?.length ?? 0;
-    const lastNoteId = noteCount > 0 ? track.notes[noteCount - 1]?.id ?? `idx-${noteCount - 1}` : "none";
-    const placementKeyParts = [
-      placement.startMeasure ?? 0,
-      placement.endMeasure ?? 0,
-      placement.startTimeSec ?? 0,
-      Array.isArray(placement.tempos) ? placement.tempos.join(",") : "",
-      placement.timeSignature ? placement.timeSignature.join("/") : "",
-    ];
-    const signature = [
-      sectionId,
-      track.track_id ?? "track",
-      noteCount,
-      lastNoteId,
-      placementKeyParts.join("|"),
-    ].join(":");
-
-    if (lastSectionSyncSignatureRef.current === signature) {
-      return;
-    }
-
-    lastSectionSyncSignatureRef.current = signature;
-    syncSectionMidiNotes(sectionId, track, placement);
-  }, [selectedMeasureRange?.sectionId, sectionDrumTracks, activePlacementContext, fallbackPlacementContext, syncSectionMidiNotes]);
-
-  const ensureSectionSelection = useCallback(
-    (sectionId: string | null | undefined) => {
-      if (!sectionId) {
-        return;
-      }
-      setSelectedSectionIds((prev) => {
-        if (prev.size > 0) {
-          return prev;
-        }
-        return new Set([sectionId]);
-      });
-      setSelectedMeasureRange((prev) => {
-        if (prev) {
-          return prev;
-        }
-        const targetSection = sections.find((s) => s.id === sectionId);
-        return targetSection ? sectionToMeasureRange(targetSection, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode) : prev;
-      });
-    },
-    [sections, bpm, timeSig, songMap, tempoFlattenToleranceBpm, drumTempoMode],
-  );
-
-
-  const handleClearAudio = useCallback(() => {
-    if (!tracks.length) {
-      return;
-    }
-    const confirmed = window.confirm("Remove all uploaded audio, sections, and drum edits?");
-    if (!confirmed) {
-      return;
-    }
-    setTracks([]);
-    setSections([]);
-    setNotes([]);
-    setSectionDrumTracks({});
-    setSectionGrooveMaps({});
-    setSectionPlacementContexts({});
-    setSectionNoteIds({});
-    setSelectedSectionIds(new Set());
-    setSelectedMeasureRange(null);
-    setSongMap(null);
-    setArrangementSource(null);
-    setErr(null);
-  }, [tracks.length]);
-
-  const downloadJson = useCallback((data: unknown, filename: string) => {
-    try {
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-    } catch (downloadErr) {
-      console.warn("[DebugExport] Failed to create JSON download", downloadErr);
-      alert("Unable to export debug payload; see console for details.");
-    }
-  }, []);
-
-  const exportActiveDrumDebug = useCallback(() => {
-    const sectionId = selectedMeasureRange?.sectionId ?? activeSectionId ?? null;
-    if (!sectionId) {
-      alert("Select a section before exporting drum debug data.");
-      return;
-    }
-    const track = sectionDrumTracks[sectionId];
-    if (!track) {
-      alert("No drum track data is available for the selected section yet.");
-      return;
-    }
-    const placement = sectionPlacementContexts[sectionId];
-    const selectedRange = selectedMeasureRange && selectedMeasureRange.sectionId === sectionId
-      ? selectedMeasureRange
-      : null;
-    const noteIds = new Set(sectionNoteIds[sectionId] ?? []);
-    const sectionNotes = noteIds.size ? notes.filter((note) => noteIds.has(note.id)) : [];
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      sectionId,
-      placement,
-      selectedRange,
-      track,
-      sectionNotes,
-      stats: {
-        trackNotes: track.notes?.length ?? 0,
-        sectionNotes: sectionNotes.length,
-      },
-    };
-    downloadJson(payload, `drum-debug-${sectionId}-${Date.now()}.json`);
-  }, [
-    selectedMeasureRange,
-    activeSectionId,
-    sectionDrumTracks,
-    sectionPlacementContexts,
-    sectionNoteIds,
-    notes,
-    downloadJson,
-  ]);
-  
-  const injectDebugTestGroove = useCallback(() => {
-    if (!selectedMeasureRange) {
-      console.warn("[DebugTestGroove] No section selected; select a section before injecting the pattern.");
-      return;
-    }
-
-    const baseBar = selectedMeasureRange.startMeasure ?? 0;
-    const targetSectionId = selectedMeasureRange.sectionId ?? "__debug__";
-    const beatsPerBarForSection = selectedMeasureRange.timeSignature?.[0] ?? timeSig[0] ?? 4;
-    const barsToCover = Math.max(1, Math.min(2, selectedMeasureRange.measureCount || 2));
-    const ticksPerBeat = 960;
-    const debugNotes: DrumNoteEvent[] = [];
-    const stamp = Date.now();
-
-    const addNote = (
-      barOffset: number,
-      beatIndex: number,
-      instrumentId: DrumInstrumentId,
-      velocity = 0.95,
-    ) => {
-      const barIndex = baseBar + barOffset;
-      const tickInBar = Math.max(0, Math.round(beatIndex * ticksPerBeat));
-      const tickLength = Math.max(60, Math.round(ticksPerBeat * 0.95));
-      const midiPitch = DRUM_INSTRUMENT_MIDI_MAP[instrumentId] ?? DRUM_INSTRUMENT_MIDI_MAP.snare_center;
-      const midiVelocity = Math.max(1, Math.min(127, Math.round(velocity * 127)));
-      const limbId = inferLimbFromInstrument(instrumentId) ?? inferLimbFromLane(instrumentId) ?? null;
-
-      debugNotes.push({
-        id: `debug-${targetSectionId}-${stamp}-${debugNotes.length}`,
-        barIndex,
-        tickInBar,
-        tickLength,
-        channel: 9,
-        midiPitch,
-        velocity: midiVelocity,
-        instrumentId,
-        limbId: limbId ?? undefined,
-        isGhost: midiVelocity <= 40,
-        isAccent: midiVelocity >= 110,
-        isFlam: false,
-        isDrag: false,
-      });
-    };
-
-    for (let barOffset = 0; barOffset < barsToCover; barOffset += 1) {
-      for (let beat = 0; beat < beatsPerBarForSection; beat += 1) {
-        addNote(barOffset, beat, "kick", 0.98);
-        addNote(barOffset, beat, "hihat_closed", 0.7);
-        if (beat === 1 || beat === 3) {
-          addNote(barOffset, beat, "snare_center", 0.9);
-        }
-      }
-    }
-
-    const debugTrack: DrumTrackForDCSM = {
-      track_id: `debug-${targetSectionId}-${stamp}`,
-      style_id: "debug",
-      resolution_ppq: ticksPerBeat,
-      notes: debugNotes,
-      performance_spec: {
-        styleId: "debug",
-        globalFeel: "straight",
-        quantizationBase: "16th",
-        phrases: [],
-      },
-    };
-
-    setSectionDrumTracks((prev) => ({
-      ...prev,
-      [targetSectionId]: debugTrack,
-    }));
-
-    const placement = activePlacementContext ?? fallbackPlacementContext;
-    if (placement) {
-      syncSectionMidiNotes(targetSectionId, debugTrack, placement);
-    } else {
-      syncSectionMidiNotes(targetSectionId, debugTrack);
-    }
-
-    applyTrackToMidiClip(debugTrack);
-    ensureSectionSelection(targetSectionId);
-    setDebugDrumGen({
-      payloadSectionId: targetSectionId,
-      hasDrumTrack: true,
-      drumTrackNotes: debugNotes.length,
-      hasLegacyNotes: false,
-      legacyNotesCount: 0,
-    });
-    console.log(
-      `[DebugTestGroove] Injected ${debugNotes.length} notes into section ${targetSectionId} starting at bar ${baseBar}`,
-    );
-  }, [
-    selectedMeasureRange,
-    timeSig,
-    activePlacementContext,
-    fallbackPlacementContext,
-    syncSectionMidiNotes,
-    applyTrackToMidiClip,
-    ensureSectionSelection,
-    setSectionDrumTracks,
-    setDebugDrumGen,
-  ]);
-  const sectionDebugSummaries = useMemo(() => {
-    return Object.entries(sectionDrumTracks ?? {}).map(([id, track]) => {
-      const summary = track ? summarizeDrumTrack(track) : summarizeDrumTrack({ notes: [] } as any);
-      return {
-        id,
-        noteCount: summary.noteCount,
-        minBar: summary.minBar,
-        maxBar: summary.maxBar,
-        instruments: summary.instruments,
-        barCount: typeof (track as any)?.barCount === "number" ? (track as any).barCount : null,
-        trackId: (track as any)?.track_id ?? null,
-      };
-    });
-  }, [sectionDrumTracks]);
-
-  useEffect(() => {
     if (!fullSongStatus) {
       setFullSongProgress({ completed: 0, total: 0 });
       return;
@@ -2266,7 +2412,7 @@ export default function WebDAWApp() {
   
   // Comprehensive drum options
   const [drumOptions, setDrumOptions] = useState<DrumOptions>({
-    bpm: 120, bars: 8, density: 0.7, swing: 0, humanize: 0.3,
+    bpm: 120, bars: 8, density: 0.7, swing: 0, humanize: 0.55,
     style: 'rock', label: 'verse', swing_preset: 'off', vel_preset: 'accent24', fill_preset: 'random',
     drum_velocity: 0.85, cymbal_velocity: 0.70, kick_velocity: 0.90, snare_velocity: 0.85,
     tom_velocity: 0.80, hihat_velocity: 0.65, crash_velocity: 0.90, ride_velocity: 0.70,
@@ -2275,8 +2421,245 @@ export default function WebDAWApp() {
     hihat_complexity: 0.5, hihat_pattern: 'eighths', hihat_open_ratio: 0.2, hihat_ghost_notes: 0.3,
     ride_complexity: 0.4, ride_pattern: 'quarters', ride_vs_hihat_ratio: 0.3, ride_bell_ratio: 0.1,
     bass_line_mode: 'auto', bass_kick_sync: 0.7, bass_lock_downbeats: true,
-    tom_usage: 0.3, crash_frequency: 0.2, ghost_note_density: 0.2, dynamic_range: 0.5
+    tom_usage: 0.3, crash_frequency: 0.2, ghost_note_density: 0.35, dynamic_range: 0.65
   });
+
+  useEffect(() => {
+    // Capture a baseline as soon as we have a style (and optionally a drummer).
+    // This keeps the Stylemeter anchored to the user's initial intent.
+    if (stylometerSongBaselineRef.current) return;
+    const style = (drumOptions?.style || "").toString().trim();
+    if (!style) return;
+    const drummerStyle = (selectedDrummer?.style || "").toString().trim();
+    stylometerSongBaselineRef.current = { style, drummerStyle };
+  }, [drumOptions?.style, selectedDrummer?.style]);
+
+  const stylometerValues: StylometerValues = useMemo(() => {
+    const scope: "song" | "section" | "bar" = selectedBarIndex !== null ? "bar" : selectedMeasureRange ? "section" : "song";
+
+    const sectionCfg =
+      scope !== "song" && selectedMeasureRange?.sectionId
+        ? sectionGenConfigs[selectedMeasureRange.sectionId] ?? null
+        : null;
+
+    const baseline =
+      scope !== "song" && selectedMeasureRange?.sectionId
+        ? stylometerSectionBaselineRef.current[selectedMeasureRange.sectionId] ?? null
+        : stylometerSongBaselineRef.current;
+
+    const selectedStyle = ((baseline?.style ?? sectionCfg?.style ?? drumOptions?.style) || "rock").toLowerCase();
+    const profileStyle = ((baseline?.drummerStyle ?? selectedDrummer?.style) || "").toLowerCase();
+
+    const baseGenres: StylometerValues["genres"] = {
+      rock: 0,
+      jazz: 0,
+      funk: 0,
+      metal: 0,
+      blues: 0,
+      pop: 0,
+      latin: 0,
+      hiphop: 0,
+      soul: 0,
+    };
+
+    const bump = (key: keyof StylometerValues["genres"], amt: number) => {
+      baseGenres[key] = Math.max(0, Math.min(1, (baseGenres[key] || 0) + amt));
+    };
+
+    const styleToGenreKey = (s: string): keyof StylometerValues["genres"] | null => {
+      if (s === "hip-hop" || s === "hiphop") return "hiphop";
+      if (s === "r&b" || s === "rnb") return "soul";
+      if (
+        s === "rock" ||
+        s === "jazz" ||
+        s === "funk" ||
+        s === "metal" ||
+        s === "blues" ||
+        s === "pop" ||
+        s === "latin" ||
+        s === "soul"
+      ) {
+        return s as any;
+      }
+      return null;
+    };
+
+    const styleKey = styleToGenreKey(selectedStyle);
+    const profileKey = styleToGenreKey(profileStyle);
+
+    if (styleKey) bump(styleKey, 0.65);
+    if (profileKey) bump(profileKey, 0.55);
+
+    if (grooveSource === "egmd_phrases") {
+      const sg = (styleGroup || "").toLowerCase();
+      const sgKey = styleToGenreKey(sg);
+      if (sgKey) bump(sgKey, grooveMode === "exact" ? 0.35 : 0.25);
+    }
+
+    // Make the readout more decisive: sharpen and re-normalize so winners stand out.
+    const keys = Object.keys(baseGenres) as Array<keyof StylometerValues["genres"]>;
+    let sum = 0;
+    for (const k of keys) {
+      // Gamma > 1 makes strong influences stronger and weak influences fade out.
+      const v = Math.max(0, Math.min(1, baseGenres[k] || 0));
+      const sharpened = Math.pow(v, 1.8);
+      baseGenres[k] = sharpened;
+      sum += sharpened;
+    }
+    if (sum > 0) {
+      for (const k of keys) {
+        baseGenres[k] = Math.max(0, Math.min(1, (baseGenres[k] || 0) / sum));
+      }
+    }
+
+    // Derive a single groove fingerprint score from the active groove map.
+    // We measure how strongly the weighting deviates from neutral (1.0) across the 16th grid,
+    // then compress to 0..1 so it's a relative, style-differentiating scalar.
+    let grooveScore = 0;
+    if (activeGrooveMap) {
+      const steps = Array.from({ length: 16 }, () => 1.0);
+      const counts = Array.from({ length: 16 }, () => 0);
+      for (const barKey of Object.keys(activeGrooveMap)) {
+        const barIndex = Number(barKey);
+        if (!Number.isFinite(barIndex)) continue;
+        const bar = (activeGrooveMap as any)[barIndex];
+        if (!bar) continue;
+        for (let s = 0; s < 16; s += 1) {
+          const entry = bar[s];
+          if (!entry) continue;
+          const preset = GROOVE_WEIGHT_PRESETS[(entry.weight || "neutral") as any];
+          const profileWeight = preset?.weights?.[s]?.weight ?? 1.0;
+          const forceMultiplier = entry.forceHit ? 1.15 : entry.forceSilent ? 0.65 : 1.0;
+          steps[s] += profileWeight * forceMultiplier;
+          counts[s] += 1;
+        }
+      }
+      for (let s = 0; s < 16; s += 1) {
+        if (counts[s] > 0) {
+          steps[s] = steps[s] / (counts[s] + 1);
+        }
+      }
+
+      // Root-mean-square deviation from neutral.
+      const rms = Math.sqrt(
+        steps.reduce((acc, v) => {
+          const d = (Number.isFinite(v) ? v : 1.0) - 1.0;
+          return acc + d * d;
+        }, 0) / steps.length,
+      );
+
+      // Empirical normalization: typical preset deviations land around ~0.15-0.35.
+      grooveScore = Math.max(0, Math.min(1, rms / 0.35));
+    }
+
+    // Controls: Song/Section uses config knobs, Bar uses actual edited notes in the selected bar.
+    const readCfg = sectionCfg ?? null;
+    const humanizeAmountCfg = typeof readCfg?.humanizeAmount === "number" ? readCfg.humanizeAmount : (drumOptions?.humanize ?? 0.6);
+    const swingAmountCfg = typeof readCfg?.swingAmount === "number" ? readCfg.swingAmount : (drumOptions?.swing ?? 0);
+    const ghostAmountCfg = typeof readCfg?.ghostNoteAmount === "number" ? readCfg.ghostNoteAmount : (drumOptions?.ghost_note_density ?? 0.35);
+    const fillAmountCfg = typeof readCfg?.fillDensity === "number" ? readCfg.fillDensity : (drumOptions?.fill_density ?? 0.4);
+    const intensityCfg = typeof readCfg?.intensity === "number" ? readCfg.intensity : (drumOptions?.density ?? 0.6);
+    const variationCfg = typeof readCfg?.variation === "number" ? readCfg.variation : (drumOptions?.dynamic_range ?? drumOptions?.humanize ?? 0.5);
+
+    let intensity = clamp01(intensityCfg);
+    let variation = clamp01(variationCfg);
+    let humanizeAmount = clamp01(humanizeAmountCfg);
+    let swingAmount = clamp01(swingAmountCfg);
+    let ghostAmount = clamp01(ghostAmountCfg);
+    let fillDensity = clamp01(fillAmountCfg);
+
+    if (scope === "bar" && activeDrumTrack && selectedBarIndex !== null) {
+      const barNotes = activeDrumTrack.notes.filter((n) => (n.barIndex ?? 0) === selectedBarIndex);
+      if (barNotes.length) {
+        const velocities = barNotes.map((n) => Number(n.velocity ?? 0)).filter((v) => Number.isFinite(v) && v > 0);
+        const avgVel = velocities.length ? velocities.reduce((a, b) => a + b, 0) / velocities.length : 90;
+        const velVar = velocities.length
+          ? velocities.reduce((a, v) => a + Math.pow(v - avgVel, 2), 0) / velocities.length
+          : 0;
+
+        const timingOffsets = barNotes
+          .map((n) => Number((n.timingOffsetMs ?? n.microTimingMs ?? 0) as any))
+          .filter((v) => Number.isFinite(v));
+        const timingAbsAvg = timingOffsets.length
+          ? timingOffsets.reduce((a, v) => a + Math.abs(v), 0) / timingOffsets.length
+          : 0;
+
+        const ghostFrac = barNotes.length
+          ? barNotes.filter((n) => Boolean((n as any).isGhost)).length / barNotes.length
+          : 0;
+        const fillFrac = barNotes.length
+          ? barNotes.filter((n) => (n.aspect || "") === "fill").length / barNotes.length
+          : 0;
+
+        intensity = clamp01(avgVel / 127);
+        variation = clamp01(Math.sqrt(velVar) / 35);
+        humanizeAmount = clamp01(timingAbsAvg / 10);
+        ghostAmount = clamp01(ghostFrac / 0.35);
+        fillDensity = clamp01(fillFrac / 0.25);
+        // swing is currently not directly observable from note data in this editor, so keep config value.
+        swingAmount = clamp01(swingAmountCfg);
+      }
+    }
+
+    return {
+      genres: baseGenres,
+      grooveScore,
+      controls: {
+        intensity,
+        variation,
+        humanize: humanizeAmount,
+        swing: swingAmount,
+        ghosts: ghostAmount,
+        fills: fillDensity,
+      },
+    };
+  }, [activeDrumTrack, activeGrooveMap, drumOptions, grooveMode, grooveSource, sectionGenConfigs, selectedBarIndex, selectedDrummer?.style, selectedMeasureRange, styleGroup]);
+
+  const stylometerGenreLabel = useMemo(() => {
+    const entries = Object.entries(stylometerValues.genres)
+      .map(([k, v]) => ({ k, v: Number(v) }))
+      .filter((e) => Number.isFinite(e.v))
+      .sort((a, b) => b.v - a.v);
+    const top = entries[0];
+    const second = entries[1];
+    const pretty = (k: string) => {
+      if (k === "hiphop") return "Hip-Hop";
+      if (k === "soul") return "Soul";
+      return k.charAt(0).toUpperCase() + k.slice(1);
+    };
+    if (!top || top.v <= 0) return "";
+    if (second && second.v >= 0.28) {
+      return `${pretty(top.k)}-${pretty(second.k)}`;
+    }
+    return pretty(top.k);
+  }, [stylometerValues.genres]);
+
+  const stylometerScopeLabel = useMemo(() => {
+    if (selectedBarIndex !== null) {
+      return `Bar: ${selectedBarIndex + 1}`;
+    }
+    if (selectedMeasureRange?.sectionId) {
+      const section = sections.find((s) => s.id === selectedMeasureRange.sectionId);
+      const label = (section?.label || section?.id || "Section").toString();
+      return `Section: ${label}`;
+    }
+    return "Song";
+  }, [sections, selectedBarIndex, selectedMeasureRange?.sectionId]);
+
+  const handleResetStylometerBaseline = useCallback(() => {
+    const drummerStyle = (selectedDrummer?.style || "").toString();
+    const style = (drumOptions?.style || "rock").toString();
+    stylometerSongBaselineRef.current = { style, drummerStyle };
+
+    const sectionId = selectedMeasureRange?.sectionId;
+    if (sectionId) {
+      const sectionStyle = (sectionGenConfigs?.[sectionId]?.style || style).toString();
+      stylometerSectionBaselineRef.current[sectionId] = {
+        style: sectionStyle,
+        drummerStyle,
+      };
+    }
+  }, [drumOptions?.style, sectionGenConfigs, selectedDrummer?.style, selectedMeasureRange?.sectionId]);
 
   useEffect(() => {
     if (!selectedMeasureRange) {
@@ -2396,6 +2779,282 @@ export default function WebDAWApp() {
     return Math.max(1, Math.ceil(timelineDurationSec / secPerBar));
   }, [bpm, timeSig, timelineDurationSec]);
 
+  const [sectionGrooveModalOpen, setSectionGrooveModalOpen] = useState(false);
+  const [sectionGrooveModalSectionId, setSectionGrooveModalSectionId] = useState<string>("");
+  const [sectionGrooveQuery, setSectionGrooveQuery] = useState("");
+  const [sectionGrooveTag, setSectionGrooveTag] = useState("");
+  const [sectionGrooveLoading, setSectionGrooveLoading] = useState(false);
+  const [sectionGrooveResults, setSectionGrooveResults] = useState<any[]>([]);
+  const [sectionSelectedGrooveId, setSectionSelectedGrooveId] = useState<string>("");
+  const [sectionFillGrooveId, setSectionFillGrooveId] = useState<string>("");
+  const [sectionFillBarRelativeText, setSectionFillBarRelativeText] = useState<string>("last");
+  const [sectionGrooveSelections, setSectionGrooveSelections] = useState<
+    Record<string, { selectedGrooveId?: string; fillGrooveId?: string; fillBarRelativeText?: string }>
+  >({});
+
+  const grooveAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [auditioningGrooveId, setAuditioningGrooveId] = useState<string>("");
+
+  const stopGrooveAudition = useCallback(() => {
+    const audio = grooveAudioRef.current;
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    grooveAudioRef.current = null;
+    setAuditioningGrooveId("");
+  }, []);
+
+  const auditionGroove = useCallback(
+    async (grooveId: string) => {
+      const nextId = String(grooveId || "").trim();
+      if (!nextId) return;
+      if (auditioningGrooveId === nextId) {
+        stopGrooveAudition();
+        return;
+      }
+      stopGrooveAudition();
+      const url = `/api/grooves/${encodeURIComponent(nextId)}/audio`;
+      const audio = new Audio(url);
+      grooveAudioRef.current = audio;
+      setAuditioningGrooveId(nextId);
+      audio.onended = () => {
+        if (auditioningGrooveId === nextId) {
+          setAuditioningGrooveId("");
+        }
+        grooveAudioRef.current = null;
+      };
+      try {
+        await audio.play();
+      } catch (e) {
+        console.warn("Groove audition failed", e);
+        stopGrooveAudition();
+      }
+    },
+    [auditioningGrooveId, stopGrooveAudition],
+  );
+
+  const sectionQuickGrooveTags = [
+    "four_on_floor",
+    "backbeat_2_4",
+    "halftime",
+    "shuffle",
+    "sixteenth_note_hats",
+    "paradiddle",
+    "rudiment",
+  ];
+
+  const searchSectionGrooves = useCallback(
+    async (nextQuery?: string, nextTag?: string) => {
+      const q = (nextQuery ?? sectionGrooveQuery).trim();
+      const t = (nextTag ?? sectionGrooveTag).trim();
+      setSectionGrooveLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (q) params.set("q", q);
+        if (t) params.set("tags", t);
+        params.set("limit", "24");
+        const res = await fetch(`/api/grooves/search?${params.toString()}`);
+        const json = await res.json();
+        setSectionGrooveResults(Array.isArray(json?.items) ? json.items : []);
+      } catch (e) {
+        console.warn("section groove search failed", e);
+        setSectionGrooveResults([]);
+      } finally {
+        setSectionGrooveLoading(false);
+      }
+    },
+    [sectionGrooveQuery, sectionGrooveTag],
+  );
+
+  const openSectionGrooveModal = (sectionId: string) => {
+    if (!sectionId) return;
+    const existing = sectionGrooveSelections[sectionId] || {};
+    setSectionGrooveModalSectionId(sectionId);
+    setSectionSelectedGrooveId(existing.selectedGrooveId || "");
+    setSectionFillGrooveId(existing.fillGrooveId || "");
+    setSectionFillBarRelativeText(existing.fillBarRelativeText || "last");
+    setSectionGrooveModalOpen(true);
+  };
+
+  const closeSectionGrooveModal = () => {
+    setSectionGrooveModalOpen(false);
+  };
+
+  const resolveRelativeBarIndex = (raw: string, bars: number): number | null => {
+    const normalized = String(raw || "").trim().toLowerCase();
+    if (!bars || bars <= 0) return null;
+    if (normalized === "last" || normalized === "-1") return Math.max(0, bars - 1);
+    if (!normalized) return null;
+    const n = Math.floor(Number(normalized));
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(Math.max(0, bars - 1), n));
+  };
+
+  const handleGenerateFullSongWithGrooves = async (opts?: { ignoreGrooveSelections?: boolean }) => {
+    if (!sections.length) {
+      setErr("No sections available to build drums for yet.");
+      return;
+    }
+    if (!selectedDrummer) {
+      openDrummerPersonaModal();
+      return;
+    }
+    if (bulkGenerating || generatingDrums) {
+      return;
+    }
+
+    setBulkGenerating(true);
+    setFullSongProgress({ completed: 0, total: 1 });
+    setFullSongStatus({ type: "progress", message: "Building drums for full song…" });
+    try {
+      const primaryTrackKey = tracks[0]?.key;
+      if (primaryTrackKey) {
+        try {
+          await analyzeSectionTempos(primaryTrackKey, sections);
+        } catch (tempoErr) {
+          console.warn("Tempo analysis during full-song generation failed", tempoErr);
+        }
+      }
+
+      const fullRange: MeasureRange = {
+        sectionId: "full-song",
+        sectionLabel: "Full Song",
+        startMeasure: 0,
+        endMeasure: Math.max(0, totalSongBars - 1),
+        measureCount: Math.max(1, totalSongBars),
+        tempos: Array(Math.max(1, totalSongBars)).fill(bpm),
+        avgTempo: bpm,
+        timeSignature: timeSig,
+        startTime: 0,
+        endTime: timelineDurationSec,
+      };
+
+      const songSections = sections
+        .map((section) => {
+          const measureRange = sectionToMeasureRange(
+            section,
+            bpm,
+            timeSig,
+            songMap,
+            tempoFlattenToleranceBpm,
+            drumTempoMode,
+          );
+          const bars = Math.max(1, measureRange.measureCount);
+          const name = (section.label || "section")
+            .toLowerCase()
+            .replace(/\s+/g, "_")
+            .replace(/[^a-z0-9_]/g, "")
+            .replace(/^_+|_+$/g, "");
+          return { name: name || "section", bars };
+        })
+        .filter((s) => s.bars > 0);
+
+      const derivedSongStyle = (drumOptions.style || "rock") as DrumGenerationConfig["songStyle"];
+
+      const baselineDefaults = deriveBaselineDrumOptions(
+        bpm,
+        timeSig,
+        drumOptions.style || selectedDrummer?.style || "rock",
+        selectedDrummer?.id || "",
+      );
+      const effectiveDrumOptions = { ...drumOptions, ...baselineDefaults };
+      setDrumOptions((prev) => ({ ...prev, ...baselineDefaults }));
+
+      setSelectedMeasureRange(fullRange);
+      setSelectedSectionIds(new Set(["full-song"]));
+
+      void opts;
+
+      const fullSongConfig: DrumGenerationConfig = {
+        sectionId: "full-song",
+        startMeasure: fullRange.startMeasure,
+        endMeasure: fullRange.endMeasure,
+        tempos: fullRange.tempos,
+        timeSignature: fullRange.timeSignature,
+        style: effectiveDrumOptions.style || drumOptions.style || "rock",
+        drummer: selectedDrummer?.id || "jeff_porcaro",
+        intensity: clamp01(Math.min(0.7, effectiveDrumOptions.density ?? 0.55)),
+        variation: clamp01(
+          Math.min(
+            0.6,
+            Math.max(0.35, effectiveDrumOptions.dynamic_range ?? effectiveDrumOptions.humanize ?? 0.45),
+          ),
+        ),
+        generationMode: "full_ai",
+        humanize: true,
+        fillLocations: (() => {
+          const bars = Math.max(1, fullRange.measureCount);
+          const fills = new Set<number>();
+          let cursor = 0;
+          for (let i = 0; i < songSections.length; i += 1) {
+            const secBars = Math.max(1, Number(songSections[i]?.bars ?? 1));
+            cursor += secBars;
+            const fillBar = cursor - 1;
+            if (fillBar >= 0 && fillBar < bars - 1) {
+              fills.add(fillBar);
+            }
+          }
+          fills.add(bars - 1);
+          return Array.from(fills).sort((a, b) => a - b);
+        })(),
+        fillType: effectiveDrumOptions.fill_preset ?? "auto",
+        fillDensity: clamp01(Math.min(0.55, effectiveDrumOptions.fill_density ?? 0.35)),
+        humanizeAmount: clamp01(Math.min(0.75, effectiveDrumOptions.humanize ?? 0.62)),
+        ghostNoteAmount: clamp01(Math.min(0.6, effectiveDrumOptions.ghost_note_density ?? 0.25)),
+        swingAmount: clamp01(effectiveDrumOptions.swing ?? 0),
+        buildScope: "full_song",
+        guideEnabled: false,
+        songStyle: derivedSongStyle,
+        songSections,
+        fillControls: {
+          fillType: effectiveDrumOptions.fill_preset ?? "auto",
+          density: clamp01(Math.min(0.55, effectiveDrumOptions.fill_density ?? 0.35)),
+          frequency: "all_transitions",
+        },
+      };
+
+      setSectionGenConfigs((prev) => ({
+        ...prev,
+        ["full-song"]: fullSongConfig,
+      }));
+
+      stylometerSongBaselineRef.current = {
+        style: (fullSongConfig.style || "rock").toString(),
+        drummerStyle: (selectedDrummer?.style || "").toString(),
+      };
+      stylometerSectionBaselineRef.current["full-song"] = {
+        style: (fullSongConfig.style || "rock").toString(),
+        drummerStyle: (selectedDrummer?.style || "").toString(),
+      };
+
+      const applied = await executeDrumGeneration(fullSongConfig, { suppressSpinner: true });
+      setFullSongProgress({ completed: 1, total: 1 });
+
+      if (!applied) {
+        setFullSongStatus({
+          type: "error",
+          message: "Finished, but the generator returned no drum data for the full song.",
+        });
+      } else {
+        setFullSongStatus({ type: "success", message: "🥁 Completed drum build for the full song." });
+      }
+    } catch (fullSongError: any) {
+      console.error("❌ Full-song drum generation failed:", fullSongError);
+      const errorMessage = `Full-song drum generation failed: ${fullSongError?.message || fullSongError}`;
+      setErr(errorMessage);
+      setFullSongStatus({
+        type: "error",
+        message: `❌ Full-song generation failed: ${String(fullSongError?.message || fullSongError)}`,
+      });
+    } finally {
+      setBulkGenerating(false);
+    }
+  };
+
   useEffect(() => {
     // Ensure we have a midi track + clip set up
     let ensuredTrackId = drumTrackId;
@@ -2459,6 +3118,24 @@ export default function WebDAWApp() {
     scrollTimelineTo(seconds * pixelsPerSecond);
   }, [pixelsPerSecond, scrollTimelineTo]);
 
+  const focusMainEditorBar = useCallback(
+    (barIndex: number) => {
+      if (!Number.isFinite(barIndex) || barIndex < 0) return;
+      setSelectedBarIndex(barIndex);
+
+      const beatsPerBar = Math.max(1, Number(timeSig?.[0] ?? 4) || 4);
+      const secondsPerBar = (60 / Math.max(1, Number(bpm) || 120)) * beatsPerBar;
+      scrollToTime(barIndex * secondsPerBar);
+
+      const pianoEl = pianoRollScrollRef.current;
+      if (pianoEl) {
+        const barWidthPx = Math.max(1, gridPixelsPerBeat * beatsPerBar);
+        pianoEl.scrollLeft = Math.max(0, barIndex * barWidthPx);
+      }
+    },
+    [bpm, gridPixelsPerBeat, scrollToTime, timeSig],
+  );
+
   const scrollToSelectedSection = useCallback(() => {
     if (!selectedSectionIds.size) return;
     const firstId = Array.from(selectedSectionIds)[0];
@@ -2496,6 +3173,54 @@ export default function WebDAWApp() {
     [sections, bpm, timeSig, songMap, scrollToSelectedSection, setSelectedSectionIds, setSelectedMeasureRange],
   );
 
+  const handleSongMapSelectGlobal = useCallback(() => {
+    setScopedControlsMode("global");
+    setScopedControlsSectionId(null);
+    setMiniEditorOpen(false);
+  }, []);
+
+  const handleSongMapSelectSection = useCallback(
+    (sectionId: string) => {
+      if (!sectionId) return;
+      setScopedControlsMode("section");
+      setScopedControlsSectionId(sectionId);
+      setMiniEditorOpen(false);
+      setSelectedSectionIds(new Set([sectionId]));
+
+      const section = sections.find((s) => s.id === sectionId);
+      if (section) {
+        const measureRange = sectionToMeasureRange(
+          section,
+          bpm,
+          timeSig,
+          songMap,
+          tempoFlattenToleranceBpm,
+          drumTempoMode,
+        );
+        setSelectedMeasureRange(measureRange);
+      } else {
+        setSelectedMeasureRange(null);
+      }
+
+      window.requestAnimationFrame(() => {
+        scrollToSelectedSection();
+        setSongMapFlashNonce((v) => v + 1);
+        setSoftFocusPulseNonce((v) => v + 1);
+      });
+    },
+    [
+      bpm,
+      drumTempoMode,
+      scrollToSelectedSection,
+      sections,
+      setSelectedMeasureRange,
+      setSelectedSectionIds,
+      songMap,
+      tempoFlattenToleranceBpm,
+      timeSig,
+    ],
+  );
+
   const scrollToPlayhead = useCallback(() => {
     scrollToTime(playhead);
   }, [playhead, scrollToTime]);
@@ -2520,7 +3245,13 @@ export default function WebDAWApp() {
       const dt=(now-last)/1000; last=now;
       if (playing) {
         setPlayhead((p) => {
-          const next = p + dt;
+          const engineCandidate =
+            playheadClockModeRef.current === "engine" ? Engine.getCurrentTimeSeconds() : NaN;
+          const next =
+            playheadClockModeRef.current === "engine" && Number.isFinite(engineCandidate) && engineCandidate > p + 1e-3
+              ? engineCandidate
+              : p + dt;
+
           void scheduleDrumsBetween(lastDrumScheduleSecRef.current, next);
           lastDrumScheduleSecRef.current = next;
           return next;
@@ -2828,14 +3559,20 @@ export default function WebDAWApp() {
     setSections([]);
     setSelectedSectionIds(new Set());
     setSelectedMeasureRange(null);
+    setSelectedBarIndex(null);
     setPlayhead(0);
     setArrangementSource(null);
     setSongMap(null);
     setSectionDrumTracks({});
     setSectionGrooveMaps({});
+    setSectionGenConfigs({});
     setSectionPlacementContexts({});
     setSectionNoteIds({});
     setNotes([]);
+
+    // Reset Stylometer baseline snapshots so a new song/style starts fresh.
+    stylometerSongBaselineRef.current = null;
+    stylometerSectionBaselineRef.current = {};
     console.log('🗑️ Arrangement cleared');
   }
   
@@ -2993,14 +3730,43 @@ export default function WebDAWApp() {
       }
 
       payload = { ...payload, midiMapName };
+
+      const resolved = resolveGrooveSettings(config.sectionId);
+      const isEgmd = resolved.grooveSource === "egmd_phrases";
+
+      const egmdSelectedPhrase =
+        isEgmd && resolved.selectedEgmdPhraseId !== null && typeof resolved.selectedEgmdPhraseId !== "undefined"
+          ? egmdPhraseOptions.find((p) => Number(p?.phrase_id) === Number(resolved.selectedEgmdPhraseId)) ?? null
+          : null;
       payload = {
         ...payload,
-        grooveSource: grooveSource === "egmd_phrases" ? "egmd_phrases" : undefined,
-        grooveMode: grooveSource === "egmd_phrases" ? grooveMode : undefined,
-        styleGroup: grooveSource === "egmd_phrases" ? styleGroup : undefined,
-        egmdPhraseId: grooveSource === "egmd_phrases" && selectedEgmdPhraseId !== null ? selectedEgmdPhraseId : undefined,
+        grooveSource: isEgmd ? "egmd_phrases" : undefined,
+        grooveMode: isEgmd ? resolved.grooveMode : undefined,
+        styleGroup: isEgmd ? resolved.styleGroup : undefined,
+        egmdPhraseId:
+          isEgmd && resolved.selectedEgmdPhraseId !== null && typeof resolved.selectedEgmdPhraseId !== "undefined"
+            ? resolved.selectedEgmdPhraseId
+            : undefined,
+        egmdMidiPath: isEgmd ? (egmdSelectedPhrase?.midi_path ? String(egmdSelectedPhrase.midi_path) : undefined) : undefined,
+        egmdPhraseOverrides:
+          isEgmd && resolved.egmdOverrideMode !== 'single'
+            ? {
+                mode: resolved.egmdOverrideMode === 'by_type' ? 'by_type' : 'by_index',
+                byType: resolved.egmdOverrideMode === 'by_type' ? resolved.egmdPhraseByType : undefined,
+                byIndex: resolved.egmdOverrideMode === 'by_index' ? resolved.egmdPhraseByIndex : undefined,
+              }
+            : undefined,
       };
       console.log('🥁 Generating drums:', payload);
+      console.log('[DrumGenPayload] style/drummer', {
+        sectionId: payload.sectionId,
+        style: (payload as any).style,
+        drummer: (payload as any).drummer,
+        publicDrummerId: (payload as any).publicDrummerId,
+        grooveSource: (payload as any).grooveSource,
+        grooveMode: (payload as any).grooveMode,
+        styleGroup: (payload as any).styleGroup,
+      });
 
       const apiBase = resolveApiBaseNormalized();
       const url = `${apiBase}/api/generate-drums`;
@@ -3018,6 +3784,25 @@ export default function WebDAWApp() {
       
       const result = await response.json();
       const resultMetadata = result?.metadata ?? {};
+
+      try {
+        const metaDump = {
+          builder_version: (resultMetadata as any)?.builder_version ?? (resultMetadata as any)?.builderVersion,
+          performance_from_llm: (resultMetadata as any)?.performance_from_llm ?? (resultMetadata as any)?.performanceFromLlm,
+          egmdPhrase: (resultMetadata as any)?.egmdPhrase,
+          egmdSections0: Array.isArray((resultMetadata as any)?.egmdSections)
+            ? (resultMetadata as any)?.egmdSections?.[0]
+            : undefined,
+          roadmapDebug0: Array.isArray((resultMetadata as any)?.roadmapDebug)
+            ? (resultMetadata as any)?.roadmapDebug?.[0]
+            : undefined,
+        };
+        console.log("[DrumGenResult.metadata dump]", metaDump);
+        console.log("[DrumGenResult.metadata dump json]", JSON.stringify(metaDump, null, 2));
+      } catch (e) {
+        console.warn("[DrumGenResult.metadata dump] failed", e);
+      }
+
       const builderVersion =
         (resultMetadata as any)?.builder_version ?? (resultMetadata as any)?.builderVersion ?? null;
       const resultOk = (result as any)?.ok;
@@ -3102,7 +3887,7 @@ export default function WebDAWApp() {
     } catch (e: any) {
       console.error('❌ Drum generation failed:', e);
       setErr(`Drum generation failed: ${e.message}`);
-      throw e;
+      return appliedHighRes;
     } finally {
       if (!suppressSpinner) {
         setGeneratingDrums(false);
@@ -3111,11 +3896,89 @@ export default function WebDAWApp() {
     return appliedHighRes;
   }
 
+  const [llmStatusBusy, setLlmStatusBusy] = useState(false);
+  const [llmStatusResult, setLlmStatusResult] = useState<any>(null);
+  const [llmStatusError, setLlmStatusError] = useState<string | null>(null);
+
+  const [globalDefaultsExpanded, setGlobalDefaultsExpanded] = useState(false);
+  const [sectionControlsExpanded, setSectionControlsExpanded] = useState(true);
+  const [scopedControlsMode, setScopedControlsMode] = useState<"global" | "section">("global");
+  const [scopedControlsSectionId, setScopedControlsSectionId] = useState<string | null>(null);
+  const [miniEditorOpen, setMiniEditorOpen] = useState(false);
+  const [songMapFlashNonce, setSongMapFlashNonce] = useState(0);
+  const [softFocusPulseNonce, setSoftFocusPulseNonce] = useState(0);
+  const [softFocusActive, setSoftFocusActive] = useState(false);
+
+  useEffect(() => {
+    if (!softFocusPulseNonce) return;
+    setSoftFocusActive(true);
+    const t = window.setTimeout(() => setSoftFocusActive(false), 900);
+    return () => window.clearTimeout(t);
+  }, [softFocusPulseNonce]);
+
+  async function handleCheckLocalLlmStatus() {
+    setLlmStatusBusy(true);
+    setLlmStatusError(null);
+    try {
+      const apiBase = resolveApiBaseNormalized();
+      const url = `${apiBase}/api/llm/status`;
+      const resp = await fetch(url, { method: 'GET' });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error((data as any)?.error || 'LLM status check failed');
+      }
+      setLlmStatusResult(data);
+    } catch (e: any) {
+      setLlmStatusResult(null);
+      setLlmStatusError(String(e?.message || e));
+    } finally {
+      setLlmStatusBusy(false);
+    }
+  }
+
   async function handleGenerateDrums(config: DrumGenerationConfig) {
     try {
       if (!selectedDrummer) {
-        setShowDrummerPersonaModal(true);
+        openDrummerPersonaModal();
         return;
+      }
+
+      if (config.sectionId && config.sectionId !== "full-song") {
+        const selection = sectionGrooveSelections[config.sectionId];
+        if (selection?.selectedGrooveId) {
+          (config as any).selectedGrooveId = selection.selectedGrooveId;
+          (config as any).grooveUse = "use_as_groove";
+        }
+        if (selection?.fillGrooveId) {
+          const bars = Math.max(1, (config.endMeasure ?? 0) - (config.startMeasure ?? 0) + 1);
+          const rel = resolveRelativeBarIndex(selection.fillBarRelativeText || "last", bars);
+          if (rel !== null) {
+            (config as any).fillGrooveId = selection.fillGrooveId;
+            (config as any).fillBarIndex = Math.max(0, (config.startMeasure ?? 0) + rel);
+          }
+        }
+      }
+      // Persist the last-used generator settings per section so the Stylemeter can reflect
+      // section-level intent even after you switch edit scopes.
+      if (config.sectionId) {
+        setSectionGenConfigs((prev) => ({
+          ...prev,
+          [config.sectionId]: config,
+        }));
+
+        if (!stylometerSectionBaselineRef.current[config.sectionId]) {
+          stylometerSectionBaselineRef.current[config.sectionId] = {
+            style: (config.style || "").toString(),
+            drummerStyle: (selectedDrummer?.style || "").toString(),
+          };
+        }
+      }
+
+      if (!stylometerSongBaselineRef.current) {
+        stylometerSongBaselineRef.current = {
+          style: (drumOptions?.style || config.style || "rock").toString(),
+          drummerStyle: (selectedDrummer?.style || "").toString(),
+        };
       }
       await executeDrumGeneration(config);
     } catch {
@@ -3205,13 +4068,119 @@ export default function WebDAWApp() {
     };
   };
 
+  function deriveBaselineDrumOptions(
+    tempoBpm: number,
+    meter: [number, number],
+    style: string,
+    drummerId: string,
+  ) {
+    const tempo = Number.isFinite(tempoBpm) && tempoBpm > 0 ? tempoBpm : 120;
+    const beatsPerBar = Number.isFinite(meter?.[0]) ? meter[0] : 4;
+    const denom = Number.isFinite(meter?.[1]) ? meter[1] : 4;
+    const normalizedStyle = String(style || 'rock').toLowerCase();
+    const normalizedDrummer = String(drummerId || '').toLowerCase();
+
+    const isCompound = beatsPerBar === 6 && denom === 8;
+    const isFast = tempo >= 170;
+    const isSlow = tempo <= 80;
+
+    let density = 0.62;
+    let swing = 0.0;
+    let humanize = 0.72;
+    let ghost = 0.45;
+    let fillDensity = 0.55;
+    let fillPreset: any = 'auto';
+    let dynamicRange = 0.72;
+
+    if (normalizedStyle.includes('jazz')) {
+      density = 0.52;
+      swing = 0.28;
+      ghost = 0.55;
+      humanize = 0.78;
+      dynamicRange = 0.78;
+      fillDensity = 0.4;
+    } else if (normalizedStyle.includes('funk')) {
+      density = 0.68;
+      swing = 0.12;
+      ghost = 0.62;
+      humanize = 0.7;
+      dynamicRange = 0.7;
+      fillDensity = 0.45;
+    } else if (normalizedStyle.includes('hip') || normalizedStyle.includes('trap')) {
+      density = 0.5;
+      swing = 0.18;
+      ghost = 0.35;
+      humanize = 0.6;
+      dynamicRange = 0.55;
+      fillDensity = 0.35;
+    } else if (normalizedStyle.includes('metal')) {
+      density = 0.78;
+      swing = 0.0;
+      ghost = 0.25;
+      humanize = 0.58;
+      dynamicRange = 0.65;
+      fillDensity = 0.7;
+    } else if (normalizedStyle.includes('latin')) {
+      density = 0.7;
+      swing = 0.08;
+      ghost = 0.5;
+      humanize = 0.7;
+      dynamicRange = 0.7;
+      fillDensity = 0.5;
+    } else if (normalizedStyle.includes('pop')) {
+      density = 0.6;
+      swing = 0.03;
+      ghost = 0.35;
+      humanize = 0.66;
+      dynamicRange = 0.62;
+      fillDensity = 0.45;
+    }
+
+    if (isCompound) {
+      swing = Math.max(swing, 0.12);
+      ghost = Math.min(0.75, ghost + 0.08);
+    }
+    if (isFast) {
+      density = Math.max(0.45, density - 0.08);
+      fillDensity = Math.max(0.35, fillDensity - 0.1);
+      humanize = Math.max(0.5, humanize - 0.06);
+    }
+    if (isSlow) {
+      density = Math.min(0.85, density + 0.06);
+      humanize = Math.min(0.85, humanize + 0.05);
+    }
+
+    if (normalizedDrummer.includes('bonham') || normalizedDrummer.includes('grohl')) {
+      density = Math.min(0.9, density + 0.05);
+      dynamicRange = Math.min(0.9, dynamicRange + 0.08);
+      ghost = Math.max(0.2, ghost - 0.08);
+    }
+    if (normalizedDrummer.includes('purdie') || normalizedDrummer.includes('gadd')) {
+      ghost = Math.min(0.85, ghost + 0.08);
+      swing = Math.min(0.45, swing + 0.05);
+    }
+    if (normalizedDrummer.includes('porcaro')) {
+      humanize = Math.min(0.85, humanize + 0.03);
+    }
+
+    return {
+      density: clamp01(density),
+      swing: clamp01(swing),
+      humanize: clamp01(humanize),
+      ghost_note_density: clamp01(ghost),
+      dynamic_range: clamp01(dynamicRange),
+      fill_density: clamp01(fillDensity),
+      fill_preset: fillPreset,
+    };
+  }
+
   async function handleGenerateFullSong() {
     if (!sections.length) {
       setErr('No sections available to build drums for yet.');
       return;
     }
     if (!selectedDrummer) {
-      setShowDrummerPersonaModal(true);
+      openDrummerPersonaModal();
       return;
     }
     if (bulkGenerating || generatingDrums) {
@@ -3261,6 +4230,15 @@ export default function WebDAWApp() {
 
       const derivedSongStyle = (drumOptions.style || "rock") as DrumGenerationConfig["songStyle"];
 
+      const baselineDefaults = deriveBaselineDrumOptions(
+        bpm,
+        timeSig,
+        drumOptions.style || selectedDrummer?.style || 'rock',
+        selectedDrummer?.id || '',
+      );
+      const effectiveDrumOptions = { ...drumOptions, ...baselineDefaults };
+      setDrumOptions((prev) => ({ ...prev, ...baselineDefaults }));
+
       setSelectedMeasureRange(fullRange);
       setSelectedSectionIds(new Set(["full-song"]));
 
@@ -3270,27 +4248,57 @@ export default function WebDAWApp() {
         endMeasure: fullRange.endMeasure,
         tempos: fullRange.tempos,
         timeSignature: fullRange.timeSignature,
-        style: drumOptions.style || "rock",
+        style: effectiveDrumOptions.style || drumOptions.style || "rock",
         drummer: selectedDrummer?.id || "jeff_porcaro",
-        intensity: clamp01(drumOptions.density ?? 0.6),
-        variation: clamp01(drumOptions.dynamic_range ?? drumOptions.humanize ?? 0.5),
+        intensity: clamp01(Math.min(0.7, effectiveDrumOptions.density ?? 0.55)),
+        variation: clamp01(Math.min(0.6, Math.max(0.35, effectiveDrumOptions.dynamic_range ?? effectiveDrumOptions.humanize ?? 0.45))),
         generationMode: "full_ai",
         humanize: true,
-        fillLocations: [],
-        fillType: drumOptions.fill_preset ?? "auto",
-        fillDensity: clamp01(drumOptions.fill_density ?? 0.4),
-        humanizeAmount: clamp01(drumOptions.humanize ?? 0.6),
-        ghostNoteAmount: clamp01(drumOptions.ghost_note_density ?? 0.35),
-        swingAmount: clamp01(drumOptions.swing ?? 0),
+        fillLocations: (() => {
+          const bars = Math.max(1, fullRange.measureCount);
+          const fills = new Set<number>();
+          let cursor = 0;
+          for (let i = 0; i < songSections.length; i += 1) {
+            const secBars = Math.max(1, Number(songSections[i]?.bars ?? 1));
+            cursor += secBars;
+            const fillBar = cursor - 1;
+            if (fillBar >= 0 && fillBar < bars - 1) {
+              fills.add(fillBar);
+            }
+          }
+          fills.add(bars - 1);
+          return Array.from(fills).sort((a, b) => a - b);
+        })(),
+        fillType: effectiveDrumOptions.fill_preset ?? "auto",
+        fillDensity: clamp01(Math.min(0.55, effectiveDrumOptions.fill_density ?? 0.35)),
+        humanizeAmount: clamp01(Math.min(0.75, effectiveDrumOptions.humanize ?? 0.62)),
+        ghostNoteAmount: clamp01(Math.min(0.6, effectiveDrumOptions.ghost_note_density ?? 0.25)),
+        swingAmount: clamp01(effectiveDrumOptions.swing ?? 0),
         buildScope: "full_song",
         guideEnabled: false,
         songStyle: derivedSongStyle,
         songSections,
         fillControls: {
-          fillType: drumOptions.fill_preset ?? "auto",
-          density: clamp01(drumOptions.fill_density ?? 0.4),
+          fillType: effectiveDrumOptions.fill_preset ?? "auto",
+          density: clamp01(Math.min(0.55, effectiveDrumOptions.fill_density ?? 0.35)),
           frequency: "all_transitions",
         },
+      };
+
+      // Persist full-song config for Stylometer section scope.
+      setSectionGenConfigs((prev) => ({
+        ...prev,
+        ["full-song"]: fullSongConfig,
+      }));
+
+      // Establish/refresh baselines for this full-song build.
+      stylometerSongBaselineRef.current = {
+        style: (fullSongConfig.style || "rock").toString(),
+        drummerStyle: (selectedDrummer?.style || "").toString(),
+      };
+      stylometerSectionBaselineRef.current["full-song"] = {
+        style: (fullSongConfig.style || "rock").toString(),
+        drummerStyle: (selectedDrummer?.style || "").toString(),
       };
 
       const applied = await executeDrumGeneration(fullSongConfig, { suppressSpinner: true });
@@ -3311,10 +4319,41 @@ export default function WebDAWApp() {
       console.error('❌ Full-song drum generation failed:', fullSongError);
       const errorMessage = `Full-song drum generation failed: ${fullSongError?.message || fullSongError}`;
       setErr(errorMessage);
-      setFullSongStatus({ type: 'error', message: errorMessage });
+      setFullSongStatus({
+        type: 'error',
+        message: `❌ Full-song generation failed: ${String(fullSongError?.message || fullSongError)}`,
+      });
     } finally {
       setBulkGenerating(false);
     }
+  }
+
+  async function handleRegenerateFullSongWithSelectedDrummer() {
+    if (!sections.length) {
+      setErr('No sections available to build drums for yet.');
+      return;
+    }
+    if (!selectedDrummer) {
+      openDrummerPersonaModal();
+      return;
+    }
+    if (bulkGenerating || generatingDrums) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Rebuild the entire song using the newly selected drummer profile? This will overwrite all generated drum tracks for the current arrangement.',
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setSectionDrumTracks({});
+    setSectionGrooveMaps({});
+    setSectionPlacementContexts({});
+    setSectionNoteIds({});
+    setDebugDrumGen(null);
+    await handleGenerateFullSong();
   }
 
   // Analyze tempo for all sections
@@ -3364,14 +4403,43 @@ export default function WebDAWApp() {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3">
           <div />
           <div className="flex flex-wrap items-center gap-3">
-            <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await ensureDrumEngineReady(); lastDrumScheduleSecRef.current = playhead; await Engine.play(playhead); setPlaying(true); }}>Play</button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={
+                  "px-3 py-1 rounded border text-xs font-semibold " +
+                  (stylometerOpen
+                    ? "bg-cyan-600/20 border-cyan-400/50 text-cyan-100"
+                    : "bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-500")
+                }
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setStylometerOpen(true);
+                }}
+              >
+                Open Stylometer
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 rounded border text-xs font-semibold bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setStylometerOpen(false);
+                }}
+                disabled={!stylometerOpen}
+              >
+                Close
+              </button>
+            </div>
+            <button className="px-2 py-1 rounded bg-emerald-600" onClick={async()=>{ await ensureDrumEngineReady(); playheadClockModeRef.current = tracks.length ? "engine" : "raf"; drumPlaybackStartCtxSecRef.current = drumEngineRef.current?.audioContext?.currentTime ?? 0; drumPlaybackStartPlayheadSecRef.current = playhead; lastDrumScheduleSecRef.current = playhead; await Engine.play(playhead); setPlaying(true); }}>Play</button>
             <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.pause(); setPlaying(false); }}>Pause</button>
-            <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.stop(); setPlaying(false); setPlayhead(0); }}>Stop</button>
+            <button className="px-2 py-1 rounded bg-slate-700" onClick={async()=>{ await Engine.stop(); setPlaying(false); setPlayhead(0); lastDrumScheduleSecRef.current = 0; drumPlaybackStartPlayheadSecRef.current = 0; drumPlaybackStartCtxSecRef.current = drumEngineRef.current?.audioContext?.currentTime ?? 0; }}>Stop</button>
             <div className="flex items-center gap-1">
               <span className="text-slate-400 text-sm">BPM</span>
               <input className="w-16 bg-slate-800 rounded px-2 py-1" type="number" value={bpm} onChange={(e)=>setBpm(Math.max(20, Math.min(300, Number(e.target.value)||120)))} />
@@ -3408,7 +4476,78 @@ export default function WebDAWApp() {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 overflow-hidden flex">
+        <div className="flex-1 min-w-0 overflow-hidden flex relative">
+          {stylometerOpen && (
+            <div
+              className="fixed z-[80]"
+              style={{ left: stylometerPos.x, top: stylometerPos.y }}
+            >
+              <div className="w-[360px] max-w-[90vw] rounded-xl border border-slate-700 bg-slate-950/95 shadow-2xl overflow-hidden">
+                <div
+                  className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 bg-slate-900 cursor-move select-none"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    stylometerDragRef.current = {
+                      pointerId: e.pointerId,
+                      offsetX: e.clientX - stylometerPos.x,
+                      offsetY: e.clientY - stylometerPos.y,
+                    };
+                    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                  }}
+                  onPointerMove={(e) => {
+                    const drag = stylometerDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    e.preventDefault();
+                    const nextX = Math.max(8, Math.min(window.innerWidth - 80, e.clientX - drag.offsetX));
+                    const nextY = Math.max(8, Math.min(window.innerHeight - 80, e.clientY - drag.offsetY));
+                    setStylometerPos({ x: nextX, y: nextY });
+                  }}
+                  onPointerUp={(e) => {
+                    const drag = stylometerDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    stylometerDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onPointerCancel={(e) => {
+                    const drag = stylometerDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    stylometerDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  <div className="text-sm font-semibold text-slate-100">Stylometer</div>
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded border border-slate-700 bg-slate-900 text-xs text-slate-200 hover:border-slate-500"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setStylometerOpen(false);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="p-2">
+                  <StylometerFlower
+                    values={stylometerValues}
+                    title="Stylometer"
+                    subtitle="Live fingerprint: groove numbers + feel controls"
+                    genreLabel={stylometerGenreLabel}
+                    scopeLabel={stylometerScopeLabel}
+                    onResetBaseline={handleResetStylometerBaseline}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           {/* Center Column: Timeline + Piano Roll */}
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {/* Timeline & Musical Arrangement - Unified Container */}
@@ -3422,6 +4561,18 @@ export default function WebDAWApp() {
                       </p>
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-[11px] text-slate-500 w-12">Tight</span>
+                        <Tooltip content="Zoom out" placement="top" maxWidthClassName="w-28">
+                          <button
+                            type="button"
+                            className="px-2 py-1 rounded border border-slate-700 bg-slate-900 text-xs text-slate-200"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setGridPixelsPerBeat((prev) => Math.max(10, Math.min(240, prev - 5)));
+                            }}
+                          >
+                            -
+                          </button>
+                        </Tooltip>
                         <input
                           type="range"
                           min={10}
@@ -3431,6 +4582,18 @@ export default function WebDAWApp() {
                           onChange={(e) => setGridPixelsPerBeat(Number(e.target.value))}
                           className="flex-1 accent-cyan-400"
                         />
+                        <Tooltip content="Zoom in" placement="top" maxWidthClassName="w-24">
+                          <button
+                            type="button"
+                            className="px-2 py-1 rounded border border-slate-700 bg-slate-900 text-xs text-slate-200"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setGridPixelsPerBeat((prev) => Math.max(10, Math.min(240, prev + 5)));
+                            }}
+                          >
+                            +
+                          </button>
+                        </Tooltip>
                         <span className="text-[11px] text-slate-500 w-12 text-right">Wide</span>
                       </div>
                     </div>
@@ -3440,6 +4603,18 @@ export default function WebDAWApp() {
                       </p>
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-[11px] text-slate-500 w-12">Start</span>
+                        <Tooltip content="Scroll left" placement="top" maxWidthClassName="w-28">
+                          <button
+                            type="button"
+                            className="px-2 py-1 rounded border border-slate-700 bg-slate-900 text-xs text-slate-200"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              onScrollSliderChange({ target: { value: String(Math.max(0, Math.min(100, scrollPercent - 1))) } } as any);
+                            }}
+                          >
+                            -
+                          </button>
+                        </Tooltip>
                         <input
                           type="range"
                           min={0}
@@ -3449,6 +4624,18 @@ export default function WebDAWApp() {
                           onChange={onScrollSliderChange}
                           className="flex-1 accent-fuchsia-500"
                         />
+                        <Tooltip content="Scroll right" placement="top" maxWidthClassName="w-28">
+                          <button
+                            type="button"
+                            className="px-2 py-1 rounded border border-slate-700 bg-slate-900 text-xs text-slate-200"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              onScrollSliderChange({ target: { value: String(Math.max(0, Math.min(100, scrollPercent + 1))) } } as any);
+                            }}
+                          >
+                            +
+                          </button>
+                        </Tooltip>
                         <span className="text-[11px] text-slate-500 w-12 text-right">End</span>
                       </div>
                     </div>
@@ -3512,7 +4699,7 @@ export default function WebDAWApp() {
                 </div>
               </div>
               {/* Timeline / Waveform */}
-              <div className="p-4">
+              <div className="py-4 px-0">
                 {err && <div className="mb-3 text-rose-400 text-sm">Error: {err}</div>}
                 <Timeline
                   bpm={bpm}
@@ -3531,6 +4718,23 @@ export default function WebDAWApp() {
                   timeSignature={timeSig}
                   scrollSyncRef={timelineScrollRef}
                   selectedSectionIds={selectedSectionIds}
+                  onSectionContextMenu={(sectionId: string) => {
+                    if (!sectionId) return;
+                    setSelectedSectionIds(new Set([sectionId]));
+                    const section = sections.find((s) => s.id === sectionId);
+                    if (section) {
+                      const measureRange = sectionToMeasureRange(
+                        section,
+                        bpm,
+                        timeSig,
+                        songMap,
+                        tempoFlattenToleranceBpm,
+                        drumTempoMode,
+                      );
+                      setSelectedMeasureRange(measureRange);
+                    }
+                    openSectionGrooveModal(sectionId);
+                  }}
                   onSelectSection={(sectionId: string, multi: boolean) => {
                     if (!sectionId) {
                       // Empty string clears selection
@@ -3552,6 +4756,9 @@ export default function WebDAWApp() {
                     } else {
                       // Single select
                       setSelectedSectionIds(new Set([sectionId]));
+                      setScopedControlsMode("section");
+                      setScopedControlsSectionId(sectionId);
+                      setMiniEditorOpen(false);
                       
                       // Set measure range for drum builder
                       const section = sections.find(s => s.id === sectionId);
@@ -3560,6 +4767,11 @@ export default function WebDAWApp() {
                         setSelectedMeasureRange(measureRange);
                         console.log('🎯 Selected measure range:', measureRange);
                       }
+
+                      window.requestAnimationFrame(() => {
+                        scrollToSelectedSection();
+                        setSoftFocusPulseNonce((v) => v + 1);
+                      });
                     }
                   }}
                 />
@@ -3567,7 +4779,7 @@ export default function WebDAWApp() {
 
               {/* Musical Arrangement - Nested Below Waveform */}
               {sections.length > 0 && (
-                <div className="border-t border-slate-800">
+                <div className="hidden border-t border-slate-800">
                   <SectionControls
                     sections={selectedSectionIds.size > 0 
                       ? sections.filter(s => selectedSectionIds.has(s.id))
@@ -3589,8 +4801,14 @@ export default function WebDAWApp() {
             </div>
             
             {/* Drum Editor + Limb Grid */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+            <div className="flex-1 overflow-y-auto py-4 px-0 space-y-4">
+
+              <div
+                className={
+                  "rounded-lg border border-slate-800 bg-slate-900/60 p-3 transition-shadow " +
+                  (softFocusActive ? "ring-2 ring-fuchsia-500/40 shadow-[0_0_0_2px_rgba(217,70,239,0.15)]" : "")
+                }
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-3 text-sm text-slate-300">
                   <div className="font-semibold text-white">Drum Performance Editor</div>
                   {selectedMeasureRange && (
@@ -3602,11 +4820,17 @@ export default function WebDAWApp() {
                 {selectedMeasureRange ? (
                   activeDrumTrack ? (
                     <>
-                      <div className="h-[520px]">
+                      <div className="h-[820px]">
                         <DrumEditorPane
                           drumTrack={activeDrumTrack}
                           timeSignature={selectedMeasureRange.timeSignature ?? timeSig}
                           grooveWeights={activeGrooveMap}
+                          selectedSectionIds={selectedSectionIds}
+                          onSectionSelect={(sectionId) => {
+                            handleSongMapSelectSection(sectionId);
+                          }}
+                          selectedBarIndex={selectedBarIndex}
+                          onBarSelect={setSelectedBarIndex}
                           gridResolution={gridResolution}
                           onGridResolutionChange={setGridResolution}
                           bpm={bpm}
@@ -3634,7 +4858,7 @@ export default function WebDAWApp() {
                     <div className="h-[200px] text-sm text-slate-400 flex flex-col items-center justify-center text-center px-4">
                       <div className="text-base text-slate-200 font-semibold mb-1">No drum data yet</div>
                       <p>
-                        Run the Drum Builder for this section to unlock high-resolution editing, expressive
+                        Run Section Generation for this section to unlock high-resolution editing, expressive
                         attributes, and limb-aware controls.
                       </p>
                     </div>
@@ -3646,451 +4870,472 @@ export default function WebDAWApp() {
                 )}
               </div>
 
-              {sections.length > 0 && (
-                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="sticky top-0 z-30 rounded-lg border border-slate-800 bg-slate-950/90 backdrop-blur p-3">
+                <div className="flex flex-col gap-2 mb-2">
+                  <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-500">Drum Builder Console</p>
-                      <p className="text-base font-semibold text-white">Dial in the virtual drummer before generating</p>
-                    </div>
-                    {selectedDrummer && (
-                      <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
-                        {selectedDrummer.style?.toUpperCase() || "CUSTOM"}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Virtual Drummer</p>
-                        <p className="text-sm font-semibold text-white">
-                          {selectedDrummer?.display_name || 'No drummer selected'}
-                        </p>
-                      </div>
-                    </div>
-                    <DrummerSelector
-                      onSelect={(drummer) => {
-                        setSelectedDrummer(drummer);
-                        console.log('Selected drummer:', drummer.display_name);
-                      }}
-                      selectedDrummer={selectedDrummer}
-                    />
-                  </div>
-
-                  <DrumOptionsPanel
-                    options={drumOptions}
-                    onChange={setDrumOptions}
-                    drummerType={drumOptions.style}
-                  />
-
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Tempo Flatten</p>
-                        <p className="text-xs text-slate-400">Bar tempo range tolerance (BPM)</p>
-                      </div>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={tempoFlattenToleranceBpm}
-                        onChange={(e) => {
-                          const next = Number(e.target.value);
-                          setTempoFlattenToleranceBpm(Number.isFinite(next) && next >= 0 ? next : 0);
-                        }}
-                        className="w-24 px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                      />
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Song Map</div>
+                      <div className="text-xs text-slate-300">Select Global controls or pick a section below</div>
                     </div>
                   </div>
-
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Drum Tempo Mode</p>
-                        <p className="text-xs text-slate-400">Lock for steady tempo, Follow to use the detected tempo map.</p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className={
-                            "px-2.5 py-1 rounded border text-xs " +
-                            (drumTempoMode === "lock"
-                              ? "bg-cyan-700/40 border-cyan-400/40 text-cyan-100"
-                              : "bg-slate-900 border-slate-700 text-slate-300")
-                          }
-                          onClick={() => setDrumTempoMode("lock")}
-                        >
-                          Lock
-                        </button>
-                        <button
-                          type="button"
-                          className={
-                            "px-2.5 py-1 rounded border text-xs " +
-                            (drumTempoMode === "follow"
-                              ? "bg-indigo-700/40 border-indigo-400/40 text-indigo-100"
-                              : "bg-slate-900 border-slate-700 text-slate-300")
-                          }
-                          onClick={() => setDrumTempoMode("follow")}
-                        >
-                          Follow
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {sections.length > 0 && (
-                <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-white">
-                        <HoverTip text="Generate limb-aware drums for the currently selected section range. Requires selecting a drummer persona first.">
-                          <span>Section Drum Track Builder</span>
-                        </HoverTip>
-                      </h3>
-                      <p className="text-xs text-slate-400">Uses the selected section or range to author limb-aware grooves.</p>
-                    </div>
-                    {selectedMeasureRange && (
-                      <div className="text-xs text-slate-400">
-                        {selectedMeasureRange.sectionLabel} · {selectedMeasureRange.measureCount} bars
-                      </div>
-                    )}
-                  </div>
-                  {selectedDrummer ? (
-                    <DrumBuilderPanelV2
-                      selectedRange={selectedMeasureRange}
-                      onGenerate={handleGenerateDrums}
-                      busy={generatingDrums}
-                    />
-                  ) : (
-                    <div className="mt-2 rounded border border-yellow-500/30 bg-yellow-900/10 p-3 text-xs text-yellow-200 flex items-center justify-between gap-3">
-                      <div>
-                        Drum personality is required before generating.
-                      </div>
-                      <button
-                        type="button"
-                        className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-slate-950"
-                        onClick={() => setShowDrummerPersonaModal(true)}
-                      >
-                        Choose Drum Personality
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-slate-400">MIDI Map</div>
-                      <select
-                        className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                        value={midiMapName}
-                        onChange={(e) => setMidiMapName(e.target.value)}
-                      >
-                        <option value="Mixosaurus_EZ_Drummer">Mixosaurus (EZD/SD3)</option>
-                        <option value="gm">GM</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-slate-400">Groove</div>
-                      <select
-                        className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                        value={grooveSource}
-                        onChange={(e) => {
-                          const next = e.target.value;
-                          setGrooveSource(next);
-                          if (next === "egmd_phrases") {
-                            setGrooveMode("exact");
-                          }
-                        }}
-                        disabled={isScratchWorkflow}
-                      >
-                        <option value="pattern">Built-in</option>
-                        <option value="egmd_phrases">E-GMD Phrases</option>
-                      </select>
-                      {grooveSource === "egmd_phrases" && !isScratchWorkflow && (
-                        <select
-                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                          value={grooveMode}
-                          onChange={(e) => setGrooveMode(e.target.value)}
-                          title="E-GMD Playback Mode"
-                        >
-                          <option value="exact">Exact Clip</option>
-                          <option value="enhanced">Enhanced</option>
-                        </select>
-                      )}
-                      {grooveSource === "egmd_phrases" && (
-                        <select
-                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                          value={styleGroup}
-                          onChange={(e) => setStyleGroup(e.target.value)}
-                          disabled={isScratchWorkflow}
-                        >
-                          <option value="rock">Rock</option>
-                          <option value="funk">Funk</option>
-                          <option value="jazz">Jazz</option>
-                          <option value="metal">Metal</option>
-                          <option value="blues">Blues</option>
-                          <option value="pop">Pop</option>
-                          <option value="latin">Latin</option>
-                          <option value="hiphop">Hip-Hop</option>
-                          <option value="soul">Soul</option>
-                        </select>
-                      )}
-                      {grooveSource === "egmd_phrases" && (
-                        <select
-                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-100"
-                          value={selectedEgmdPhraseId === null ? "" : String(selectedEgmdPhraseId)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (!raw) {
-                              setSelectedEgmdPhraseId(null);
-                              return;
-                            }
-                            const next = Number(raw);
-                            setSelectedEgmdPhraseId(Number.isFinite(next) ? next : null);
-                          }}
-                          title="Select which EGMD clip to use for this style"
-                        >
-                          <option value="">Best Match</option>
-                          {egmdPhraseOptions.map((p) => {
-                            const filename = String(p.midi_path || "").split("\\").pop()?.split("/").pop() || "midi";
-                            return (
-                              <option key={String(p.phrase_id)} value={String(p.phrase_id)}>
-                                #{String(p.phrase_id)} · {filename}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      )}
-                    </div>
+                  <div className="flex justify-center">
                     <button
-                      className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={!lastGeneratedMidiBase64}
-                      onClick={() => {
-                        if (!lastGeneratedMidiBase64) return;
-                        downloadMidiBase64(lastGeneratedMidiBase64, lastGeneratedMidiLabel || "DrumTracKAI-Drums");
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSongMapSelectGlobal();
                       }}
-                      title={!lastGeneratedMidiBase64 ? "Generate drums first to enable MIDI download" : undefined}
+                      className={
+                        "px-5 py-2 rounded-lg border text-sm font-semibold tracking-wide " +
+                        (scopedControlsMode === "global"
+                          ? "bg-slate-500/20 border-slate-400/70 text-slate-100"
+                          : "bg-slate-900 border-slate-700 text-slate-100 hover:border-slate-500")
+                      }
                     >
-                      Download MIDI
+                      GLOBAL SONG CONTROLS
                     </button>
                   </div>
-
-                  {grooveSource === "egmd_phrases" && lastEgmdPhraseInfo && (
-                    <div className="mt-2 text-xs text-slate-400">
-                      Selected phrase: #{String(lastEgmdPhraseInfo.phrase_id)} · {String(lastEgmdPhraseInfo.midi_path || '').split('\\').pop()}
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
-          </div>
 
-          {/* Arrangement + Builder Console - Right Sidebar */}
-          <div className="w-[360px] bg-slate-900 border-l border-slate-800 overflow-y-auto">
-              {/* Header */}
-              <div className="p-4 border-b border-slate-800 bg-indigo-900/20">
-                <h2 className="text-lg font-bold text-white mb-1">🎼 Musical Arrangement Manager</h2>
-                <p className="text-xs text-slate-400">Section detection and bar-level analysis</p>
-              </div>
-              
-              {/* Source Info from Professional Tier */}
-              {sourceInfo.source && (
-                <div className="p-4 bg-blue-900/20 border-b border-blue-500/30">
-                  <div className="text-xs text-blue-300 mb-1">Source: {sourceInfo.source}</div>
-                  {sourceInfo.filename && (
-                    <div className="text-sm text-white font-semibold">📁 {sourceInfo.filename}</div>
-                  )}
-                  {sourceInfo.drummer && (
-                    <div className="text-sm text-white">🥁 {sourceInfo.drummer}</div>
-                  )}
-                </div>
-              )}
-              
-              {/* Analysis Options */}
-              {tracks.length > 0 && (
-                <div className="p-4 border-b border-slate-800">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">
-                    <HoverTip text="Choose how to create your song structure: analyze uploaded audio, or define a scratch arrangement. Analysis must complete before drum generation.">
-                      <span>Arrangement Analysis</span>
-                    </HoverTip>
-                  </h3>
-                  
-                  {/* Current Arrangement Indicator */}
-                  {arrangementSource && sections.length > 0 && (
-                    <div className="mb-3 p-2 bg-blue-900/20 border border-blue-700/50 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="text-xs font-semibold text-blue-300">📊 Current Arrangement:</div>
-                          <div className="text-xs text-white mt-0.5">{arrangementSource}</div>
-                          <div className="text-xs text-slate-400 mt-0.5">{sections.length} sections</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Option 1: Auto-Analyze */}
-                  <button 
-                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed mb-2"
-                    onClick={() => handleAutoSectionize(tracks[0]?.key)}
-                    disabled={busy}
-                  >
-                    {busy ? '⏳ Analyzing...' : '🎯 Auto-Analyze (AI)'}
-                  </button>
-                  <p className="text-xs text-slate-400 mb-3">Automatic detection of sections, bars, meter, and tempo</p>
-                  
-                  {/* Option 2: Manual Entry */}
-                  <button 
-                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 font-semibold text-white shadow-lg transition-all mb-2"
-                    onClick={() => setShowManualModal(true)}
-                  >
-                    📝 Manual Entry
-                  </button>
-                  <p className="text-xs text-slate-400 mb-3">Define sections by measure count for your own songs</p>
-                  
-                  {/* Option 3: Well Known Song */}
-                  <button 
-                    className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 font-semibold text-white shadow-lg transition-all mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => setShowLookupModal(true)}
-                    disabled={tracks.length === 0 || busy}
-                    title={tracks.length === 0 ? 'Upload audio before running a Well Known Song lookup' : undefined}
-                  >
-                    🌐 Well Known Song
-                  </button>
-                  <p className="text-xs text-slate-400 mb-3">Search internet for tempo, time signature, and arrangement</p>
-                  
-                  {/* Manual Tempo Adjustment */}
-                  {sections.length > 0 && songMap && (
-                    <div className="mt-3 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs text-slate-300 font-semibold">Detected Tempo</label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min="60"
-                            max="200"
-                            value={Math.round(bpm)}
-                            onChange={(e) => setBpm(Math.max(60, Math.min(200, Number(e.target.value) || 120)))}
-                            className="w-16 px-2 py-1 bg-slate-800 text-white text-sm rounded border border-slate-600 focus:border-indigo-500 focus:outline-none"
-                          />
-                          <span className="text-xs text-slate-400">BPM</span>
-                        </div>
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        Auto-detected: {songMap.globalBpmEstimate?.toFixed(1)} BPM
-                      </div>
-                      <div className="text-xs text-amber-400 mt-1">
-                        ⚠️ Adjust if tempo seems incorrect
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                {sections.length === 0 ? (
+                  <div className="text-xs text-slate-500">No sections yet — create/analyze an arrangement to populate the Song Map.</div>
+                ) : (
+                  <div className="relative h-12 bg-slate-900/60 border border-slate-800 rounded overflow-hidden">
+                    {(() => {
+                      const total = Math.max(
+                        0.001,
+                        Math.max(...sections.map((s) => s.end)) - Math.min(...sections.map((s) => s.start)),
+                      );
+                      const minStart = Math.min(...sections.map((s) => s.start));
+                      const colorFor = (label: string) => {
+                        const v = (label || "").toLowerCase();
+                        if (v.includes("intro")) return "rgba(249,115,22,0.45)"; // orange
+                        if (v.includes("verse")) return "rgba(59,130,246,0.45)"; // blue
+                        if (v.includes("chorus")) return "rgba(34,197,94,0.45)"; // green
+                        if (v.includes("bridge")) return "rgba(168,85,247,0.45)"; // purple
+                        if (v.includes("outro")) return "rgba(239,68,68,0.45)"; // red
+                        return "rgba(148,163,184,0.30)"; // slate
+                      };
 
-              {/* Upload prompt if no tracks */}
-              {tracks.length === 0 && (
-                <div className="p-4 border-b border-slate-800 space-y-3">
-                  <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-                    <div className="text-xs text-slate-400 mt-1">
-                      Set tempo, time signature, and an arrangement to generate drums without uploading audio.
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="text-[11px] text-slate-400 mb-1">Tempo (BPM)</div>
-                        <input
-                          type="number"
-                          min={40}
-                          max={240}
-                          value={bpm}
-                          onChange={(e) => setBpm(Math.max(40, Math.min(240, Number(e.target.value) || 120)))}
-                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                        />
-                      </div>
-                      <div>
-                        <div className="text-[11px] text-slate-400 mb-1">Time Signature</div>
-                        <select
-                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                          value={`${timeSig[0]}/${timeSig[1]}`}
-                          onChange={(e) => {
-                            const [n, d] = e.target.value.split("/").map((v) => Number(v));
-                            if (Number.isFinite(n) && Number.isFinite(d)) {
-                              setTimeSig([n, d] as [number, number]);
+                      return sections.map((section) => {
+                        const leftPct = ((section.start - minStart) / total) * 100;
+                        const widthPct = Math.max(0.75, ((section.end - section.start) / total) * 100);
+                        const isActive = scopedControlsMode === "section" && scopedControlsSectionId === section.id;
+                        const measureRange = sectionToMeasureRange(
+                          section,
+                          bpm,
+                          timeSig,
+                          songMap,
+                          tempoFlattenToleranceBpm,
+                          drumTempoMode,
+                        );
+                        const startBarDisplay = Math.max(1, (measureRange?.startMeasure ?? 0) + 1);
+                        const barCountDisplay = Math.max(0, measureRange?.measureCount ?? 0);
+                        return (
+                          <Tooltip
+                            key={section.id}
+                            content={`${section.label}`}
+                            placement="top"
+                            maxWidthClassName="w-56"
+                            wrapperClassName={
+                              "absolute inset-y-0 border-r border-slate-950/70 px-2 text-left transition-all " +
+                              (isActive ? "ring-2 ring-fuchsia-400/60 z-10" : "hover:brightness-110")
                             }
-                          }}
-                        >
-                          <option value="4/4">4/4</option>
-                          <option value="3/4">3/4</option>
-                          <option value="6/8">6/8</option>
-                          <option value="5/4">5/4</option>
-                          <option value="7/8">7/8</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="mt-3">
-                      <div className="text-[11px] text-slate-400 mb-1">Style</div>
-                      <select
-                        className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                        value={scratchStyle}
-                        onChange={(e) => setScratchStyle(e.target.value)}
-                      >
-                        <option value="rock">Rock</option>
-                        <option value="funk">Funk</option>
-                        <option value="jazz">Jazz</option>
-                        <option value="metal">Metal</option>
-                        <option value="blues">Blues</option>
-                        <option value="pop">Pop</option>
-                        <option value="latin">Latin</option>
-                      </select>
-                    </div>
-
-                    <div className="mt-3">
-                      <div className="text-[11px] text-slate-400 mb-1">Groove</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                          value={grooveSource}
-                          onChange={(e) => {
-                            const next = e.target.value;
-                            setGrooveSource(next);
-                            if (next === "egmd_phrases") {
-                              setGrooveMode("exact");
-                            }
-                          }}
-                          disabled={isScratchWorkflow}
-                        >
-                          <option value="pattern">Built-in</option>
-                          <option value="egmd_phrases">E-GMD Phrases</option>
-                        </select>
-                        {grooveSource === "egmd_phrases" ? (
-                          <div className="grid grid-cols-2 gap-2">
-                            {!isScratchWorkflow ? (
-                              <select
-                                className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                                value={grooveMode}
-                                onChange={(e) => setGrooveMode(e.target.value)}
-                                title="E-GMD Playback Mode"
-                              >
-                                <option value="exact">Exact Clip</option>
-                                <option value="enhanced">Enhanced</option>
-                              </select>
-                            ) : (
-                              <div className="w-full px-2 py-1 bg-slate-800 text-slate-300 text-sm rounded border border-slate-700">
-                                Exact Clip
+                            wrapperStyle={{
+                              left: `${leftPct}%`,
+                              width: `${widthPct}%`,
+                              backgroundColor: colorFor(section.label),
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                handleSongMapSelectSection(section.id);
+                              }}
+                              className="h-full w-full"
+                            >
+                              <div className="h-full flex flex-col justify-center leading-tight">
+                                <span className="text-sm font-semibold text-white truncate drop-shadow">
+                                  {section.label}
+                                </span>
+                                <span className="text-[11px] text-white/90 truncate drop-shadow">
+                                  Bar {startBarDisplay} · {barCountDisplay} bars
+                                </span>
                               </div>
-                            )}
+                            </button>
+                          </Tooltip>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-4">
+                <div className="w-full rounded-lg border border-slate-800 bg-slate-900/70 p-4 space-y-5">
+                  <div className="text-lg font-semibold text-white">Drum Track Creation</div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-emerald-700/40 bg-emerald-900/10 p-3 space-y-2">
+                        <div className="text-sm font-semibold text-slate-100">Tempo / Time Signature</div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                          <div>
+                            <label className="text-[11px] text-slate-300">Time Signature</label>
+                            <select
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={`${timeSig?.[0] ?? 4}/${timeSig?.[1] ?? 4}`}
+                              onChange={(e) => {
+                                const raw = String(e.target.value || "");
+                                const [numRaw, denRaw] = raw.split("/");
+                                const num = Math.max(1, Math.min(12, Math.round(Number(numRaw) || 4)));
+                                const den = Math.max(1, Math.min(16, Math.round(Number(denRaw) || 4)));
+                                setTimeSig([num, den]);
+                              }}
+                            >
+                              <option value="4/4">4/4</option>
+                              <option value="3/4">3/4</option>
+                              <option value="2/4">2/4</option>
+                              <option value="6/8">6/8</option>
+                              <option value="12/8">12/8</option>
+                              <option value="5/4">5/4</option>
+                              <option value="7/8">7/8</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-300">BPM</label>
+                            <input
+                              type="number"
+                              min={20}
+                              max={300}
+                              step={1}
+                              value={Math.round(bpm || 120)}
+                              onChange={(e) => {
+                                const next = Number(e.target.value);
+                                if (!Number.isFinite(next)) return;
+                                setBpm(Math.max(20, Math.min(300, Math.round(next))));
+                              }}
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-300">Beats / Bar</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={12}
+                              step={1}
+                              value={timeSig?.[0] ?? 4}
+                              onChange={(e) => {
+                                const next = Math.max(1, Math.min(12, Math.round(Number(e.target.value) || 4)));
+                                setTimeSig([next, timeSig?.[1] ?? 4]);
+                              }}
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-slate-300">Beat Unit</label>
+                            <select
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={timeSig?.[1] ?? 4}
+                              onChange={(e) => {
+                                const denom = Math.max(1, Math.min(16, Math.round(Number(e.target.value) || 4)));
+                                setTimeSig([timeSig?.[0] ?? 4, denom]);
+                              }}
+                            >
+                              <option value={2}>2</option>
+                              <option value={4}>4</option>
+                              <option value={8}>8</option>
+                              <option value={16}>16</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 p-3 space-y-2">
+                        <div className="text-sm font-semibold text-slate-100">Arrangement Tools</div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setShowManualModal(true);
+                            }}
+                            className="px-3 py-1.5 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                          >
+                            Manual Arrangement…
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setShowLookupModal(true);
+                            }}
+                            className="px-3 py-1.5 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                          >
+                            Internet Lookup…
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setShowDrumPlayer(true);
+                            }}
+                            className="px-3 py-1.5 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                          >
+                            Drum Player…
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-slate-400">Create sections first, then generate drums globally or per section.</div>
+                      </div>
+
+                      <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold text-slate-100">Arrangement Builder</div>
+                          <button
+                            className="px-2 py-1 text-[11px] rounded bg-slate-800 border border-slate-700 text-slate-200"
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setScratchArrangement((prev) => [...prev, { label: "verse", bars: 8 }]);
+                            }}
+                          >
+                            Add
+                          </button>
+                        </div>
+
+                        <div>
+                          <div className="text-[11px] text-slate-300 mb-1">Style</div>
+                          <select
+                            className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                            value={scratchStyle}
+                            onChange={(e) => setScratchStyle(e.target.value)}
+                          >
+                            <option value="rock">Rock</option>
+                            <option value="funk">Funk</option>
+                            <option value="jazz">Jazz</option>
+                            <option value="metal">Metal</option>
+                            <option value="blues">Blues</option>
+                            <option value="pop">Pop</option>
+                            <option value="latin">Latin</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          {scratchArrangement.map((row, idx) => (
+                            <div key={`${idx}-${row.label}`} className="grid grid-cols-[1fr_72px_28px] gap-2 items-center">
+                              <select
+                                className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                                value={row.label}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setScratchArrangement((prev) => prev.map((r, i) => (i === idx ? { ...r, label: v } : r)));
+                                }}
+                              >
+                                {SCRATCH_SECTION_LABEL_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <input
+                                type="number"
+                                min={1}
+                                max={64}
+                                value={row.bars}
+                                onChange={(e) => {
+                                  const v = Math.max(1, Math.min(64, Number(e.target.value) || 1));
+                                  setScratchArrangement((prev) => prev.map((r, i) => (i === idx ? { ...r, bars: v } : r)));
+                                }}
+                                className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              />
+
+                              <button
+                                type="button"
+                                className="h-7 rounded bg-rose-900/40 border border-rose-800 text-rose-200"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setScratchArrangement((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-cyan-700/40 bg-cyan-900/10 p-3 space-y-2">
+                        <div className="text-sm font-semibold text-slate-100">Groove Tools</div>
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Global Groove / Database Grooves</div>
+
+                        <div>
+                          <label className="text-[11px] text-slate-300">Overall Density</label>
+                          <div className="flex items-center gap-2">
+                            <Tooltip content="Decrease overall density">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, density: clamp01((prev?.density ?? 0.6) - 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                -
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Overall density: how busy/complex the generated pattern is">
+                              <MacroSlider
+                                value={clamp01(drumOptions?.density ?? 0.6)}
+                                onChange={(next) => setDrumOptions((prev) => ({ ...prev, density: clamp01(next) }))}
+                                ariaLabel="Overall density"
+                              />
+                            </Tooltip>
+                            <Tooltip content="Increase overall density">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, density: clamp01((prev?.density ?? 0.6) + 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                +
+                              </button>
+                            </Tooltip>
+                            <div className="w-12 text-right text-[11px] text-slate-400 tabular-nums">
+                              {Math.round(clamp01(drumOptions?.density ?? 0.6) * 100)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] text-slate-300">Pocket &amp; Swing</label>
+                          <div className="flex items-center gap-2">
+                            <Tooltip content="Decrease pocket/swing">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, swing: clamp01((prev?.swing ?? 0) - 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                -
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Pocket & swing: timing feel / shuffle amount">
+                              <MacroSlider
+                                value={clamp01(drumOptions?.swing ?? 0)}
+                                onChange={(next) => setDrumOptions((prev) => ({ ...prev, swing: clamp01(next) }))}
+                                ariaLabel="Pocket and swing"
+                              />
+                            </Tooltip>
+                            <Tooltip content="Increase pocket/swing">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, swing: clamp01((prev?.swing ?? 0) + 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                +
+                              </button>
+                            </Tooltip>
+                            <div className="w-12 text-right text-[11px] text-slate-400 tabular-nums">
+                              {Math.round(clamp01(drumOptions?.swing ?? 0) * 100)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] text-slate-300">Humanize</label>
+                          <div className="flex items-center gap-2">
+                            <Tooltip content="Decrease humanize">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, humanize: clamp01((prev?.humanize ?? 0.6) - 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                -
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Humanize: timing/velocity variation for realism">
+                              <MacroSlider
+                                value={clamp01(drumOptions?.humanize ?? 0.6)}
+                                onChange={(next) => setDrumOptions((prev) => ({ ...prev, humanize: clamp01(next) }))}
+                                ariaLabel="Humanize"
+                              />
+                            </Tooltip>
+                            <Tooltip content="Increase humanize">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setDrumOptions((prev) => ({ ...prev, humanize: clamp01((prev?.humanize ?? 0.6) + 0.05) }));
+                                }}
+                                className="px-2 py-1 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                              >
+                                +
+                              </button>
+                            </Tooltip>
+                            <div className="w-12 text-right text-[11px] text-slate-400 tabular-nums">
+                              {Math.round(clamp01(drumOptions?.humanize ?? 0.6) * 100)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[11px] text-slate-300">Groove Source</label>
+                            <select
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={grooveSource}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                setGrooveSource(next);
+                                if (next === "egmd_phrases") {
+                                  setGrooveMode("enhanced");
+                                }
+                              }}
+                            >
+                              <option value="pattern">Built-in</option>
+                              <option value="egmd_phrases">E-GMD Phrases</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300">EGMD Mode</label>
+                            <select
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={grooveMode}
+                              disabled={grooveSource !== "egmd_phrases"}
+                              onChange={(e) => setGrooveMode(e.target.value)}
+                            >
+                              <option value="exact">Exact Clip</option>
+                              <option value="enhanced">Enhanced</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] text-slate-300">Style Group</label>
                             <select
                               className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
                               value={styleGroup}
+                              disabled={grooveSource !== "egmd_phrases"}
                               onChange={(e) => setStyleGroup(e.target.value)}
-                              title="E-GMD Style Group"
-                              disabled={isScratchWorkflow}
                             >
                               <option value="rock">Rock</option>
-                              <option value="funk">Funk</option>
                               <option value="jazz">Jazz</option>
+                              <option value="funk">Funk</option>
                               <option value="metal">Metal</option>
                               <option value="blues">Blues</option>
                               <option value="pop">Pop</option>
@@ -4099,284 +5344,1128 @@ export default function WebDAWApp() {
                               <option value="soul">Soul</option>
                             </select>
                           </div>
-                        ) : (
-                          <div className="w-full" />
-                        )}
-                      </div>
-                      {grooveSource === "egmd_phrases" && (
-                        <div className="mt-2">
-                          <select
-                            className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                            value={selectedEgmdPhraseId === null ? "" : String(selectedEgmdPhraseId)}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (!raw) {
-                                setSelectedEgmdPhraseId(null);
-                                return;
-                              }
-                              const next = Number(raw);
-                              setSelectedEgmdPhraseId(Number.isFinite(next) ? next : null);
-                            }}
-                            title="Select which EGMD clip to use for this style"
-                          >
-                            <option value="">Best Match</option>
-                            {egmdPhraseOptions.map((p) => {
-                              const filename = String(p.midi_path || "").split("\\").pop()?.split("/").pop() || "midi";
-                              return (
-                                <option key={String(p.phrase_id)} value={String(p.phrase_id)}>
-                                  #{String(p.phrase_id)} · {filename}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </div>
-                      )}
-                      {grooveSource === "egmd_phrases" && (
-                        <div className="mt-1 text-[11px] text-slate-500">E-GMD Style Group</div>
-                      )}
-                    </div>
 
-                    <div className="mt-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-[11px] text-slate-400">Arrangement (Section + Bars)</div>
-                        <button
-                          className="px-2 py-1 text-[11px] rounded bg-slate-800 border border-slate-700 text-slate-200"
-                          onClick={() => setScratchArrangement((prev) => [...prev, { label: "verse", bars: 8 }])}
-                        >
-                          Add
-                        </button>
-                      </div>
-                      <div className="mt-2 space-y-2">
-                        {scratchArrangement.map((row, idx) => (
-                          <div key={`${idx}-${row.label}`} className="grid grid-cols-[1fr_72px_28px] gap-2 items-center">
+                          <div>
+                            <label className="text-[11px] text-slate-300">EGMD Phrase</label>
                             <select
-                              className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                              value={row.label}
+                              className="w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                              value={selectedEgmdPhraseId === null ? "" : String(selectedEgmdPhraseId)}
+                              disabled={grooveSource !== "egmd_phrases"}
                               onChange={(e) => {
-                                const v = e.target.value;
-                                setScratchArrangement((prev) =>
-                                  prev.map((r, i) => (i === idx ? { ...r, label: v } : r)),
-                                );
+                                const raw = e.target.value;
+                                if (!raw) {
+                                  setSelectedEgmdPhraseId(null);
+                                  return;
+                                }
+                                const next = Number(raw);
+                                setSelectedEgmdPhraseId(Number.isFinite(next) ? next : null);
                               }}
                             >
-                              {SCRATCH_SECTION_LABEL_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
+                              <option value="">Best Match</option>
+                              {egmdPhraseOptions.map((p) => {
+                                const filename = String(p.midi_path || "").split("\\").pop()?.split("/").pop() || "midi";
+                                return (
+                                  <option key={String(p.phrase_id)} value={String(p.phrase_id)}>
+                                    #{String(p.phrase_id)} · {filename}
+                                  </option>
+                                );
+                              })}
                             </select>
-                            <input
-                              type="number"
-                              min={1}
-                              max={64}
-                              value={row.bars}
-                              onChange={(e) => {
-                                const v = Math.max(1, Math.min(64, Number(e.target.value) || 1));
-                                setScratchArrangement((prev) =>
-                                  prev.map((r, i) => (i === idx ? { ...r, bars: v } : r)),
-                                );
-                              }}
-                              className="px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
-                            />
-                            <button
-                              className="h-7 rounded bg-rose-900/40 border border-rose-800 text-rose-200"
-                              onClick={() => setScratchArrangement((prev) => prev.filter((_, i) => i !== idx))}
-                              title="Remove"
-                            >
-                              ×
-                            </button>
                           </div>
-                        ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-indigo-700/40 bg-indigo-900/10 p-3 space-y-2">
+                        <div className="text-sm font-semibold text-slate-100">Groove Library</div>
+                        {(() => {
+                          const sectionId = scopedControlsSectionId;
+                          if (!sectionId) {
+                            return (
+                              <div className="text-xs text-slate-400">
+                                Select a section (in Advanced Drum Tools) to choose a groove for that section.
+                              </div>
+                            );
+                          }
+                          const selection = sectionGrooveSelections?.[sectionId] ?? {};
+                          return (
+                            <div className="space-y-2">
+                              <div className="text-[11px] text-slate-400">
+                                Section: <span className="text-slate-200">{sections.find((s) => s.id === sectionId)?.label || sectionId}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                Groove: <span className="text-slate-200">{selection.selectedGrooveId || "(none)"}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                Fill: <span className="text-slate-200">{selection.fillGrooveId || "(none)"}</span>
+                                {selection.fillGrooveId ? (
+                                  <>
+                                    {" "}
+                                    <span className="text-slate-500">@</span>{" "}
+                                    <span className="text-slate-200">{selection.fillBarRelativeText || "last"}</span>
+                                  </>
+                                ) : null}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    openSectionGrooveModal(sectionId);
+                                  }}
+                                  className="px-3 py-1.5 rounded border border-indigo-600/50 bg-indigo-900/20 hover:border-indigo-400 text-xs text-indigo-100"
+                                >
+                                  Open Groove Library
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!selection.selectedGrooveId && !selection.fillGrooveId}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setSectionGrooveSelections((prev) => {
+                                      const next = { ...(prev ?? {}) };
+                                      delete next[sectionId];
+                                      return next;
+                                    });
+                                  }}
+                                  className="px-3 py-1.5 rounded border border-slate-700 bg-slate-900 hover:border-slate-500 text-xs text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
+                  </div>
 
+                  <div className="flex justify-center">
                     <button
-                      className="mt-3 w-full px-3 py-2 rounded bg-emerald-700 hover:bg-emerald-600 text-sm font-semibold"
-                      onClick={() => {
+                      className="w-full max-w-md px-3 py-2 rounded bg-emerald-700 hover:bg-emerald-600 text-sm font-semibold"
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
                         setDrumOptions((prev) => ({ ...prev, bpm, style: scratchStyle }));
+                        setStyleGroup(scratchStyle);
                         buildScratchSong();
                       }}
                     >
                       Create Arrangement
                     </button>
+                  </div>
 
-                    <div className="mt-2 text-[11px] text-slate-500">
-                      After creating the arrangement, click a section in the timeline and use the Drum Builder.
+                  <div className="rounded-lg border border-rose-700/40 bg-rose-900/10 p-3">
+                    <div className="text-sm font-semibold text-slate-100 mb-2">Select Drummer</div>
+                    <DrummerSelector
+                      onSelect={(drummer) => {
+                        setSelectedDrummer(drummer);
+                        console.log("Selected drummer:", drummer.display_name);
+                      }}
+                      selectedDrummer={selectedDrummer}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={bulkGenerating || generatingDrums}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handleGenerateFullSong();
+                    }}
+                    className="w-full px-4 py-3 rounded-lg bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Generate Complete Song
+                  </button>
+
+                  <div className="pt-2 border-t border-slate-800" />
+
+                  <div className="text-xl font-bold text-white">Advanced Drum Tools</div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-lg font-bold text-slate-100">Global</div>
+                      <select
+                        className="mt-1 w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                        value="global"
+                        onChange={() => {
+                          // single option
+                        }}
+                      >
+                        <option value="global">Global (Song)</option>
+                      </select>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-lg font-bold text-slate-100">Section</div>
+                      <select
+                        className="mt-1 w-full px-2 py-1 bg-slate-800 text-slate-100 text-sm rounded border border-slate-700"
+                        value={scopedControlsSectionId ?? ""}
+                        onChange={(e) => {
+                          const next = String(e.target.value || "");
+                          if (!next) return;
+                          handleSongMapSelectSection(next);
+                          setScopedControlsMode("section");
+                        }}
+                      >
+                        <option value="">Select a section from the Song Map…</option>
+                        {sections.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="mt-1 text-[11px] text-slate-400">Select a section from the Song Map above.</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-base font-semibold text-slate-100 mb-2">Global Tools</div>
+                      <DrumOptionsPanel
+                        options={drumOptions}
+                        onChange={setDrumOptions}
+                        drummerType={selectedDrummer?.style || selectedDrummer?.display_name || ""}
+                      />
+
+                      <div className="mt-3 rounded-lg border border-indigo-700/40 bg-indigo-900/10 p-3">
+                        <div className="text-sm font-semibold text-slate-100">Notes</div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          Global tools set the default behavior used across the song unless a section explicitly overrides it.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+                        <div className="text-base font-semibold text-slate-100">Section Tools</div>
+                        {!scopedControlsSectionId ? (
+                          <div className="text-xs text-slate-400 mt-1">Select a section from the Song Map to enable section tools.</div>
+                        ) : (
+                          <div className="text-xs text-slate-300 mt-1">
+                            Editing: {sections.find((s) => s.id === scopedControlsSectionId)?.label || scopedControlsSectionId}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Mini Editor</div>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setMiniEditorOpen((v) => !v);
+                          }}
+                          disabled={!scopedControlsSectionId}
+                          className="shrink-0 px-3 py-1.5 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-xs text-slate-200"
+                        >
+                          {miniEditorOpen ? "Hide Mini Editor" : "Show Mini Editor"}
+                        </button>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+                        <DrumBuilderPanelV2
+                          selectedRange={selectedMeasureRange}
+                          onGenerate={handleGenerateDrums}
+                          globalStyle={drumOptions.style || "rock"}
+                          globalDrummer={selectedDrummer?.id || "jeff_porcaro"}
+                          globalIntensity={Math.round(clamp01(drumOptions.density ?? 0.6) * 100)}
+                          busy={generatingDrums || bulkGenerating}
+                        />
+                      </div>
+
+                      {miniEditorOpen && (
+                        <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500">Mini Editor</div>
+                          {(() => {
+                            const fallbackSectionId =
+                              activeSectionId && activeSectionId !== "full-song" ? activeSectionId : null;
+                            const effectiveSectionId = scopedControlsSectionId || fallbackSectionId;
+                            if (!effectiveSectionId) {
+                              return <div className="text-xs text-slate-400">Select a section to show section-relative bars.</div>;
+                            }
+
+                            const section = sections.find((s) => s.id === effectiveSectionId);
+                            if (!section) {
+                              return <div className="text-xs text-slate-400">Section not found.</div>;
+                            }
+
+                            const measureRange = sectionToMeasureRange(
+                              section,
+                              bpm,
+                              timeSig,
+                              songMap,
+                              tempoFlattenToleranceBpm,
+                              drumTempoMode,
+                            );
+
+                            const start = Math.max(0, measureRange?.startMeasure ?? 0);
+                            const count = Math.max(0, measureRange?.measureCount ?? 0);
+
+                            const directSectionTrack = sectionDrumTracks[effectiveSectionId] ?? null;
+                            const activeSectionTrackFallback =
+                              activeDrumTrack && activeSectionId === effectiveSectionId ? activeDrumTrack : null;
+
+                            const bestOverlapTrack = (() => {
+                              const keys = Object.keys(sectionDrumTracks ?? {}).filter(
+                                (k) => k && k !== "__global__" && k !== "full-song",
+                              );
+                              if (!keys.length) return null;
+
+                              const sectionStartBar = start;
+                              const sectionEndBar = start + Math.max(0, count - 1);
+
+                              let best: { id: string; overlap: number } | null = null;
+                              for (const candidateId of keys) {
+                                const track = sectionDrumTracks[candidateId];
+                                if (!track?.notes?.length) continue;
+
+                                const placement = sectionPlacementContexts?.[candidateId];
+                                const candStart = Number.isFinite(Number(placement?.startMeasure))
+                                  ? Number(placement?.startMeasure)
+                                  : Math.min(
+                                      ...track.notes
+                                        .map((n) => Number(n.barIndex ?? 0))
+                                        .filter((v) => Number.isFinite(v)),
+                                    );
+                                const candEnd = Number.isFinite(Number(placement?.endMeasure))
+                                  ? Number(placement?.endMeasure)
+                                  : Math.max(
+                                      ...track.notes
+                                        .map((n) => Number(n.barIndex ?? 0))
+                                        .filter((v) => Number.isFinite(v)),
+                                    );
+
+                                if (!Number.isFinite(candStart) || !Number.isFinite(candEnd)) continue;
+                                const overlap = Math.max(
+                                  0,
+                                  Math.min(sectionEndBar, candEnd) - Math.max(sectionStartBar, candStart) + 1,
+                                );
+                                if (overlap <= 0) continue;
+                                if (!best || overlap > best.overlap) {
+                                  best = { id: candidateId, overlap };
+                                }
+                              }
+
+                              return best ? sectionDrumTracks[best.id] : null;
+                            })();
+
+                            const sectionTrack =
+                              directSectionTrack ??
+                              activeSectionTrackFallback ??
+                              bestOverlapTrack ??
+                              (fullSongDrumTrack && fullSongDrumTrack.notes?.length ? fullSongDrumTrack : null);
+                            if (!sectionTrack) {
+                              const keys = Object.keys(sectionDrumTracks ?? {});
+                              return (
+                                <div className="text-xs text-slate-400">
+                                  No drum track generated for this section yet.
+                                  {keys.length ? (
+                                    <div className="mt-1 text-[10px] text-slate-500">Tracks: {keys.join(", ")}</div>
+                                  ) : null}
+                                </div>
+                              );
+                            }
+
+                            if (!count) {
+                              return <div className="text-xs text-slate-400">No bars for this section yet.</div>;
+                            }
+
+                            const minTrackBarIndex = sectionTrack.notes.length
+                              ? Math.min(...sectionTrack.notes.map((n) => n.barIndex ?? 0))
+                              : 0;
+
+                            const trackLooksGlobalIndexed = sectionTrack.notes.length ? minTrackBarIndex >= start : true;
+                            const trackLooksOneBased = sectionTrack.notes.length
+                              ? minTrackBarIndex >= 1 && !sectionTrack.notes.some((n) => (n.barIndex ?? 0) === 0)
+                              : false;
+                            const trackBarIndexOffset = trackLooksOneBased ? 1 : 0;
+
+                            return (
+                              <div className="overflow-x-auto">
+                                <div className="flex gap-2 min-w-max">
+                                  {Array.from({ length: count }).map((_, relIdx) => {
+                                    const globalBar = start + relIdx;
+                                    const isActive = selectedBarIndex === globalBar;
+                                    const trackBar = trackLooksGlobalIndexed ? globalBar : relIdx;
+                                    const miniNotes = sectionTrack.notes
+                                      .filter((n) => (n.barIndex ?? 0) === trackBar + trackBarIndexOffset)
+                                      .map((n) => ({
+                                        ...n,
+                                        barIndex: 0,
+                                      }));
+
+                                    const miniTrack: DrumTrackForDCSM = {
+                                      ...sectionTrack,
+                                      track_id: `${sectionTrack.track_id}-mini-${effectiveSectionId}-${globalBar}`,
+                                      notes: miniNotes,
+                                    };
+
+                                    return (
+                                      <div key={`mini-bar-preview-${effectiveSectionId}-${relIdx}`} className="w-[168px]">
+                                        <Tooltip
+                                          content={`Section bar ${relIdx + 1} (global bar ${globalBar + 1})`}
+                                          placement="top"
+                                          maxWidthClassName="w-64"
+                                          wrapperClassName="w-full"
+                                        >
+                                          <button
+                                            type="button"
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              focusMainEditorBar(globalBar);
+                                            }}
+                                            className={
+                                              "w-full text-left rounded-lg border overflow-hidden " +
+                                              (isActive
+                                                ? "border-fuchsia-400/60 bg-fuchsia-500/10"
+                                                : "border-slate-800 bg-slate-950/40 hover:border-slate-600")
+                                            }
+                                          >
+                                          <div className="px-2 py-1 flex items-center justify-between">
+                                            <div
+                                              className={
+                                                "text-[11px] font-semibold " +
+                                                (isActive ? "text-fuchsia-100" : "text-slate-200")
+                                              }
+                                            >
+                                              Bar {relIdx + 1}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">{globalBar + 1}</div>
+                                          </div>
+                                          <div className="h-[86px]">
+                                            <DrumPianoRoll
+                                              drumTrack={miniTrack}
+                                              timeSignature={measureRange?.timeSignature ?? timeSig}
+                                              bpm={bpm}
+                                              playing={false}
+                                              gridResolution={gridResolution}
+                                              currentAspect="all"
+                                              selectedNoteIds={miniSelectedNoteIds}
+                                              onNoteSelect={setMiniSelectedNoteIds}
+                                              pixelsPerBeat={(() => {
+                                                const ts = measureRange?.timeSignature ?? timeSig;
+                                                const beatsPerBar = Math.max(1, Number(ts?.[0] ?? 4) || 4);
+                                                const previewWidthPx = 160;
+                                                return Math.max(8, Math.floor(previewWidthPx / beatsPerBar));
+                                              })()}
+                                              totalSongBars={1}
+                                              visibleStartMeasure={0}
+                                              visibleMeasureCount={1}
+                                              compact
+                                            />
+                                          </div>
+                                          </button>
+                                        </Tooltip>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Bar Details</div>
+                        {(() => {
+                          const sectionId =
+                            scopedControlsSectionId ||
+                            (activeSectionId && activeSectionId !== "full-song" ? activeSectionId : null);
+                          if (!sectionId) {
+                            return <div className="text-xs text-slate-400">Select a section first.</div>;
+                          }
+
+                          const section = sections.find((s) => s.id === sectionId);
+                          if (!section) {
+                            return <div className="text-xs text-slate-400">Section not found.</div>;
+                          }
+
+                          const measureRange = sectionToMeasureRange(
+                            section,
+                            bpm,
+                            timeSig,
+                            songMap,
+                            tempoFlattenToleranceBpm,
+                            drumTempoMode,
+                          );
+                          const start = Math.max(0, measureRange?.startMeasure ?? 0);
+                          const count = Math.max(0, measureRange?.measureCount ?? 0);
+                          const placementForSection = {
+                            startMeasure: start,
+                            endMeasure: start + Math.max(0, count - 1),
+                            tempos: measureRange?.tempos ?? [Number.isFinite(bpm) && bpm > 0 ? bpm : 120],
+                            timeSignature: measureRange?.timeSignature ?? timeSig,
+                            startTimeSec: measureRange?.startTime,
+                          } satisfies DrumTrackPlacementContext;
+
+                          if (selectedBarIndex === null) {
+                            return <div className="text-xs text-slate-400">Click a mini bar preview to select a bar.</div>;
+                          }
+
+                          const inSection = selectedBarIndex >= start && selectedBarIndex < start + count;
+                          if (!inSection) {
+                            return (
+                              <div className="text-xs text-slate-400">
+                                Selected bar {selectedBarIndex + 1} is outside this section.
+                              </div>
+                            );
+                          }
+
+                          const sectionTrack =
+                            sectionDrumTracks[sectionId] ?? (activeSectionId === sectionId ? activeDrumTrack : null);
+                          if (!sectionTrack) {
+                            return <div className="text-xs text-slate-400">No editable section track found for this section.</div>;
+                          }
+
+                          const minTrackBarIndex = sectionTrack.notes.length
+                            ? Math.min(...sectionTrack.notes.map((n) => n.barIndex ?? 0))
+                            : 0;
+
+                          const trackLooksGlobalIndexed = sectionTrack.notes.length ? minTrackBarIndex >= start : true;
+                          const trackLooksOneBased = sectionTrack.notes.length
+                            ? minTrackBarIndex >= 1 && !sectionTrack.notes.some((n) => (n.barIndex ?? 0) === 0)
+                            : false;
+                          const trackBarIndexOffset = trackLooksOneBased ? 1 : 0;
+
+                          const relIdx = selectedBarIndex - start;
+                          const trackBar = (trackLooksGlobalIndexed ? selectedBarIndex : relIdx) + trackBarIndexOffset;
+                          const barNotes = sectionTrack.notes.filter((n) => (n.barIndex ?? 0) === trackBar);
+
+                          const canEdit = Boolean(sectionId && sectionId !== "full-song");
+
+                          const applyTrackUpdate = (next: DrumTrackForDCSM) => {
+                            setSectionDrumTracks((prev) => ({
+                              ...prev,
+                              [sectionId]: next,
+                            }));
+                            syncSectionMidiNotes(sectionId, next, sectionPlacementContexts[sectionId] ?? placementForSection);
+                            applyTrackToMidiClip(sectionId, next, null, sectionPlacementContexts[sectionId] ?? placementForSection);
+                            setMiniSelectedNoteIds([]);
+                          };
+
+                          const resolvedPpq = Number(sectionTrack.resolution_ppq) > 0 ? Number(sectionTrack.resolution_ppq) : 960;
+                          const beatsPerBar = Math.max(
+                            1,
+                            Number((placementForSection.timeSignature ?? timeSig)?.[0] ?? 4) || 4,
+                          );
+                          const ticksPerBar = resolvedPpq * beatsPerBar;
+                          const ticksPerSub = (() => {
+                            try {
+                              return getTicksPerSubdivision(resolvedPpq, placementForSection.timeSignature ?? timeSig, gridResolution);
+                            } catch {
+                              return Math.max(1, Math.round(resolvedPpq / 4));
+                            }
+                          })();
+                          const subdivisionsPerBar = getSubdivisionsPerBar(gridResolution);
+
+                          const instrumentCounts = (() => {
+                            const map = new Map<string, number>();
+                            for (const n of barNotes) {
+                              const k = String((n as any)?.instrumentId ?? "?");
+                              map.set(k, (map.get(k) ?? 0) + 1);
+                            }
+                            return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+                          })();
+
+                          return (
+                            <div className="space-y-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-xs text-slate-200 font-semibold">Bar {relIdx + 1}</div>
+                                  <div className="text-[11px] text-slate-400">
+                                    Global bar {selectedBarIndex + 1} · Notes: {barNotes.length}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={!canEdit}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      if (!canEdit) return;
+                                      const kept = sectionTrack.notes.filter((n) => (n.barIndex ?? 0) !== trackBar);
+                                      applyTrackUpdate({ ...sectionTrack, notes: kept });
+                                    }}
+                                    className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                  >
+                                    Clear Bar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!canEdit || trackBar - 1 < trackBarIndexOffset}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      if (!canEdit) return;
+                                      const srcBar = trackBar - 1;
+                                      const srcNotes = sectionTrack.notes.filter((n) => (n.barIndex ?? 0) === srcBar);
+                                      if (!srcNotes.length) return;
+                                      const dedupe = sectionTrack.notes.filter((n) => (n.barIndex ?? 0) !== trackBar);
+                                      const suffix = Math.random().toString(36).slice(2, 8);
+                                      const copied = srcNotes.map((n, idx) => ({
+                                        ...n,
+                                        id: `${n.id}-dup-${suffix}-${idx}`,
+                                        barIndex: trackBar,
+                                      }));
+                                      applyTrackUpdate({ ...sectionTrack, notes: [...dedupe, ...copied] });
+                                    }}
+                                    className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                  >
+                                    Duplicate Prev
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={!canEdit}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    if (!canEdit) return;
+                                    setBarClipboard(barNotes.map((n) => ({ ...n, barIndex: 0 })));
+                                  }}
+                                  className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                >
+                                  Copy Bar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!canEdit || !barClipboard?.length}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    if (!canEdit) return;
+                                    if (!barClipboard?.length) return;
+                                    const kept = sectionTrack.notes.filter((n) => (n.barIndex ?? 0) !== trackBar);
+                                    const suffix = Math.random().toString(36).slice(2, 8);
+                                    const pasted = barClipboard.map((n, idx) => ({
+                                      ...n,
+                                      id: `${n.id}-paste-${suffix}-${idx}`,
+                                      barIndex: trackBar,
+                                    }));
+                                    applyTrackUpdate({ ...sectionTrack, notes: [...kept, ...pasted] });
+                                  }}
+                                  className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                >
+                                  Paste Bar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!canEdit || !barNotes.length}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    if (!canEdit) return;
+                                    if (!barNotes.length) return;
+                                    const nextNotes = sectionTrack.notes.map((n) => {
+                                      if ((n.barIndex ?? 0) !== trackBar || n.locked) return n;
+                                      const snapped =
+                                        Math.round((n.tickInBar ?? 0) / Math.max(1, ticksPerSub)) * Math.max(1, ticksPerSub);
+                                      const clamped = Math.max(0, Math.min(Math.max(0, ticksPerBar - 1), snapped));
+                                      return {
+                                        ...n,
+                                        tickInBar: clamped,
+                                      };
+                                    });
+                                    applyTrackUpdate({ ...sectionTrack, notes: nextNotes });
+                                  }}
+                                  className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                >
+                                  Quantize Bar ({gridResolution})
+                                </button>
+                              </div>
+
+                              <div className="rounded border border-slate-800 bg-slate-950/30 p-2">
+                                <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-2">Add Note</div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <select
+                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100"
+                                    value={barAddInstrumentId}
+                                    onChange={(e) => setBarAddInstrumentId(e.target.value as DrumInstrumentId)}
+                                    disabled={!canEdit}
+                                  >
+                                    {(
+                                      [
+                                        "kick",
+                                        "snare_center",
+                                        "snare_rim",
+                                        "snare_ghost",
+                                        "hihat_closed",
+                                        "hihat_open",
+                                        "hihat_pedal",
+                                        "ride_bow",
+                                        "ride_bell",
+                                        "ride_edge",
+                                        "tom_high",
+                                        "tom_mid",
+                                        "tom_floor",
+                                        "crash_1",
+                                        "crash_2",
+                                      ] as DrumInstrumentId[]
+                                    ).map((id) => (
+                                      <option key={id} value={id}>
+                                        {id.replaceAll("_", " ")}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  <Tooltip content="Step within bar" placement="top" maxWidthClassName="w-40">
+                                    <select
+                                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100"
+                                      value={String(barAddStepIndex)}
+                                      onChange={(e) => {
+                                        const next = Number(e.target.value);
+                                        setBarAddStepIndex(Number.isFinite(next) ? next : 0);
+                                      }}
+                                      disabled={!canEdit}
+                                    >
+                                      {Array.from({ length: subdivisionsPerBar }).map((_, idx) => (
+                                        <option key={`step-${idx}`} value={String(idx)}>
+                                          {idx + 1}/{subdivisionsPerBar}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Tooltip>
+
+                                  <button
+                                    type="button"
+                                    disabled={!canEdit}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      if (!canEdit) return;
+                                      const tickInBar = Math.max(
+                                        0,
+                                        Math.min(Math.max(0, ticksPerBar - 1), barAddStepIndex * ticksPerSub),
+                                      );
+                                      const suffix = Math.random().toString(36).slice(2, 8);
+                                      const id = `baradd-${sectionId}-${trackBar}-${tickInBar}-${suffix}`;
+                                      const limb = inferLimbFromInstrument(barAddInstrumentId);
+                                      const newNote: DrumNoteEvent = {
+                                        id,
+                                        barIndex: trackBar,
+                                        tickInBar,
+                                        tickLength: Math.max(1, Math.round(ticksPerSub * 0.95)),
+                                        channel: 9,
+                                        midiPitch: getMidiPitchForInstrument(barAddInstrumentId),
+                                        velocity: 100,
+                                        instrumentId: barAddInstrumentId,
+                                        aspect: "groove",
+                                        limbId: limb ?? undefined,
+                                        isGhost: false,
+                                        isAccent: false,
+                                        isFlam: false,
+                                        isDrag: false,
+                                      };
+                                      applyTrackUpdate({ ...sectionTrack, notes: [...sectionTrack.notes, newNote] });
+                                      setMiniSelectedNoteIds([id]);
+                                    }}
+                                    className="px-2.5 py-1 rounded border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed bg-slate-900 hover:border-slate-500 text-[11px] text-slate-200"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                              </div>
+
+                              {instrumentCounts.length ? (
+                                <div className="text-[11px] text-slate-400">
+                                  {instrumentCounts.slice(0, 8).map(([k, v]) => `${k}:${v}`).join(" · ")}
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-slate-500">No notes in this bar.</div>
+                              )}
+
+                              {miniSelectedNoteIds.length > 0 && (
+                                <div className="rounded border border-slate-800 bg-slate-950/70">
+                                  <NoteInspector
+                                    selectedNotes={sectionTrack.notes.filter((n) => miniSelectedNoteIds.includes(n.id))}
+                                    onUpdateNotes={(patch) => {
+                                      if (!miniSelectedNoteIds.length) return;
+                                      const nextNotes = sectionTrack.notes.map((n) =>
+                                        miniSelectedNoteIds.includes(n.id) && !n.locked ? { ...n, ...patch } : n,
+                                      );
+                                      applyTrackUpdate({ ...sectionTrack, notes: nextNotes });
+                                    }}
+                                    onNudgeTicks={(deltaTicks) => {
+                                      if (!Number.isFinite(ticksPerBar) || ticksPerBar <= 0) return;
+
+                                      const nextNotes = sectionTrack.notes.map((n) => {
+                                        if (!miniSelectedNoteIds.includes(n.id) || n.locked) return n;
+
+                                        const currentBar = Number(n.barIndex ?? 0);
+                                        const currentTick = Number(n.tickInBar ?? 0);
+                                        if (!Number.isFinite(currentBar) || !Number.isFinite(currentTick)) return n;
+
+                                        const abs = currentBar * ticksPerBar + currentTick + deltaTicks;
+                                        const absClamped = Math.max(0, abs);
+                                        const nextBar = Math.floor(absClamped / ticksPerBar);
+                                        const nextTick = ((absClamped % ticksPerBar) + ticksPerBar) % ticksPerBar;
+                                        return {
+                                          ...n,
+                                          barIndex: nextBar,
+                                          tickInBar: nextTick,
+                                        };
+                                      });
+
+                                      applyTrackUpdate({ ...sectionTrack, notes: nextNotes });
+                                    }}
+                                    gridResolution={gridResolution}
+                                    ppq={sectionTrack.resolution_ppq}
+                                    timeSignature={placementForSection.timeSignature ?? timeSig}
+                                    onClose={() => setMiniSelectedNoteIds([])}
+                                  />
+                                </div>
+                              )}
+
+                              {!canEdit && (
+                                <div className="text-[11px] text-slate-500">
+                                  Bar edits are enabled for section tracks (not full-song-only playback).
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      <div className="rounded-lg border border-indigo-700/40 bg-indigo-900/10 p-3">
+                        <div className="text-sm font-semibold text-slate-100">Notes</div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          Section tools apply to the selected section only. Use Global tools for baseline behavior.
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              )}
-              
-              
-              <div className="p-4 border-b border-slate-800 space-y-2">
+              </div>
+            </div>
+          </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      {sectionGrooveModalOpen && (
+        <div className="fixed inset-0 z-[70]">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={closeSectionGrooveModal}
+            role="presentation"
+          />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-lg border border-indigo-700/40 bg-slate-900 shadow-2xl">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-indigo-700/30 bg-indigo-900/10">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-100">
-                    <HoverTip text="Generate a full-song drum performance. You must select a drummer persona first.">
-                      <span>Create Drum Track</span>
-                    </HoverTip>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Generate a cohesive drum performance across the full arrangement, or clear the arrangement and patterns.
-                  </p>
+                  <div className="text-sm font-semibold text-slate-100">Groove Library</div>
+                  <div className="text-xs text-slate-400">Choose a groove/fill for this section.</div>
                 </div>
                 <button
-                  onClick={() => {
-                    if (!selectedDrummer) {
-                      setShowDrummerPersonaModal(true);
-                      return;
-                    }
-                    handleGenerateFullSong();
-                  }}
-                  disabled={!sections.length || bulkGenerating || generatingDrums}
-                  className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={!sections.length ? "Add an arrangement first" : !selectedDrummer ? "Select a drummer persona first" : undefined}
+                  className="text-slate-400 hover:text-slate-100"
+                  onClick={closeSectionGrooveModal}
+                  type="button"
                 >
-                  {bulkGenerating ? '⏳ Building Entire Song…' : '🥁 Generate Entire Song'}
+                  ✕
                 </button>
-                {fullSongStatus && (
-                  <div
-                    className={`text-xs px-3 py-2 rounded border ${
-                      fullSongStatus.type === 'success'
-                        ? 'bg-emerald-900/10 text-emerald-200 border-emerald-400/40'
-                        : fullSongStatus.type === 'error'
-                          ? 'bg-rose-900/10 text-rose-200 border-rose-400/40'
-                          : 'bg-cyan-900/10 text-cyan-200 border-cyan-400/40'
-                    }`}
+              </div>
+
+              <div className="p-4 space-y-3">
+                <div className="text-xs text-slate-400">
+                  Section:{" "}
+                  <span className="text-slate-200">
+                    {(() => {
+                      const s = sections.find((row) => row.id === sectionGrooveModalSectionId);
+                      return (s?.label || s?.id || sectionGrooveModalSectionId || "Section").toString();
+                    })()}
+                  </span>
+                </div>
+
+                <input
+                  value={sectionGrooveQuery}
+                  onChange={(e) => setSectionGrooveQuery(e.target.value)}
+                  placeholder="Search grooves (e.g. four on the floor, bonham, paradiddle)"
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white"
+                />
+
+                <div className="flex flex-wrap gap-2">
+                  {sectionQuickGrooveTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`text-xs px-2 py-1 rounded border ${
+                        sectionGrooveTag === tag
+                          ? "bg-indigo-600 border-indigo-500 text-white"
+                          : "bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+                      }`}
+                      onClick={() => {
+                        const next = sectionGrooveTag === tag ? "" : tag;
+                        setSectionGrooveTag(next);
+                        void searchSectionGrooves(undefined, next);
+                      }}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold disabled:opacity-50"
+                    disabled={sectionGrooveLoading}
+                    onClick={() => void searchSectionGrooves()}
                   >
-                    <span>{fullSongStatus.message}</span>
-                    {fullSongStatus.type === 'progress' && fullSongProgress.total > 0 && (
-                      <span className="ml-2 text-slate-200">
-                        {fullSongProgress.completed}/{fullSongProgress.total} sections
-                      </span>
+                    {sectionGrooveLoading ? "Searching…" : "Search"}
+                  </button>
+
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <span>Fill bar (relative)</span>
+                    <input
+                      value={sectionFillBarRelativeText}
+                      onChange={(e) => setSectionFillBarRelativeText(e.target.value)}
+                      className="w-24 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-100"
+                    />
+                    <span className="opacity-70">(0..N, last, -1)</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="ml-auto text-xs px-2 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700"
+                    onClick={() => {
+                      setSectionGrooveQuery("");
+                      setSectionGrooveTag("");
+                      setSectionGrooveResults([]);
+                      setSectionSelectedGrooveId("");
+                      setSectionFillGrooveId("");
+                      setSectionFillBarRelativeText("last");
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {(sectionSelectedGrooveId || sectionFillGrooveId) && (
+                  <div className="text-xs text-slate-300 space-y-1">
+                    {sectionSelectedGrooveId && (
+                      <div>
+                        Selected groove: <span className="text-slate-100">{sectionSelectedGrooveId}</span>
+                      </div>
+                    )}
+                    {sectionFillGrooveId && (
+                      <div>
+                        Fill: <span className="text-slate-100">{sectionFillGrooveId}</span> @ bar{" "}
+                        <span className="text-slate-100">{sectionFillBarRelativeText || "last"}</span>
+                      </div>
                     )}
                   </div>
                 )}
+
+                {sectionGrooveResults.length > 0 && (
+                  <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+                    {sectionGrooveResults.slice(0, 24).map((item) => (
+                      <div key={String(item?.id)} className="bg-slate-800/60 border border-slate-700 rounded p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-white truncate">{item?.title || item?.id}</div>
+                            <div className="text-[11px] text-slate-400">{item?.source}</div>
+                            {(item?.tempo_bpm || item?.meter || item?.bars) && (
+                              <div className="text-[11px] text-slate-500">
+                                {item?.tempo_bpm ? `${Math.round(Number(item.tempo_bpm))} BPM` : ""}
+                                {item?.meter ? ` · ${String(item.meter)}` : ""}
+                                {item?.bars ? ` · ${String(item.bars)} bars` : ""}
+                              </div>
+                            )}
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {(item?.tags || []).slice(0, 10).map((t: string) => (
+                                <span
+                                  key={t}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-200"
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2 shrink-0">
+                            <button
+                              type="button"
+                              className={`text-xs px-2 py-1 rounded border ${
+                                auditioningGrooveId === String(item?.id)
+                                  ? "bg-amber-600 border-amber-500 text-slate-950"
+                                  : "bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+                              }`}
+                              title={item?.has_audio ? "Play preview" : "Try preview (audio may be unavailable)"}
+                              onClick={() => void auditionGroove(String(item?.id || ""))}
+                            >
+                              {auditioningGrooveId === String(item?.id) ? "Stop" : "Audition"}
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+                              onClick={() => setSectionSelectedGrooveId(String(item?.id || ""))}
+                            >
+                              Use as groove
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white"
+                              onClick={() => setSectionFillGrooveId(String(item?.id || ""))}
+                            >
+                              Use as fill
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-4 py-3 border-t border-slate-800 flex items-center gap-2">
                 <button
-                  onClick={clearArrangement}
-                  className="w-full px-4 py-2 rounded-lg bg-red-600/25 hover:bg-red-600/40 text-red-200 text-sm font-semibold border border-red-500/30 transition-colors"
-                  title="Clear arrangement sections and all generated drum patterns/grids"
+                  type="button"
+                  className="px-3 py-2 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm"
+                  onClick={closeSectionGrooveModal}
                 >
-                  🗑️ Clear Arrangement + Patterns
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="ml-auto px-4 py-2 rounded bg-gradient-to-r from-orange-600 to-rose-600 hover:from-orange-500 hover:to-rose-500 font-semibold text-white"
+                  onClick={() => {
+                    if (!sectionGrooveModalSectionId) {
+                      closeSectionGrooveModal();
+                      return;
+                    }
+                    setSectionGrooveSelections((prev) => ({
+                      ...prev,
+                      [sectionGrooveModalSectionId]: {
+                        selectedGrooveId: sectionSelectedGrooveId ? sectionSelectedGrooveId : undefined,
+                        fillGrooveId: sectionFillGrooveId ? sectionFillGrooveId : undefined,
+                        fillBarRelativeText: sectionFillGrooveId
+                          ? (sectionFillBarRelativeText || "last")
+                          : undefined,
+                      },
+                    }));
+                    closeSectionGrooveModal();
+                  }}
+                >
+                  Save
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-              {/* Brain Panel UI */}
-              {sections.length > 0 && (
-                <div className="p-4 border-b border-slate-800">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">🧠 Brain Panel</h3>
-                  <BrainPanel
-                    sectionId={selectedMeasureRange?.sectionId}
-                    sectionLabel={selectedMeasureRange?.sectionLabel}
-                    styleHint={drumOptions.style}
-                    locked={false}
-                  />
-                </div>
-              )}
-
-              {sections.length > 0 && (
-                <div>
-                  {/* Selection Info & Actions */}
-                  {selectedSectionIds.size > 0 ? (
-                    <div className="p-4 bg-gradient-to-r from-indigo-900/40 to-purple-900/40 border-b border-indigo-500/30">
-                      <div className="text-sm text-indigo-200 font-semibold mb-3">
-                        ✨ {selectedSectionIds.size} section{selectedSectionIds.size > 1 ? 's' : ''} selected
-                      </div>
-                      <div className="space-y-2 text-xs text-slate-200">
-                        <p className="leading-relaxed">
-                          Use the Drum Builder panel in the center column to generate patterns for the highlighted
-                          sections. The older quick-generate path has been removed so there is a single source of
-                          truth for drum creation.
-                        </p>
-                        <button
-                          className="text-indigo-300 hover:text-indigo-100 underline"
-                          onClick={() => setSelectedSectionIds(new Set())}
-                        >
-                          Clear selection (show all)
-                        </button>
-                      </div>
+      {debugMode && (
+        <div className="fixed inset-0 z-[80]">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setDebugMode(false)}
+            role="presentation"
+          />
+          <div className="absolute inset-0 flex items-start justify-center p-4 overflow-y-auto">
+            <div className="w-full max-w-3xl rounded-lg border border-slate-700 bg-slate-900 shadow-2xl">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+                <div className="text-sm font-semibold text-slate-100">Debug</div>
+                <button
+                  className="text-slate-400 hover:text-slate-100"
+                  onClick={() => setDebugMode(false)}
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="border border-slate-800/60 rounded p-2">
+                  <div className="font-semibold text-slate-200 mb-1">Last Generation</div>
+                  {debugDrumGen ? (
+                    <div className="space-y-1">
+                      <div>sectionId: <span className="text-emerald-200">{debugDrumGen.payloadSectionId ?? "∅"}</span></div>
+                      <div>drum_track: {debugDrumGen.hasDrumTrack ? "yes" : "no"}</div>
+                      <div>drum_track notes: {debugDrumGen.drumTrackNotes}</div>
+                      <div>legacy midi_notes: {debugDrumGen.hasLegacyNotes ? "yes" : "no"}</div>
+                      <div>legacy note count: {debugDrumGen.legacyNotesCount}</div>
+                      {Array.isArray((debugDrumGen as any).roadmapDebug) && (debugDrumGen as any).roadmapDebug.length > 0 && (
+                        <div className="mt-2 border-t border-slate-800/60 pt-2">
+                          <div className="font-semibold text-slate-200 mb-1">Roadmap Debug</div>
+                          <div className="max-h-40 overflow-y-auto pr-1 space-y-1">
+                            {(debugDrumGen as any).roadmapDebug.map((row: any, idx: number) => (
+                              <div key={idx} className="border border-slate-800/60 rounded px-2 py-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold text-emerald-200">sec {String(row?.sectionIndex ?? idx)}</span>
+                                  {typeof row?.shuffleMode === 'string' && (
+                                    <span className="text-slate-400">{row.shuffleMode}</span>
+                                  )}
+                                </div>
+                                <div className="text-slate-400">
+                                  fill: {String(row?.fillFamily ?? '–')} ({String(row?.fillLength ?? '–')}) +{Number(row?.fillAdded ?? 0)}
+                                </div>
+                                <div className="text-slate-500">
+                                  kick: tgt {Number(row?.kickDensityTarget ?? 0).toFixed?.(2) ?? String(row?.kickDensityTarget ?? '–')}, +{Number(row?.insertedKick ?? 0)} drop {Number(row?.droppedKick ?? 0)}
+                                </div>
+                                <div className="text-slate-500">
+                                  snare: ghost tgt {Number(row?.ghostDensityTarget ?? 0).toFixed?.(2) ?? String(row?.ghostDensityTarget ?? '–')}, +{Number(row?.insertedGhost ?? 0)} drop {Number(row?.droppedGhostish ?? 0)}
+                                </div>
+                                {row?.reduction !== undefined && (
+                                  <div className="text-slate-500">
+                                    dropout: r={Number(row?.reduction ?? 0).toFixed?.(2) ?? String(row?.reduction)} stripped {Number(row?.dropoutStripped ?? 0)}
+                                  </div>
+                                )}
+                                {(row?.extraCrashes || row?.rideBellified || row?.hatsOpened) && (
+                                  <div className="text-slate-500">
+                                    cym: crashes+{Number(row?.extraCrashes ?? 0)} bell {Number(row?.rideBellified ?? 0)} hatOpen+{Number(row?.hatsOpened ?? 0)}
+                                  </div>
+                                )}
+                                {row?.endingStopTime && (
+                                  <div className="text-amber-200">ending: stop-time removed {Number(row?.endingStopTimeRemoved ?? 0)}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="p-3 bg-yellow-900/20 border-b border-yellow-500/30">
-                      <div className="text-xs text-yellow-300">
-                        💡 Click sections on timeline to select them
-                      </div>
+                    <div className="text-slate-500">No generation run yet.</div>
+                  )}
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-200 mb-1">Section Tracks</div>
+                  {sectionDebugSummaries.length === 0 ? (
+                    <div className="text-slate-500">No sectionDrumTracks yet.</div>
+                  ) : (
+                    <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                      {sectionDebugSummaries.map((summary) => (
+                        <div
+                          key={summary.id}
+                          className="border border-slate-700/70 rounded px-2 py-1"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-emerald-200">{summary.id}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-400">{summary.noteCount} notes</span>
+                              <button
+                                className="px-1 py-[1px] text-[10px] border border-emerald-500/60 rounded hover:bg-emerald-600/20"
+                                onClick={() => handleDebugJumpToSection(summary.id)}
+                              >
+                                Jump
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-slate-400">
+                            bars: {summary.minBar === null || summary.maxBar === null ? "–" : `${summary.minBar} → ${summary.maxBar}`}
+                          </div>
+                          {summary.instruments.length > 0 && (
+                            <div className="text-slate-500 truncate">
+                              inst: {summary.instruments.join(", ")}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
-                  
-                  {/* SectionControls moved to be nested under waveform in center column */}
                 </div>
-              )}
-            </div>
-        </div>
-      </div>
-      {debugMode && (
-        <div className="fixed bottom-3 right-3 max-w-md text-xs bg-slate-900/95 border border-emerald-500/40 rounded-lg p-3 shadow-xl z-50 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-emerald-300">DrumGen Debug</span>
-            <div className="flex items-center gap-2">
-              <button
-                className="px-2 py-[1px] text-[10px] border border-emerald-500/60 rounded hover:bg-emerald-600/20"
-                onClick={injectDebugTestGroove}
-              >
-                Inject Test Groove
-              </button>
-              <button
-                className="text-slate-400 hover:text-slate-100"
-                onClick={() => setDebugMode(false)}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-          <div className="border border-slate-800/60 rounded p-2">
-            <div className="font-semibold text-slate-200 mb-1">Last Generation</div>
-            {debugDrumGen ? (
-              <div className="space-y-1">
-                <div>sectionId: <span className="text-emerald-200">{debugDrumGen.payloadSectionId ?? "∅"}</span></div>
-                <div>drum_track: {debugDrumGen.hasDrumTrack ? "yes" : "no"}</div>
-                <div>drum_track notes: {debugDrumGen.drumTrackNotes}</div>
-                <div>legacy midi_notes: {debugDrumGen.hasLegacyNotes ? "yes" : "no"}</div>
-                <div>legacy note count: {debugDrumGen.legacyNotesCount}</div>
               </div>
-            ) : (
-              <div className="text-slate-500">No generation run yet.</div>
-            )}
-          </div>
-          <div>
-            <div className="font-semibold text-slate-200 mb-1">Section Tracks</div>
-            {sectionDebugSummaries.length === 0 ? (
-              <div className="text-slate-500">No sectionDrumTracks yet.</div>
-            ) : (
-              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                {sectionDebugSummaries.map((summary) => (
-                  <div
-                    key={summary.id}
-                    className="border border-slate-700/70 rounded px-2 py-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-emerald-200">{summary.id}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-400">{summary.noteCount} notes</span>
-                        <button
-                          className="px-1 py-[1px] text-[10px] border border-emerald-500/60 rounded hover:bg-emerald-600/20"
-                          onClick={() => handleDebugJumpToSection(summary.id)}
-                        >
-                          Jump
-                        </button>
-                      </div>
-                    </div>
-                    <div className="text-slate-400">
-                      bars: {summary.minBar === null || summary.maxBar === null ? "–" : `${summary.minBar} → ${summary.maxBar}`}
-                    </div>
-                    {summary.instruments.length > 0 && (
-                      <div className="text-slate-500 truncate">
-                        inst: {summary.instruments.join(", ")}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -4405,6 +6494,6 @@ export default function WebDAWApp() {
           setSelectedDrummer(drummer);
         }}
       />
-    </div>
+    </>
   );
 }

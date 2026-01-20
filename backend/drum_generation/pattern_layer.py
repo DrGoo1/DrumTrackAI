@@ -13,6 +13,163 @@ from .drum_generation_config import GridEvent, DrumGenerationConfig
 logger = logging.getLogger(__name__)
 
 
+_MUST_KNOW_BEATS: Dict[str, Dict[str, List[int]]] = {
+    # Notes are 16th-subdivision indices (0..15) within a 4/4 bar.
+    # Instrument ids use DrumTracKAI canonical ids where possible.
+    # These are intentionally simple 1-bar archetypes; refinements can be applied later.
+    "beat_01_four_on_floor": {
+        "kick": [0, 4, 8, 12],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_02_dance": {
+        "kick": [0, 4, 8, 12],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    },
+    "beat_03_first_beat": {
+        "kick": [0, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_04_second_beat": {
+        "kick": [0, 6, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_05_classic_rock": {
+        "kick": [0, 6, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_06_classic_rock_2": {
+        "kick": [0, 6, 10],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_07_halftime": {
+        "kick": [0, 8],
+        "snare_center": [8],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_08_halftime_16ths": {
+        "kick": [0, 8],
+        "snare_center": [8],
+        "hihat_closed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    },
+    "beat_09_halftime_turned_normal": {
+        "kick": [0, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    },
+    "beat_10_change_things_up": {
+        "kick": [0, 6, 10, 12],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_11_bieber": {
+        "kick": [0, 6, 8, 14],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+        "hihat_open": [15],
+    },
+    "beat_12_bieber_on_toms": {
+        "kick": [0, 6, 8, 14],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+        "tom_mid": [10],
+        "tom_floor": [15],
+    },
+    "beat_13_pop_country": {
+        "kick": [0, 6, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_14_pop_country_chorus": {
+        "kick": [0, 6, 8, 10],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "crash_1": [0],
+    },
+    "beat_15_double_time": {
+        "kick": [0, 8],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    },
+    "beat_16_jungle": {
+        "kick": [0, 7, 10],
+        "snare_center": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_17_cross_stick": {
+        "kick": [0, 8],
+        "snare_rim": [4, 12],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_18_four_on_floor_halftime": {
+        "kick": [0, 4, 8, 12],
+        "snare_center": [8],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_19_first_ghost_note": {
+        "kick": [0, 8],
+        "snare_center": [4, 12],
+        "snare_ghost": [3, 7, 11, 15],
+        "hihat_closed": [0, 2, 4, 6, 8, 10, 12, 14],
+    },
+    "beat_20_anthem_toms": {
+        "kick": [0, 8],
+        "snare_center": [4, 12],
+        "crash_1": [0],
+        "tom_high": [10],
+        "tom_mid": [14],
+        "tom_floor": [15],
+        "hihat_closed": [0, 4, 8, 12],
+    },
+}
+
+
+def _choose_must_know_template_id(config: DrumGenerationConfig) -> str:
+    style = str(getattr(config, "songStyle", None) or getattr(config, "style", "") or "").strip().lower()
+    if style in {"edm", "dance"}:
+        return "beat_02_dance"
+    if style in {"pop"}:
+        return "beat_03_first_beat"
+    if style in {"metal"}:
+        return "beat_15_double_time"
+    if style in {"funk"}:
+        return "beat_10_change_things_up"
+    if style in {"blues"}:
+        return "beat_05_classic_rock"
+    if style in {"rock"}:
+        return "beat_05_classic_rock"
+    # Default: classic rock archetype
+    return "beat_05_classic_rock"
+
+
+def _append_16th_hits(
+    out: List[GridEvent],
+    *,
+    bar_idx: int,
+    subdivisions_per_bar: int,
+    instrument_id: str,
+    hit_subdivisions: List[int],
+) -> None:
+    for s in hit_subdivisions:
+        ss = int(s)
+        if ss < 0 or ss >= subdivisions_per_bar:
+            continue
+        out.append(
+            GridEvent(
+                bar_index=bar_idx,
+                subdivision_index=ss,
+                subdivisions_per_bar=subdivisions_per_bar,
+                instrument_id=instrument_id,
+                is_accent=(ss == 0),
+            )
+        )
+
+
 def generate_grid_pattern_events(
     songmap: Any,
     config: DrumGenerationConfig,
@@ -77,39 +234,20 @@ def generate_template_bar(
     Replace with your actual template logic.
     """
     
-    events = []
-    
-    # Basic rock beat template
-    # Kick on 1 and 3
-    for beat in [0, 8]:  # Beats 1 and 3 in 16th notes
-        events.append(GridEvent(
-            bar_index=bar_idx,
-            subdivision_index=beat,
+    events: List[GridEvent] = []
+
+    template_id = _choose_must_know_template_id(config)
+    template = _MUST_KNOW_BEATS.get(template_id) or _MUST_KNOW_BEATS["beat_05_classic_rock"]
+
+    for inst_id, steps in template.items():
+        _append_16th_hits(
+            events,
+            bar_idx=bar_idx,
             subdivisions_per_bar=subdivisions_per_bar,
-            instrument_id="kick",
-            is_accent=beat == 0,
-        ))
-    
-    # Snare on 2 and 4
-    for beat in [4, 12]:  # Beats 2 and 4 in 16th notes
-        events.append(GridEvent(
-            bar_index=bar_idx,
-            subdivision_index=beat,
-            subdivisions_per_bar=subdivisions_per_bar,
-            instrument_id="snare_center",
-            is_accent=True,
-        ))
-    
-    # Hi-hat on every 8th note
-    for beat in range(0, subdivisions_per_bar, 2):
-        events.append(GridEvent(
-            bar_index=bar_idx,
-            subdivision_index=beat,
-            subdivisions_per_bar=subdivisions_per_bar,
-            instrument_id="hihat_closed",
-            is_accent=beat % 4 == 0,
-        ))
-    
+            instrument_id=inst_id,
+            hit_subdivisions=list(steps or []),
+        )
+
     return events
 
 

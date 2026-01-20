@@ -3,6 +3,7 @@
  * For famous songs - search and auto-populate tempo, time sig, and arrangement
  */
 import React, { useState } from 'react';
+import { Tooltip } from './Tooltip';
 
 export interface SongInfo {
   title: string;
@@ -189,16 +190,17 @@ export const InternetSongLookupModal: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSelect(song);
-                      }}
-                      className="ml-4 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded shadow-lg transition-colors"
-                      title="Apply this song's tempo and arrangement"
-                    >
-                      ✅ Use This
-                    </button>
+                    <Tooltip content="Apply this song's tempo and arrangement" placement="top" maxWidthClassName="w-64">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelect(song);
+                        }}
+                        className="ml-4 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded shadow-lg transition-colors"
+                      >
+                        ✅ Use This
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               ))}

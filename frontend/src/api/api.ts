@@ -1,3 +1,6 @@
+import type { KitManifestV1, ListKitsResponse } from "../types/kits";
+import type { DrumGenerationConfig, DrumGenerationResponse } from "../types/drumTrack";
+
 export type AnalyzeTempoResponse = { bpm: number; tempoCurve?: Array<{time:number,bpm:number}> };
 
 // Use same-origin (relative URLs) since nginx proxies all API requests
@@ -59,10 +62,50 @@ export async function generateMidi64(params: any): Promise<string> {
   return data.base64 || data;
 }
 
+export async function generateDrums(config: DrumGenerationConfig): Promise<DrumGenerationResponse> {
+  const res = await fetchWithBases(`/api/generate-drums`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error("Drum generation failed");
+  return res.json();
+}
+
+export type RenderPluginMidiRequest = {
+  plugin: "jamstix" | "sd3" | "ssd5";
+  advancedArticulations?: boolean;
+  ppq: number;
+  notes: Array<{
+    t0: number;
+    t1: number;
+    pitch: number;
+    vel: number;
+    chan: number;
+    articulationId?: string;
+  }>;
+};
+
+export type RenderPluginMidiResponse = {
+  plugin: string;
+  midi_base64: string;
+  ticks_per_beat: number;
+};
+
+export async function renderPluginMidi(payload: RenderPluginMidiRequest): Promise<RenderPluginMidiResponse> {
+  const res = await fetchWithBases(`/api/render-plugin-midi`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("Plugin MIDI render failed");
+  return res.json();
+}
+
 export type UploadResult = {
   success: boolean;
   key: string; // uploads/... path
-  waveform?: { peaks: number[]; sr?: number; duration?: number };
+  waveform?: { peaks: number[]; peaksL?: number[]; peaksR?: number[]; sr?: number; duration?: number };
 };
 
 export async function uploadFile(file: File): Promise<UploadResult> {
@@ -74,7 +117,7 @@ export async function uploadFile(file: File): Promise<UploadResult> {
   return res.json();
 }
 
-export async function fetchWaveform(key: string, maxPoints = 3000): Promise<{ peaks: number[]; sr?: number; duration?: number }>{
+export async function fetchWaveform(key: string, maxPoints = 3000): Promise<{ peaks: number[]; peaksL?: number[]; peaksR?: number[]; sr?: number; duration?: number }>{
   const res = await fetchWithBases(`/files/waveform?key=${encodeURIComponent(key)}&max_points=${maxPoints}`);
   if (!res.ok) throw new Error('Waveform fetch failed');
   return res.json();
@@ -101,6 +144,19 @@ export async function analyzeTempoSections(fileKey: string, sections: Array<{ st
     body: JSON.stringify({ key: fileKey, sections })
   });
   if (!res.ok) throw new Error('Tempo sections analysis failed');
+  return res.json();
+}
+
+export async function listKits(): Promise<ListKitsResponse> {
+  const res = await fetchWithBases(`/api/kits`);
+  if (!res.ok) throw new Error('List kits failed');
+  return res.json();
+}
+
+export async function getKitManifest(kitId: string): Promise<KitManifestV1> {
+  const safe = encodeURIComponent(String(kitId || "").trim());
+  const res = await fetchWithBases(`/api/kits/${safe}/manifest`);
+  if (!res.ok) throw new Error('Get kit manifest failed');
   return res.json();
 }
 
