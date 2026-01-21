@@ -856,8 +856,17 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
     ) -> List[Dict[str, Any]]:
         if not events:
             return []
-        max_t = max(float(e.get("time_sec", 0.0)) for e in events)
-        phrase_len = max(0.5, max_t + 0.25)
+        phrase_len_hint = None
+        try:
+            phrase_len_hint = float(events[0].get("phrase_len_sec") or 0.0)
+        except Exception:
+            phrase_len_hint = None
+
+        if phrase_len_hint and phrase_len_hint > 0.1:
+            phrase_len = float(phrase_len_hint)
+        else:
+            max_t = max(float(e.get("time_sec", 0.0)) for e in events)
+            phrase_len = max(0.5, max_t + 0.25)
         if phrase_len <= 0:
             return []
         loops = int(math.ceil(max(duration_sec, 1e-3) / phrase_len))
@@ -877,6 +886,12 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
         if not phrase_events:
             return 1
         bar_dur_local = _bar_duration_seconds()
+        try:
+            phrase_len_hint = float(phrase_events[0].get("phrase_len_sec") or 0.0)
+        except Exception:
+            phrase_len_hint = 0.0
+        if phrase_len_hint and phrase_len_hint > 0.1:
+            return max(1, int(round(float(phrase_len_hint) / max(bar_dur_local, 1e-3))))
         try:
             max_t = max(float(e.get("time_sec", 0.0)) for e in phrase_events)
         except Exception:
@@ -3323,56 +3338,80 @@ def _load_internal_events_from_midi_path(*, midi_path: str, config: DrumGenerati
     except Exception:
         return []
 
-    tempo_us = 500000
+    # Important: for pinned MIDI playback we want deterministic bar/tick placement so
+    # cursor + playback stay locked. Compute timing from MIDI ticks, then derive time_sec
+    # from the exact grid at the requested tempo.
     events: List[Dict[str, Any]] = []
-    max_time = 0.0
-
-    for track in mid.tracks:
-        t = 0.0
-        tempo_us_local = tempo_us
-        for msg in track:
-            t += mido.tick2second(msg.time, mid.ticks_per_beat, tempo_us_local)
-            if msg.type == "set_tempo":
-                tempo_us_local = int(msg.tempo)
-            elif msg.type == "note_on" and msg.velocity and msg.velocity > 0:
-                if getattr(msg, "channel", None) != 9:
-                    continue
-                try:
-                    raw_inst = midi_pitch_to_instrument_id(int(msg.note))
-                    instrument_id = _canonicalize_inst_id(raw_inst)
-                except Exception:
-                    instrument_id = ""
-                if not instrument_id:
-                    continue
-                length = 0.12
-                is_ghost = int(msg.velocity) < 30
-                is_accent = int(msg.velocity) > 100
-                events.append(
-                    {
-                        "time_sec": float(t),
-                        "length_sec": float(length),
-                        "instrument_id": instrument_id,
-                        "midi_pitch": int(instrument_id_to_midi_pitch(instrument_id)),
-                        "velocity": int(msg.velocity),
-                        "isGhost": bool(is_ghost),
-                        "isAccent": bool(is_accent),
-                        "isFlam": False,
-                        "isDrag": False,
-                    }
-                )
-                if t > max_time:
-                    max_time = t
-
-    if not events:
-        return []
 
     beats_per_bar = int(getattr(config, "time_signature", (4, 4))[0] or 4)
     tempo = float((getattr(config, "tempos", None) or [120])[0] or 120)
     total_bars = int(getattr(config, "measure_count", 1) or 1)
-    max_allowed = (60.0 / max(tempo, 1e-3)) * beats_per_bar * total_bars
 
-    if max_allowed > 0:
-        events = [e for e in events if float(e.get("time_sec", 0.0)) < max_allowed]
+    # Builder uses PPQ=960; normalize MIDI ticks into that grid.
+    resolution_ppq = 960
+    src_ppq = int(getattr(mid, "ticks_per_beat", 480) or 480)
+    scale = float(resolution_ppq) / float(max(1, src_ppq))
+    bar_ticks = int(beats_per_bar * resolution_ppq)
+    bar_dur_sec = (60.0 / max(tempo, 1e-6)) * float(beats_per_bar)
+    phrase_len_sec = float(max(1, total_bars)) * float(bar_dur_sec)
+
+    for track in mid.tracks:
+        abs_ticks = 0
+        for msg in track:
+            try:
+                abs_ticks += int(getattr(msg, "time", 0) or 0)
+            except Exception:
+                continue
+
+            if msg.type != "note_on" or not getattr(msg, "velocity", 0) or int(getattr(msg, "velocity", 0) or 0) <= 0:
+                continue
+            if getattr(msg, "channel", None) != 9:
+                continue
+
+            try:
+                raw_inst = midi_pitch_to_instrument_id(int(msg.note))
+                instrument_id = _canonicalize_inst_id(raw_inst)
+            except Exception:
+                instrument_id = ""
+            if not instrument_id:
+                continue
+
+            # Normalize to builder grid.
+            abs_tick_scaled = int(round(float(abs_ticks) * scale))
+            bi = int(abs_tick_scaled // max(1, bar_ticks))
+            if bi < 0 or bi >= max(1, total_bars):
+                continue
+            tib = int(abs_tick_scaled - (bi * bar_ticks))
+            tsec = (float(abs_tick_scaled) / float(resolution_ppq)) * (60.0 / max(tempo, 1e-6))
+            if tsec < 0 or tsec >= phrase_len_sec:
+                continue
+
+            length = 0.12
+            is_ghost = int(msg.velocity) < 30
+            is_accent = int(msg.velocity) > 100
+            events.append(
+                {
+                    "time_sec": float(tsec),
+                    "length_sec": float(length),
+                    "instrument_id": instrument_id,
+                    "midi_pitch": int(instrument_id_to_midi_pitch(instrument_id)),
+                    "velocity": int(msg.velocity),
+                    "isGhost": bool(is_ghost),
+                    "isAccent": bool(is_accent),
+                    "isFlam": False,
+                    "isDrag": False,
+                    "barIndex": int(bi),
+                    "tickInBar": int(tib),
+                    "resolution_ppq": int(resolution_ppq),
+                    "phrase_len_sec": float(phrase_len_sec),
+                }
+            )
+
+    if not events:
+        return []
+
+    # Final ordering (important for deterministic builder input)
+    events.sort(key=lambda e: (int(e.get("barIndex") or 0), int(e.get("tickInBar") or 0), str(e.get("instrument_id") or "")))
     return events
 
 

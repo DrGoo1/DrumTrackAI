@@ -1,5 +1,5 @@
-import * as Tone from 'tone'
 import { create } from 'zustand'
+import { getSharedAudioContext } from './sharedAudioContext'
 
 export type TrackChain = {
   id: string
@@ -29,7 +29,7 @@ export const useGraph = create<GraphState>((set, get) => ({
   ensure: (id) => {
     const s = get()
     if (s.chains[id]) return s.chains[id]
-    const ctx = Tone.getContext().rawContext as AudioContext
+    const ctx = getSharedAudioContext({ latencyHint: 'interactive' })
     const gain = ctx.createGain()
     const panner = ctx.createStereoPanner()
     const analyser = ctx.createAnalyser()

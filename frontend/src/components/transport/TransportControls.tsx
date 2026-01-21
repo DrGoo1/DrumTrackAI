@@ -4,8 +4,8 @@
 import React from 'react'
 import { Play, Pause, Square, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
 import { useDawStore } from '../../state/dawStore'
-import * as Tone from 'tone'
 import { Tooltip } from '../Tooltip'
+import { resumeSharedAudioContext } from '../../audio/sharedAudioContext'
 
 export default function TransportControls() {
   const { 
@@ -14,6 +14,7 @@ export default function TransportControls() {
     loopEnabled, 
     loopStartSec, 
     loopEndSec,
+    project,
     play,
     pause,
     setCursor,
@@ -21,12 +22,11 @@ export default function TransportControls() {
     setLoop
   } = useDawStore()
 
+  const bpm = project?.bpm || 120
+
   const handlePlay = async () => {
     try {
-      // Ensure audio context is started
-      if (Tone.context.state === 'suspended') {
-        await Tone.start()
-      }
+      await resumeSharedAudioContext()
       
       if (playing) {
         pause()
@@ -143,7 +143,7 @@ export default function TransportControls() {
       <div className="bg-slate-800 px-3 py-2 rounded">
         <span className="text-xs text-slate-400 mr-2">BPM:</span>
         <span className="text-slate-300 font-mono">
-          {Math.round(Tone.Transport.bpm.value)}
+          {Math.round(bpm)}
         </span>
       </div>
 

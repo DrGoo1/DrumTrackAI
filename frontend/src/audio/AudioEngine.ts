@@ -1,6 +1,8 @@
 // AudioEngine: Web Audio wrapper for playback and scheduling
 // Minimal scaffold: create AudioContext, basic load/play helpers. Scheduler will be added separately.
 
+import { getSharedAudioContext } from "./sharedAudioContext";
+
 export class AudioEngine {
   private context: AudioContext | null = null;
   private trackBuffer: AudioBuffer | null = null;
@@ -12,7 +14,7 @@ export class AudioEngine {
 
   async init() {
     if (!this.context) {
-      this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.context = getSharedAudioContext({ latencyHint: "interactive" });
       this.clickGain = this.context.createGain();
       this.clickGain.gain.value = 0.2;
       this.clickGain.connect(this.context.destination);

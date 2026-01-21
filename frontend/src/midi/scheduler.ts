@@ -1,9 +1,8 @@
 // MIDI Scheduler using Tone.js for DrumTracKAI Open Source WebDAW
 // Handles sample-accurate MIDI playback synchronized with audio timeline
 
-import * as Tone from 'tone'
 import { MidiTrack, MidiNote, TempoPt } from './types'
-import { getBpmAtTime, ticksToSeconds } from './tempo'
+import { ticksToSeconds } from './tempo'
 
 export interface MidiInstrument {
   // Extended interface for MIDI-specific instruments
@@ -11,8 +10,20 @@ export interface MidiInstrument {
   dispose: () => void
 }
 
+type PartStubState = 'started' | 'stopped'
+
+type PartStub = {
+  state: PartStubState
+  loop: boolean
+  loopStart: number
+  loopEnd: number
+  start: (_?: number) => void
+  stop: () => void
+  dispose: () => void
+}
+
 export class MidiScheduler {
-  private parts: Record<string, Tone.Part> = {}
+  private parts: Record<string, PartStub> = {}
   private instruments: Record<string, MidiInstrument> = {}
   private ppq: number
   
@@ -49,30 +60,26 @@ export class MidiScheduler {
         })
       })
     })
-    
-    // Create Tone.Part for scheduling
-    const part = new Tone.Part((time, event: any) => {
-      const { note, trackId, disableGrooveShaping } = event
-      const duration = ticksToSeconds(
-        this.getTempoMap(), 
-        note.t1 - note.t0, 
-        this.ppq
-      )
-      
-      // Skip if track is muted
-      if (track.muted) return
-      
-      // Skip if another track is soloed and this isn't it
-      const soloTracks = Object.values(this.parts).some(p => 
-        this.getTrackById(trackId)?.solo
-      )
-      if (soloTracks && !track.solo) return
-      
-      // Trigger note on instrument
-      this.triggerNote(instrument, note, duration, time, Boolean(disableGrooveShaping))
-      
-    }, events).start(0)
-    
+
+    // Scheduling is disabled (Tone.js Part removed). Keep a stub so the rest of
+    // the app can query state without introducing a second transport clock.
+    const part: PartStub = {
+      state: 'stopped',
+      loop: false,
+      loopStart: 0,
+      loopEnd: 0,
+      start: () => {
+        part.state = 'started'
+      },
+      stop: () => {
+        part.state = 'stopped'
+      },
+      dispose: () => {
+        part.state = 'stopped'
+      },
+    }
+    void events
+
     this.parts[track.id] = part
   }
   
@@ -114,16 +121,13 @@ export class MidiScheduler {
     disableGrooveShaping: boolean
   ) {
     try {
-      // Convert MIDI note number to frequency
-      const frequency = Tone.Frequency(note.pitch, 'midi')
-      
       // Convert velocity (0-127) to gain (0-1)
       const baseVelocity = Math.max(1, Math.min(127, note.vel)) / 127
 
       if (disableGrooveShaping) {
         const velocity = Math.max(0, Math.min(1, baseVelocity))
         instrument.triggerAttackRelease(
-          frequency,
+          note.pitch,
           Math.max(duration, 0.01),
           time,
           velocity,
@@ -139,10 +143,7 @@ export class MidiScheduler {
       // - snare: slightly laid-back
       // - kick: slightly ahead
       const role = this.drumRoleForPitch(note.pitch)
-
-      const tempoMap = this.getTempoMap()
-      const noteSec = ticksToSeconds(tempoMap, note.t0, this.ppq)
-      const bpm = getBpmAtTime(tempoMap, noteSec)
+      void role
 
       // Position helpers (assume 4/4-ish grid for feel shaping; still works generically)
       const ticksInQuarter = this.ppq
@@ -156,9 +157,7 @@ export class MidiScheduler {
 
       // Intentional microtiming offsets
       let timingOffsetMs = 0
-      if ((role === 'hihat' || role === 'cymbal') && isEighthOffbeat) timingOffsetMs += swingMs
-      if (role === 'snare') timingOffsetMs += 6
-      if (role === 'kick') timingOffsetMs -= 3
+      if (isEighthOffbeat) timingOffsetMs += swingMs
 
       const when = time + timingOffsetMs / 1000
 
@@ -166,29 +165,19 @@ export class MidiScheduler {
       let velocityMul = 1
 
       // Hi-hat accent pattern: stronger on downbeats / weaker on off subdivisions
-      if (role === 'hihat') {
-        const sixteenthIndex = Math.floor((((note.t0 % (ticksInQuarter * 4)) + (ticksInQuarter * 4)) % (ticksInQuarter * 4)) / ticksInSixteenth)
-        const inBeatSixteenth = Math.floor(posInBeat / ticksInSixteenth)
-        // Common feel: 1 e + a (accent 1 and 3, lighter e/a)
-        if (inBeatSixteenth === 0) velocityMul *= 1.06
-        else if (inBeatSixteenth === 2) velocityMul *= 0.96
-        else velocityMul *= 0.92
-        // Slightly stronger on beat 1/3 within bar
-        if (sixteenthIndex === 0 || sixteenthIndex === 8) velocityMul *= 1.03
-      }
-
-      // Backbeat emphasis (helps groove without randomness)
-      if (role === 'snare') {
-        const beatInBar = Math.floor((((note.t0 % (ticksInQuarter * 4)) + (ticksInQuarter * 4)) % (ticksInQuarter * 4)) / ticksInQuarter)
-        if (beatInBar === 1 || beatInBar === 3) velocityMul *= 1.05
-      }
+      const sixteenthIndex = Math.floor((((note.t0 % (ticksInQuarter * 4)) + (ticksInQuarter * 4)) % (ticksInQuarter * 4)) / ticksInSixteenth)
+      const inBeatSixteenth = Math.floor(posInBeat / ticksInSixteenth)
+      if (inBeatSixteenth === 0) velocityMul *= 1.06
+      else if (inBeatSixteenth === 2) velocityMul *= 0.96
+      else velocityMul *= 0.92
+      if (sixteenthIndex === 0 || sixteenthIndex === 8) velocityMul *= 1.03
 
       // Convert resulting velocity, clamp
       const velocity = Math.max(0, Math.min(1, baseVelocity * velocityMul))
       
       // Trigger note with proper timing
       instrument.triggerAttackRelease(
-        frequency, 
+        note.pitch,
         Math.max(duration, 0.01), // Minimum duration
         when, 
         velocity

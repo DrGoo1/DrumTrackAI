@@ -1,93 +1,132 @@
 // Default MIDI Players using Tone.js for DrumTracKAI Open Source WebDAW
 // Provides basic instruments for drums, bass, and melodic tracks
 
-import * as Tone from 'tone'
 import { MidiTrackKind } from './types'
-import { wireToneInstrument } from '../audio/graph'
+import { getSharedAudioContext, resumeSharedAudioContext } from '../audio/sharedAudioContext'
 
-// Drum sample mappings - fixed to use actual sample files
-const DRUM_SAMPLES = {
-  'C1': 'kick.wav',
-  'C#1': 'kick.wav', 
-  'D1': 'snare.wav',
-  'D#1': 'snare.wav',
-  'E1': 'snare.wav',
-  'F1': 'kick.wav',
-  'F#1': 'hihat.wav',
-  'G1': 'hihat.wav',
-  'G#1': 'hihat.wav',
-  'A1': 'crash.wav',
-  'A#1': 'crash.wav',
-  'B1': 'crash.wav'
+type WebAudioInstrument = {
+  triggerAttackRelease: (note: any, duration: number, time: number, velocity: number) => void
+  dispose: () => void
 }
 
-export interface DrumKit {
-  kick: Tone.Player
-  snare: Tone.Player
-  hihat: Tone.Player
-  openhat: Tone.Player
-  crash: Tone.Player
-  ride: Tone.Player
-  tom1: Tone.Player
-  tom2: Tone.Player
-  tom3: Tone.Player
+function midiToNoteName(midi: number): string {
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  const n = Math.max(0, Math.min(127, Math.round(midi)))
+  const name = names[n % 12]
+  const oct = Math.floor(n / 12) - 1
+  return `${name}${oct}`
+}
+
+function resolveNoteToSampleKey(note: any): string {
+  // Accept MIDI number, note name string, or anything else.
+  if (typeof note === 'number' && Number.isFinite(note)) return midiToNoteName(note)
+  if (typeof note === 'string' && note.length) return note
+  return 'C1'
+}
+
+function createSampleInstrument(trackId: string, sampleMap: Record<string, string>, baseUrl: string): WebAudioInstrument {
+  const ctx = getSharedAudioContext({ latencyHint: 'interactive' })
+  const buffers = new Map<string, AudioBuffer>()
+  const inflight = new Map<string, Promise<AudioBuffer>>()
+
+  const load = async (key: string): Promise<AudioBuffer> => {
+    const existing = buffers.get(key)
+    if (existing) return existing
+    const inProg = inflight.get(key)
+    if (inProg) return inProg
+
+    const url = `${baseUrl}${sampleMap[key] || sampleMap['C1'] || 'kick.wav'}`
+    const p = (async () => {
+      await resumeSharedAudioContext()
+      const res = await fetch(url)
+      const arr = await res.arrayBuffer()
+      const buf = await ctx.decodeAudioData(arr)
+      buffers.set(key, buf)
+      inflight.delete(key)
+      return buf
+    })()
+
+    inflight.set(key, p)
+    return p
+  }
+
+  return {
+    triggerAttackRelease: (note: any, duration: number, time: number, velocity: number) => {
+      const key = resolveNoteToSampleKey(note)
+      void (async () => {
+        const buf = await load(key)
+        const src = ctx.createBufferSource()
+        src.buffer = buf
+        const gain = ctx.createGain()
+        gain.gain.value = Math.max(0, Math.min(1, velocity))
+        src.connect(gain)
+        gain.connect(ctx.destination)
+
+        const when = Math.max(ctx.currentTime, time)
+        const dur = Math.max(0.01, Number.isFinite(duration) ? duration : 0.1)
+        try {
+          src.start(when)
+          src.stop(when + dur)
+        } catch {
+          // ignore
+        }
+      })()
+    },
+    dispose: () => {
+      void trackId
+      buffers.clear()
+      inflight.clear()
+    },
+  }
 }
 
 /**
  * Create a drum sampler with basic kit sounds
  * Uses our existing drum samples from public/samples/drums/
  */
-export function createDrumPlayer(trackId: string): Tone.Sampler {
-  const sampler = new Tone.Sampler({
-    urls: DRUM_SAMPLES,
-    baseUrl: '/samples/drums/',
-    onload: () => {
-      console.log('Drum kit loaded successfully')
-    }
-  }).toDestination()
-  
-  wireToneInstrument(trackId, sampler)
-  return sampler
+export function createDrumPlayer(trackId: string): any {
+  const DRUM_SAMPLES: Record<string, string> = {
+    C1: 'kick.wav',
+    'C#1': 'kick.wav',
+    D1: 'snare.wav',
+    'D#1': 'snare.wav',
+    E1: 'snare.wav',
+    F1: 'kick.wav',
+    'F#1': 'hihat.wav',
+    G1: 'hihat.wav',
+    'G#1': 'hihat.wav',
+    A1: 'crash.wav',
+    'A#1': 'crash.wav',
+    B1: 'crash.wav',
+  }
+
+  return createSampleInstrument(trackId, DRUM_SAMPLES, '/samples/drums/') as any
 }
 
 /**
  * Create a bass synthesizer
  */
-export function createBassPlayer(trackId: string): Tone.Synth {
-  const synth = new Tone.Synth({
-    oscillator: {
-      type: 'sawtooth'
+export function createBassPlayer(trackId: string): any {
+  // Legacy MIDI synth path removed; return a lightweight instrument that does nothing.
+  // The main app playback should route through the WebAudio drum engine.
+  return {
+    triggerAttackRelease: () => {},
+    dispose: () => {
+      void trackId
     },
-    envelope: {
-      attack: 0.01,
-      decay: 0.1,
-      sustain: 0.6,
-      release: 0.2
-    }
-  }).toDestination()
-  
-  wireToneInstrument(trackId, synth)
-  return synth
+  } as any
 }
 
 /**
  * Create a melodic polyphonic synthesizer
  */
-export function createMelodicPlayer(trackId: string): Tone.PolySynth {
-  const synth = new Tone.PolySynth(Tone.Synth, {
-    oscillator: {
-      type: 'triangle'
+export function createMelodicPlayer(trackId: string): any {
+  return {
+    triggerAttackRelease: () => {},
+    dispose: () => {
+      void trackId
     },
-    envelope: {
-      attack: 0.02,
-      decay: 0.1,
-      sustain: 0.8,
-      release: 0.5
-    }
-  }).toDestination()
-  
-  wireToneInstrument(trackId, synth)
-  return synth
+  } as any
 }
 
 /**
@@ -118,17 +157,8 @@ export function getDefaultPlayer(trackKind: MidiTrackKind, trackId: string): any
 export function createCustomPlayer(
   sampleMap: Record<string, string>,
   baseUrl = '/samples/'
-): Tone.Sampler {
-  return new Tone.Sampler({
-    urls: sampleMap,
-    baseUrl,
-    onload: () => {
-      console.log('Custom samples loaded successfully')
-    },
-    onerror: (error) => {
-      console.warn('Failed to load custom samples:', error)
-    }
-  }).toDestination()
+): any {
+  return createSampleInstrument('custom', sampleMap, baseUrl)
 }
 
 /**
@@ -152,58 +182,15 @@ export const GM_DRUM_MAP = {
 /**
  * Create effects chain for drum processing
  */
-export function createDrumEffects(): Tone.Channel {
-  const channel = new Tone.Channel({
-    volume: 0,
-    pan: 0
-  })
-  
-  // Add compression for punch
-  const compressor = new Tone.Compressor({
-    threshold: -12,
-    ratio: 4,
-    attack: 0.003,
-    release: 0.1
-  })
-  
-  // Add EQ for shaping
-  const eq = new Tone.EQ3({
-    low: 0,
-    mid: 0,
-    high: 0
-  })
-  
-  // Connect effects chain
-  channel.chain(compressor, eq, Tone.Destination)
-  
-  return channel
+export function createDrumEffects(): any {
+  // Effects chain removed from Tone-based path.
+  // Keep signature for compatibility.
+  return {} as any
 }
 
 /**
  * Create effects chain for bass processing
  */
-export function createBassEffects(): Tone.Channel {
-  const channel = new Tone.Channel({
-    volume: 0,
-    pan: 0
-  })
-  
-  // Add compression for consistency
-  const compressor = new Tone.Compressor({
-    threshold: -18,
-    ratio: 6,
-    attack: 0.01,
-    release: 0.1
-  })
-  
-  // Add saturation for warmth
-  const distortion = new Tone.Distortion({
-    distortion: 0.1,
-    oversample: '2x'
-  })
-  
-  // Connect effects chain
-  channel.chain(compressor, distortion, Tone.Destination)
-  
-  return channel
+export function createBassEffects(): any {
+  return {} as any
 }

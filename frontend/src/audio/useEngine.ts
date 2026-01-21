@@ -1,5 +1,7 @@
 import { useRef, useEffect } from 'react'
 
+import { getSharedAudioContext } from './sharedAudioContext'
+
 interface AudioEngine {
   setLaneGainDb?: (id: string, gainDb: number) => void;
   setLanePan?: (id: string, pan: number) => void;
@@ -16,7 +18,7 @@ class MockAudioEngine implements AudioEngine {
   private context: AudioContext
 
   constructor() {
-    this.context = new (window.AudioContext || (window as any).webkitAudioContext)()
+    this.context = getSharedAudioContext({ latencyHint: 'interactive' })
   }
 
   setLaneGainDb(id: string, gainDb: number) {

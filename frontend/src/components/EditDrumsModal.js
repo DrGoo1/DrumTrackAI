@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import * as Tone from 'tone';
 import { Play, Square, Volume2, Settings, X } from 'lucide-react';
+import { getSharedAudioContext, resumeSharedAudioContext } from '../audio/sharedAudioContext';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -132,32 +132,67 @@ const EditDrumsModal = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [drummers, setDrummers] = useState([]);
   
-  const samplerRef = useRef(null);
-  const playbackRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const buffersRef = useRef(null);
+  const activeSourcesRef = useRef([]);
 
-  // Initialize Tone.js sampler for audition
+  // Initialize WebAudio sample buffers for audition
   useEffect(() => {
-    if (!samplerRef.current) {
-      samplerRef.current = new Tone.Sampler({
-        urls: {
-          C1: 'kick.wav',
-          D1: 'snare.wav',
-          'F#1': 'hihat.wav',
-          A1: 'tom.wav',
-          'C#2': 'ride.wav',
-          'D#2': 'crash.wav'
-        },
-        baseUrl: '/samples/drums/', // Static path served by Nginx
-      }).toDestination();
-    }
-
     return () => {
-      if (playbackRef.current) {
-        Tone.Transport.cancel();
-        setIsPlaying(false);
-      }
+      activeSourcesRef.current.forEach((src) => {
+        try {
+          src.stop();
+        } catch {
+          // ignore
+        }
+      });
+      activeSourcesRef.current = [];
+      setIsPlaying(false);
     };
   }, []);
+
+  const ensurePreviewBuffers = async () => {
+    const ctx = audioCtxRef.current || getSharedAudioContext({ latencyHint: 'interactive' });
+    audioCtxRef.current = ctx;
+    await resumeSharedAudioContext();
+
+    if (buffersRef.current) return { ctx, buffers: buffersRef.current };
+
+    const baseUrl = '/samples/drums/';
+    const urls = {
+      kick: `${baseUrl}kick.wav`,
+      snare: `${baseUrl}snare.wav`,
+      hihat: `${baseUrl}hihat.wav`,
+      tom: `${baseUrl}tom.wav`,
+      ride: `${baseUrl}ride.wav`,
+      crash: `${baseUrl}crash.wav`,
+    };
+
+    const entries = await Promise.all(
+      Object.entries(urls).map(async ([k, url]) => {
+        const res = await fetch(url);
+        const arr = await res.arrayBuffer();
+        const buf = await ctx.decodeAudioData(arr);
+        return [k, buf];
+      })
+    );
+
+    const buffers = Object.fromEntries(entries);
+    buffersRef.current = buffers;
+    return { ctx, buffers };
+  };
+
+  const stopPreview = () => {
+    activeSourcesRef.current.forEach((src) => {
+      try {
+        src.stop();
+      } catch {
+        // ignore
+      }
+    });
+    activeSourcesRef.current = [];
+    setIsPlaying(false);
+  };
 
   // Load curated drummers
   useEffect(() => {
@@ -218,31 +253,24 @@ const EditDrumsModal = ({
   };
 
   const handlePreview = async () => {
-    if (!samplerRef.current || !suggestedNotes) return;
+    if (!suggestedNotes) return;
 
     if (isPlaying) {
-      // Stop playback
-      Tone.Transport.stop();
-      Tone.Transport.cancel();
-      setIsPlaying(false);
+      stopPreview();
       return;
     }
 
-    // Start Tone.js if not already started
-    if (Tone.context.state !== 'running') {
-      await Tone.start();
-    }
+    const { ctx, buffers } = await ensurePreviewBuffers();
 
     setIsPlaying(true);
 
-    // Map drum types to MIDI notes
     const drumMap = {
-      kick: 'C1',
-      snare: 'D1',
-      hihat: 'F#1',
-      tom: 'A1',
-      ride: 'C#2',
-      crash: 'D#2'
+      kick: 'kick',
+      snare: 'snare',
+      hihat: 'hihat',
+      tom: 'tom',
+      ride: 'ride',
+      crash: 'crash'
     };
 
     // Schedule all notes
@@ -262,22 +290,32 @@ const EditDrumsModal = ({
     // Sort by time
     allEvents.sort((a, b) => a.time - b.time);
 
-    // Schedule events
-    allEvents.forEach(event => {
-      Tone.Transport.schedule((time) => {
-        samplerRef.current.triggerAttackRelease(event.note, '8n', time, event.velocity);
-      }, event.time);
+    const startAt = ctx.currentTime + 0.05;
+    let finalTime = startAt;
+    allEvents.forEach((event) => {
+      const buf = buffers[event.note];
+      if (!buf) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.value = Math.max(0, Math.min(1, event.velocity || 0.8));
+      src.connect(gain);
+      gain.connect(ctx.destination);
+
+      const when = startAt + Math.max(0, event.time);
+      finalTime = Math.max(finalTime, when + 0.25);
+      activeSourcesRef.current.push(src);
+      try {
+        src.start(when);
+      } catch {
+        // ignore
+      }
     });
 
-    // Auto-stop after pattern duration (estimate 4 bars at 120 BPM = 8 seconds)
-    const duration = Math.max(8, Math.max(...allEvents.map(e => e.time)) + 1);
-    Tone.Transport.schedule(() => {
-      setIsPlaying(false);
-      Tone.Transport.stop();
-      Tone.Transport.cancel();
-    }, duration);
-
-    Tone.Transport.start();
+    const stopInMs = Math.max(0, (finalTime - ctx.currentTime) * 1000);
+    window.setTimeout(() => {
+      stopPreview();
+    }, stopInMs + 50);
   };
 
   const handleApply = async () => {

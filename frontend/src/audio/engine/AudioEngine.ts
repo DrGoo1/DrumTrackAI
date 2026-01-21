@@ -1,6 +1,8 @@
 import { useEngineStore } from "../../state/useEngineStore";
 import { features } from "../../config/features";
 
+import { getSharedAudioContext } from "../sharedAudioContext";
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
@@ -14,7 +16,7 @@ export class AudioEngine {
 
   async init() {
     if (this.ctx) return;
-    this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    this.ctx = getSharedAudioContext({ latencyHint: "interactive" });
     // Load worklet
     await this.ctx.audioWorklet.addModule("/worklet/engine-processor.js");
     this.node = new AudioWorkletNode(this.ctx, "engine-processor", { numberOfOutputs: 1, outputChannelCount: [2] });

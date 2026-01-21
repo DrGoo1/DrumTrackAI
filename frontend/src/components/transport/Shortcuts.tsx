@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useDawStore } from '../../state/dawStore'
-import * as Tone from 'tone'
+import { Engine } from '../../audio/engine'
 
 export default function Shortcuts() {
   const { playing, play, pause, toggleLoop } = useDawStore()
@@ -15,7 +15,11 @@ export default function Shortcuts() {
         toggleLoop() 
       }
       if (e.key === '0') { 
-        Tone.Transport.seconds = 0; 
+        try {
+          void Engine.seek(0)
+        } catch {
+          // ignore
+        }
         useDawStore.getState().setCursor(0) 
       }
     }

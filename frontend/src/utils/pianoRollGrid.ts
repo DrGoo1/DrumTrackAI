@@ -35,6 +35,16 @@ export interface GridLine {
   strength: number;  // 0.0-1.0 for visual weight
 }
 
+function getTicksPerBeat(ppq: number, timeSignature: [number, number]): number {
+  const den = timeSignature[1] || 4;
+  return ppq * (4 / den);
+}
+
+function getTicksPerBar(ppq: number, timeSignature: [number, number]): number {
+  const num = timeSignature[0] || 4;
+  return getTicksPerBeat(ppq, timeSignature) * num;
+}
+
 // ============================================================================
 // Grid Calculation
 // ============================================================================
@@ -96,8 +106,7 @@ export function getTicksPerSubdivision(
     throw new Error('Invalid arguments to getTicksPerSubdivision');
   }
   
-  const beatsPerBar = timeSignature[0];
-  const barTicks = beatsPerBar * ppq;
+  const barTicks = getTicksPerBar(ppq, timeSignature);
   const subdivisions = getSubdivisionsPerBar(resolution);
   return Math.round(barTicks / subdivisions);
 }
@@ -136,10 +145,9 @@ export function calculateGridLines(
   const lines: GridLine[] = [];
   const { ppq, pixelsPerBeat } = config;
   
-  // Ticks per bar (assuming 4/4 time)
-  const ticksPerBar = ppq * timeSignature[0];
-  const ticksPerBeat = ppq;
-  const ticksPerSub = getTicksPerSubdivision(config.resolution, ppq);
+  const ticksPerBar = getTicksPerBar(ppq, timeSignature);
+  const ticksPerBeat = getTicksPerBeat(ppq, timeSignature);
+  const ticksPerSub = getTicksPerSubdivision(ppq, timeSignature, config.resolution);
   
   // Start from bar boundary before viewport
   const startBar = Math.floor(viewportStartTick / ticksPerBar);
@@ -148,7 +156,7 @@ export function calculateGridLines(
   let currentTick = startTick;
   
   while (currentTick <= viewportEndTick) {
-    const x = tickToPixel(currentTick, viewportStartTick, pixelsPerBeat, ppq);
+    const x = tickToPixel(currentTick, viewportStartTick, pixelsPerBeat, ppq, timeSignature);
     
     // Determine line type and strength
     let type: GridLine['type'];
@@ -188,10 +196,12 @@ export function tickToPixel(
   tick: number,
   viewportStartTick: number,
   pixelsPerBeat: number,
-  ppq: number
+  ppq: number,
+  timeSignature: [number, number] = [4, 4]
 ): number {
   const relativeTick = tick - viewportStartTick;
-  const beats = relativeTick / ppq;
+  const ticksPerBeat = getTicksPerBeat(ppq, timeSignature);
+  const beats = relativeTick / ticksPerBeat;
   return beats * pixelsPerBeat;
 }
 
@@ -202,10 +212,12 @@ export function pixelToTick(
   x: number,
   viewportStartTick: number,
   pixelsPerBeat: number,
-  ppq: number
+  ppq: number,
+  timeSignature: [number, number] = [4, 4]
 ): number {
   const beats = x / pixelsPerBeat;
-  const relativeTick = beats * ppq;
+  const ticksPerBeat = getTicksPerBeat(ppq, timeSignature);
+  const relativeTick = beats * ticksPerBeat;
   return viewportStartTick + relativeTick;
 }
 
@@ -229,8 +241,8 @@ export function tickToBarBeat(
   ppq: number,
   timeSignature: [number, number] = [4, 4]
 ): { bar: number; beat: number; tick: number } {
-  const ticksPerBar = ppq * timeSignature[0];
-  const ticksPerBeat = ppq;
+  const ticksPerBar = getTicksPerBar(ppq, timeSignature);
+  const ticksPerBeat = getTicksPerBeat(ppq, timeSignature);
   
   const bar = Math.floor(tick / ticksPerBar);
   const tickInBar = tick % ticksPerBar;
@@ -250,8 +262,8 @@ export function barBeatToTick(
   ppq: number,
   timeSignature: [number, number] = [4, 4]
 ): number {
-  const ticksPerBar = ppq * timeSignature[0];
-  const ticksPerBeat = ppq;
+  const ticksPerBar = getTicksPerBar(ppq, timeSignature);
+  const ticksPerBeat = getTicksPerBeat(ppq, timeSignature);
   
   return bar * ticksPerBar + beat * ticksPerBeat + tickInBeat;
 }
@@ -278,13 +290,15 @@ export function getVisibleTickRange(
   viewportWidth: number,
   viewportStartTick: number,
   pixelsPerBeat: number,
-  ppq: number
+  ppq: number,
+  timeSignature: [number, number] = [4, 4]
 ): [number, number] {
   const endTick = pixelToTick(
     viewportWidth,
     viewportStartTick,
     pixelsPerBeat,
-    ppq
+    ppq,
+    timeSignature
   );
   
   return [viewportStartTick, Math.ceil(endTick)];
@@ -298,17 +312,18 @@ export function zoomToFit(
   endTick: number,
   viewportWidth: number,
   ppq: number,
+  timeSignature: [number, number] = [4, 4],
   padding: number = 0.1  // 10% padding on each side
 ): { pixelsPerBeat: number; viewportStartTick: number } {
   const tickRange = endTick - startTick;
-  const beats = tickRange / ppq;
+  const beats = tickRange / getTicksPerBeat(ppq, timeSignature);
   
   // Apply padding
   const paddingBeats = beats * padding;
   const totalBeats = beats + (2 * paddingBeats);
   
   const pixelsPerBeat = viewportWidth / totalBeats;
-  const viewportStartTick = startTick - (paddingBeats * ppq);
+  const viewportStartTick = startTick - (paddingBeats * getTicksPerBeat(ppq, timeSignature));
   
   return { pixelsPerBeat, viewportStartTick: Math.max(0, viewportStartTick) };
 }

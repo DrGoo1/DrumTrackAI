@@ -5,6 +5,7 @@ from typing import Optional
 from pathlib import Path
 
 import urllib.request
+import urllib.parse
 
 # DISABLED: numpy causes heap corruption (exit code 3221226356) on Windows
 # import numpy as np
@@ -443,11 +444,13 @@ GROOVE_MANIFEST_BANG_PATH = BASE_DIR / "Drum_Education" / "extracted" / "BangThe
 GROOVE_MANIFEST_EGMD_PATH = BASE_DIR / "Drum_Education" / "extracted" / "EGMD_manifest.jsonl"
 GROOVE_MANIFEST_RUDIMENTS_PATH = BASE_DIR / "Drum_Education" / "extracted" / "RUDIMENTS_manifest.jsonl"
 GROOVE_MANIFEST_DRUM_PATTERNS_PATH = BASE_DIR / "Drum_Education" / "extracted" / "DRUM_PATTERNS_manifest.jsonl"
+GROOVE_MANIFEST_DTK_STANDARD_PATH = BASE_DIR / "Drum_Education" / "extracted" / "DTK_STANDARD_manifest.jsonl"
 _GROOVE_CATALOG = GrooveCatalog(
     [
         GROOVE_MANIFEST_BANG_PATH,
         GROOVE_MANIFEST_EGMD_PATH,
         GROOVE_MANIFEST_RUDIMENTS_PATH,
+        GROOVE_MANIFEST_DTK_STANDARD_PATH,
         GROOVE_MANIFEST_DRUM_PATTERNS_PATH,
     ]
 )
@@ -638,6 +641,19 @@ async def api_list_egmd_style_groups(request: web.Request):
     except Exception:
         limit = 200
     items = list_egmd_style_groups(limit=limit)
+    return web.json_response({"items": items})
+
+
+async def api_list_groove_style_groups(request: web.Request):
+    sources_raw = str(request.query.get("sources") or "").strip()
+    limit_raw = request.query.get("limit")
+    try:
+        limit = int(limit_raw) if limit_raw is not None and str(limit_raw).strip() != "" else 200
+    except Exception:
+        limit = 200
+
+    sources = [s.strip() for s in sources_raw.split(",") if s.strip()] if sources_raw else []
+    items = _GROOVE_CATALOG.list_style_groups(sources=sources, limit=limit)
     return web.json_response({"items": items})
 
 
@@ -1578,6 +1594,12 @@ async def audio_file(request: web.Request):
     )
     return response
 
+async def download_url(request: web.Request):
+    key = request.query.get("key")
+    if not key:
+        return web.json_response({"error": "key required"}, status=400)
+    return web.json_response({"url": f"/files/audio?key={urllib.parse.quote(str(key))}"})
+
 # Legacy API endpoints for compatibility
 async def api_status(request: web.Request):
     # Simple status endpoint
@@ -2466,6 +2488,133 @@ async def api_grooves_audio(request: web.Request):
     )
 
 
+def _resolve_groove_midi_path(card: "GrooveCard") -> Optional[Path]:
+    try:
+        midi_path = getattr(card, "midi_path", None)
+        if not midi_path:
+            return None
+        raw = str(midi_path).strip()
+        if not raw:
+            return None
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (BASE_DIR / p).resolve()
+        if not p.exists() or not p.is_file():
+            return None
+        return p
+    except Exception:
+        return None
+
+
+async def api_grooves_audition(request: web.Request):
+    groove_id = str(request.match_info.get("groove_id") or "").strip()
+    if not groove_id:
+        return web.json_response({"ok": False, "error": "groove_id required"}, status=400)
+
+    card = _GROOVE_CATALOG.get_by_id(groove_id)
+    if not card:
+        return web.json_response({"ok": False, "error": "not found"}, status=404)
+
+    mp = _resolve_groove_midi_path(card)
+    if not mp:
+        return web.json_response({"ok": False, "error": "midi not available"}, status=404)
+
+    try:
+        import mido
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"mido_import_failed: {e}"}, status=500)
+
+    try:
+        from dcsmpiano.dcsm_drumtrack_schema import midi_pitch_to_instrument_id
+    except Exception:
+        midi_pitch_to_instrument_id = None
+
+    def _canon(inst: str) -> str:
+        s = str(inst or "").strip().lower()
+        if not s:
+            return ""
+        aliases = {
+            "snare": "snare_center",
+            "kick": "kick",
+            "hat": "hihat_closed",
+            "hihat": "hihat_closed",
+            "ride": "ride_bow",
+            "crash": "crash_1",
+            "tom": "tom_mid",
+        }
+        return aliases.get(s, s)
+
+    try:
+        mid = mido.MidiFile(str(mp))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"midi_read_failed: {e}"}, status=500)
+
+    events = []
+    max_sec = 0.0
+    for track in mid.tracks:
+        tempo_us = 500000
+        t = 0.0
+        for msg in track:
+            t += mido.tick2second(int(getattr(msg, "time", 0) or 0), mid.ticks_per_beat, tempo_us)
+            if msg.type == "set_tempo":
+                try:
+                    tempo_us = int(msg.tempo)
+                except Exception:
+                    tempo_us = tempo_us
+                continue
+            if msg.type != "note_on" or not getattr(msg, "velocity", 0):
+                continue
+            if getattr(msg, "channel", None) != 9:
+                continue
+
+            inst = ""
+            try:
+                if midi_pitch_to_instrument_id is not None:
+                    inst = _canon(midi_pitch_to_instrument_id(int(msg.note)))
+            except Exception:
+                inst = ""
+            if not inst:
+                continue
+
+            events.append({"tSec": float(t), "instrumentId": inst, "velocity": int(msg.velocity)})
+            if t > max_sec:
+                max_sec = t
+
+    if not events:
+        return web.json_response({"ok": True, "items": [], "durationSec": 0.0})
+
+    # Cap audition length for UI responsiveness.
+    cap = 12.0
+    events = [e for e in events if float(e.get("tSec") or 0.0) <= cap]
+
+    # Ensure deterministic and "regular" playback:
+    # - sort by time
+    # - dedupe near-simultaneous duplicates of the same instrument (common when MIDI has multiple tracks)
+    #   keeping the highest-velocity hit.
+    events.sort(key=lambda e: (float(e.get("tSec") or 0.0), str(e.get("instrumentId") or "")))
+    deduped = []
+    last_by_inst = {}
+    eps = 0.008  # 8ms window
+    for e in events:
+        inst = str(e.get("instrumentId") or "").strip().lower()
+        if not inst:
+            continue
+        tsec = float(e.get("tSec") or 0.0)
+        vel = int(e.get("velocity") or 0)
+        prev_i = last_by_inst.get(inst)
+        if prev_i is not None:
+            prev = deduped[prev_i]
+            pt = float(prev.get("tSec") or 0.0)
+            if abs(tsec - pt) <= eps:
+                if vel > int(prev.get("velocity") or 0):
+                    prev["velocity"] = vel
+                continue
+        last_by_inst[inst] = len(deduped)
+        deduped.append(e)
+
+    return web.json_response({"ok": True, "items": deduped, "durationSec": float(min(max_sec, cap))})
+
+
 async def api_groove_analyze(request: web.Request):
     """Return groove metrics + coaching suggestions.
 
@@ -2619,6 +2768,7 @@ def make_app() -> web.Application:
         # keep both paths for compatibility with your frontend(s)
         web.post("/api/upload", upload),
         web.post("/files/upload", upload),
+        web.get("/files/download-url", download_url),
         web.get("/waveform", waveform),  # Add direct /waveform route
         web.get("/files/waveform", waveform),
         web.get("/files/audio", audio_file),
@@ -2670,9 +2820,11 @@ def make_app() -> web.Application:
         web.post("/api/render-plugin-midi", api_render_plugin_midi),
         web.get("/api/egmd/phrases", api_list_egmd_phrases),
         web.get("/api/egmd/style-groups", api_list_egmd_style_groups),
+        web.get("/api/grooves/style-groups", api_list_groove_style_groups),
 
         web.get("/api/grooves/search", api_grooves_search),
         web.get("/api/grooves/{groove_id}", api_grooves_get),
+        web.get("/api/grooves/{groove_id}/audition", api_grooves_audition),
         web.get("/api/grooves/{groove_id}/audio", api_grooves_audio),
         web.post("/api/groove/analyze", api_groove_analyze),
         web.get("/api/groove/goals", api_groove_goals),
@@ -3788,39 +3940,39 @@ async def handle_generate_drums(request):
         # a forced EGMD phrase id so the backend deterministically uses that groove.
         # This is the smallest reliable bridge without reworking the entire planner.
         try:
-            if selected_groove_id and not (data.get("egmdPhraseId") or data.get("egmd_phrase_id")):
+            if selected_groove_id:
                 card = _GROOVE_CATALOG.get_by_id(str(selected_groove_id))
-                if card and str(getattr(card, "source", "")).strip().lower() == "egmd" and getattr(card, "phrase_id", None) is not None:
-                    data["egmdPhraseId"] = int(card.phrase_id)
+                card_source = str(getattr(card, "source", "") or "").strip().lower() if card else ""
+
+                # EGMD: if a phrase_id exists, pin it; also pin the midi_path for exact mode.
+                if card and card_source == "egmd" and getattr(card, "phrase_id", None) is not None:
+                    if not (data.get("egmdPhraseId") or data.get("egmd_phrase_id")):
+                        data["egmdPhraseId"] = int(card.phrase_id)
                     try:
                         midi_path = getattr(card, "midi_path", None)
                         if midi_path and not (data.get("egmdMidiPath") or data.get("egmd_midi_path")):
                             data["egmdMidiPath"] = str(midi_path)
                     except Exception:
                         pass
-                    # Encourage exact EGMD playback when explicitly selecting a groove.
                     data.setdefault("grooveSource", "egmd_phrases")
                     data.setdefault("grooveMode", "exact")
+
+                # DTK Standard: pin midi_path into egmdMidiPath so the existing exact-midi pipeline can use it.
+                if card and card_source == "dtk_standard":
                     try:
-                        LOG.info(
-                            "EGMD groove bridge: selectedGrooveId=%s -> phrase_id=%s midi_path=%s grooveSource=%s grooveMode=%s",
-                            str(selected_groove_id),
-                            getattr(card, "phrase_id", None),
-                            getattr(card, "midi_path", None),
-                            data.get("grooveSource"),
-                            data.get("grooveMode"),
-                        )
+                        midi_path = getattr(card, "midi_path", None)
+                        if midi_path and not (data.get("egmdMidiPath") or data.get("egmd_midi_path")):
+                            data["egmdMidiPath"] = str(midi_path)
                     except Exception:
                         pass
-                else:
+                    # DTK patterns must generate without any LLM/humanization dependency.
+                    # Force exact pinned-midi mode (do not use setdefault; UI may send 'enhanced').
+                    data["grooveMode"] = "exact"
+                    data["grooveSource"] = "egmd_phrases"
+
+                if not card:
                     try:
-                        LOG.warning(
-                            "Groove bridge skipped: selectedGrooveId=%s card_found=%s card_source=%s phrase_id=%s",
-                            str(selected_groove_id),
-                            bool(card),
-                            str(getattr(card, "source", None) if card else None),
-                            getattr(card, "phrase_id", None) if card else None,
-                        )
+                        LOG.warning("Groove bridge skipped: selectedGrooveId=%s card_found=false", str(selected_groove_id))
                     except Exception:
                         pass
         except Exception:

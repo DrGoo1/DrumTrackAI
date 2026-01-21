@@ -28,7 +28,6 @@
     "react-scripts": "^5.0.1",
     "recharts": "^2.8.0",
     "socket.io-client": "^4.7.0",
-    "tone": "^15.1.22",
     "waveform-playlist": "^4.3.3",
     "webmidi": "^3.1.12",
     "zustand": "^5.0.7"
@@ -40,8 +39,8 @@
     "@testing-library/user-event": "^14.5.2",
     "@types/jest": "^29.5.12",
     "@types/lodash": "^4.14.202",
-    "@types/react": "^19.1.9",
-    "@types/react-dom": "^19.1.7",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
     "autoprefixer": "^10.4.16",
@@ -50,7 +49,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.3.0",
-    "typescript": "^5.4.5"
+    "typescript": "4.9.5"
   },
   "browserslist": {
     "production": [

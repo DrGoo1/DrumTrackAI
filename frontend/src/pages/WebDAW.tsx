@@ -5,9 +5,11 @@ import { TempoMap } from '../time/TempoMap';
 import { WaveformView } from '../components/WaveformView';
 import { SectionEditor, Section } from '../components/SectionEditor';
 import { analyzeTempo, fetchWaveform, uploadFile, alignSections, analyzeTempoSections, generateMidiSections, ping, getApiBases } from '../api/api';
+import { TruthProbe, isTruthProbeEnabled } from '../audio/truthProbe';
 
 export const WebDAW: React.FC = () => {
   const engineRef = useRef(new AudioEngine());
+  const truthProbeRef = useRef<TruthProbe | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [peaks, setPeaks] = useState<number[] | undefined>(undefined);
   const [peaksL, setPeaksL] = useState<number[] | undefined>(undefined);
@@ -35,6 +37,16 @@ export const WebDAW: React.FC = () => {
   const tempoMap = useMemo(() => new TempoMap(), []);
 
   useEffect(() => {
+    truthProbeRef.current = new TruthProbe({
+      getBpm: () => bpm || 120,
+      getTimeSignature: () => [4, 4],
+      scheduleClick: (ctxTime, freq, dur) => {
+        engineRef.current.scheduleClick(ctxTime, freq, dur)
+      },
+    })
+  }, [bpm]);
+
+  useEffect(() => {
     let raf = 0;
     const tick = () => {
       setCurrentTime(engineRef.current.getCurrentTimeSeconds());
@@ -50,8 +62,23 @@ export const WebDAW: React.FC = () => {
   useEffect(() => {
     schedulerRef.current = new Scheduler(
       () => engineRef.current.getCurrentTimeSeconds(),
-      () => { /* schedule window hook; integrate drum notes later */ }
+      (start, end) => {
+        const ctx = engineRef.current.getContext()
+        const tp = truthProbeRef.current
+        if (!ctx || !tp) return
+        tp.setEnabled(isTruthProbeEnabled())
+        if (!isTruthProbeEnabled()) return
+
+        const playbackNow = engineRef.current.getCurrentTimeSeconds()
+        tp.scheduleWindow({
+          ctxNow: ctx.currentTime,
+          playbackNowSec: playbackNow,
+          windowStartSec: start,
+          windowEndSec: end,
+        })
+      }
     );
+    schedulerRef.current.start();
     return () => schedulerRef.current?.stop();
   }, []);
 

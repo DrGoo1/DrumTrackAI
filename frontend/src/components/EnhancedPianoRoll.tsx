@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { WebDAWProject, PatternGrid, KIT_PIECES, GRID_RESOLUTIONS } from '../types/api';
-import * as Tone from 'tone';
+import { getSharedAudioContext, resumeSharedAudioContext } from '../audio/sharedAudioContext';
 
 interface EnhancedPianoRollProps {
   project: WebDAWProject;
@@ -36,49 +36,15 @@ const DEFAULT_VELOCITIES: Record<string, number> = {
 
 // Audio engine for auditioning
 class DrumAudioEngine {
-  private synths: Record<string, any> = {};
   private initialized = false;
+  private ctx: AudioContext | null = null;
 
   async init() {
     if (this.initialized) return;
     
     try {
-      await Tone.start();
-      
-      // Create synths for each kit piece
-      this.synths.kick = new Tone.MembraneSynth({
-        pitchDecay: 0.05,
-        octaves: 10,
-        oscillator: { type: 'sine' },
-        envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 }
-      }).toDestination();
-      
-      this.synths.snare = new Tone.NoiseSynth({
-        noise: { type: 'white' },
-        envelope: { attack: 0.005, decay: 0.1, sustain: 0.0 }
-      }).toDestination();
-      
-      this.synths.hh_closed = new Tone.MetalSynth({
-        envelope: { attack: 0.001, decay: 0.1, release: 0.01 },
-        harmonicity: 5.1,
-        modulationIndex: 32,
-        resonance: 4000
-      }).toDestination();
-      
-      this.synths.hh_open = new Tone.MetalSynth({
-        envelope: { attack: 0.001, decay: 0.5, release: 0.1 },
-        harmonicity: 5.1,
-        modulationIndex: 32,
-        resonance: 4000
-      }).toDestination();
-      
-      // Copy for other pieces
-      this.synths.ride = this.synths.hh_open;
-      this.synths.tom_hi = this.synths.kick;
-      this.synths.tom_mid = this.synths.kick;
-      this.synths.tom_low = this.synths.kick;
-      this.synths.crash = this.synths.hh_open;
-      
+      this.ctx = getSharedAudioContext({ latencyHint: 'interactive' });
+      await resumeSharedAudioContext();
       this.initialized = true;
     } catch (error) {
       console.warn('Audio engine init failed:', error);
@@ -87,19 +53,43 @@ class DrumAudioEngine {
 
   audition(kitPiece: string, velocity: number = 80) {
     if (!this.initialized) return;
-    
-    const synth = this.synths[kitPiece];
-    if (!synth) return;
-    
-    const volume = Tone.gainToDb(velocity / 127);
-    
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const v = Math.max(0, Math.min(1, velocity / 127));
+
     try {
       if (kitPiece === 'kick' || kitPiece.includes('tom')) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
         const freq = kitPiece === 'kick' ? 60 : kitPiece === 'tom_hi' ? 200 : kitPiece === 'tom_mid' ? 120 : 80;
-        synth.triggerAttackRelease(freq, '8n', undefined, volume);
-      } else {
-        synth.triggerAttackRelease('8n', undefined, volume);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(v, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+        return;
       }
+
+      // Simple noise burst for snare/hats/cymbals
+      const dur = kitPiece === 'hh_open' || kitPiece === 'ride' || kitPiece === 'crash' ? 0.18 : 0.08;
+      const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(v, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(now);
+      src.stop(now + dur);
     } catch (error) {
       console.warn('Audition failed:', error);
     }

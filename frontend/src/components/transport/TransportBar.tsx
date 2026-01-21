@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react'
-import * as Tone from 'tone'
 import { useDawStore } from '../../state/dawStore'
 import { useEngine } from '../../audio/useEngine'
+import { Engine } from '../../audio/engine'
 import { Tooltip } from '../Tooltip'
 
 function fmtBBT(sec: number, bpm: number, ts: [number, number]) {
@@ -20,38 +20,27 @@ export default function TransportBar() {
   const bpm = project?.bpm || 120
   const ts = project?.timeSig || [4, 4]
 
-  // Apply play/pause/loop to Tone
-  useEffect(() => { 
-    if (playing) { 
-      Tone.start(); 
-      Tone.Transport.start('+0.01') 
-    } else { 
-      Tone.Transport.pause() 
-    } 
-  }, [playing])
-  
-  useEffect(() => { 
-    if (loopEnabled) { 
-      Tone.Transport.setLoopPoints(loopStartSec, loopEndSec); 
-      Tone.Transport.loop = true 
-    } else { 
-      Tone.Transport.loop = false 
-    } 
-  }, [loopEnabled, loopStartSec, loopEndSec])
-
-  // Cursor follow from Tone.Transport while playing
+  // Cursor follow from the audible audio clock (Engine) while playing.
   useEffect(() => { 
     let id: number
     const update = () => { 
-      useDawStore.getState().setCursor(Tone.Transport.seconds) 
+      if (!useDawStore.getState().playing) return
+      const t = Engine.getCurrentTimeSeconds()
+      if (typeof t === 'number' && Number.isFinite(t)) {
+        useDawStore.getState().setCursor(t)
+      }
     }
     id = window.setInterval(update, 50)
     return () => window.clearInterval(id) 
   }, [])
 
   const rewind0 = () => { 
-    Tone.Transport.seconds = 0; 
-    setCursor(0) 
+    try {
+      void Engine.seek(0)
+    } catch {
+      // ignore
+    }
+    setCursor(0)
   }
   
   const prevBar = () => { 
@@ -59,7 +48,11 @@ export default function TransportBar() {
     const spb = (60 / bpm) * (4 / d)
     const spbar = spb * n
     const sec = Math.max(0, cursorSec - spbar)
-    Tone.Transport.seconds = sec
+    try {
+      void Engine.seek(sec)
+    } catch {
+      // ignore
+    }
     setCursor(sec) 
   }
   
@@ -68,7 +61,11 @@ export default function TransportBar() {
     const spb = (60 / bpm) * (4 / d)
     const spbar = spb * n
     const sec = Math.min(project?.lengthSec || 1e9, cursorSec + spbar)
-    Tone.Transport.seconds = sec
+    try {
+      void Engine.seek(sec)
+    } catch {
+      // ignore
+    }
     setCursor(sec) 
   }
 
@@ -77,11 +74,11 @@ export default function TransportBar() {
       <button className="px-2 py-1 rounded bg-slate-700" onClick={rewind0}>⏮</button>
       <button className="px-2 py-1 rounded bg-slate-700" onClick={prevBar}>⏪</button>
       {!playing ? (
-        <button className="px-3 py-1 rounded bg-emerald-600" onClick={() => play()}>▶</button>
+        <button className="px-3 py-1 rounded bg-emerald-600" onClick={async () => { await Engine.play(useDawStore.getState().cursorSec); play() }}>▶</button>
       ) : (
-        <button className="px-3 py-1 rounded bg-rose-600" onClick={() => pause()}>⏸</button>
+        <button className="px-3 py-1 rounded bg-rose-600" onClick={async () => { await Engine.pause(); pause() }}>⏸</button>
       )}
-      <button className="px-2 py-1 rounded bg-slate-700" onClick={() => { Tone.Transport.stop(); stop() }}>⏹</button>
+      <button className="px-2 py-1 rounded bg-slate-700" onClick={async () => { await Engine.stop(); stop() }}>⏹</button>
       <Tooltip content="Toggle Loop" placement="top" maxWidthClassName="w-28">
         <button className={`px-2 py-1 rounded ${loopEnabled ? 'bg-amber-500' : 'bg-slate-700'}`} onClick={() => toggleLoop()}>🔁</button>
       </Tooltip>

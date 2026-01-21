@@ -1,4 +1,6 @@
 // Professional Web Audio Engine for DrumTracKAI DAW
+
+import { getSharedAudioContext } from '../audio/sharedAudioContext';
 class AudioEngine {
   constructor() {
     this.audioContext = null;
@@ -27,10 +29,7 @@ class AudioEngine {
   async initialize() {
     try {
       // Create audio context with optimal settings
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: this.sampleRate,
-        latencyHint: 'interactive'
-      });
+      this.audioContext = getSharedAudioContext({ latencyHint: 'interactive' });
 
       // Create master gain node
       this.masterGain = this.audioContext.createGain();

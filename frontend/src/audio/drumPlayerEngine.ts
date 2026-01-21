@@ -1,3 +1,5 @@
+import { getSharedAudioContext } from "./sharedAudioContext";
+
 export type DrumPlayerChannelId =
   | "kick"
   | "kick_sub"
@@ -51,7 +53,7 @@ export class DrumPlayerEngine {
 
   constructor(opts?: { latencyHint?: AudioContextLatencyCategory | number }) {
     const latencyHint = opts?.latencyHint ?? "interactive";
-    this.ctx = new AudioContext({ latencyHint });
+    this.ctx = getSharedAudioContext({ latencyHint });
 
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 1;
@@ -140,11 +142,8 @@ export class DrumPlayerEngine {
   }
 
   close() {
-    try {
-      this.ctx.close();
-    } catch {
-      // ignore
-    }
+    // Intentionally does NOT close the shared AudioContext.
+    // The shared context is owned by the app and is reused across subsystems.
   }
 
   private ensureChannel(id: DrumPlayerChannelId): ChannelState {

@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
+import { getSharedAudioContext } from '../audio/sharedAudioContext';
+
 // Import ChatGPT-5 DAW components
 import EditDrumsModal from './EditDrumsModal';
 import { 
@@ -58,7 +60,7 @@ const ProfessionalDAW = ({ onBack, systemStatus }) => {
 
   const initializeAudioContext = async () => {
     try {
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = getSharedAudioContext({ latencyHint: 'interactive' });
       console.log('Audio context initialized');
     } catch (error) {
       console.error('Failed to initialize audio context:', error);

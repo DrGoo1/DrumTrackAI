@@ -1,27 +1,18 @@
 import React from 'react'
-import * as Tone from 'tone'
 import { useDawStore } from '../state/dawStore'
+import { resumeSharedAudioContext } from '../audio/sharedAudioContext'
 
 export default function TransportBar() {
   const { playing, project, cursorSec, play, pause, stop, setBpm } = useDawStore()
   const bpm = project?.bpm || 120
 
   const handlePlay = async () => {
-    if (Tone.getContext().state !== "running") {
-      try { 
-        await Tone.start() 
-        console.log('AudioContext resumed')
-      } catch (e) {
-        console.warn('Failed to start AudioContext:', e)
-      }
-    }
+    await resumeSharedAudioContext()
     play()
   }
 
   const handleStop = () => {
     stop()
-    Tone.Transport.stop()
-    Tone.Transport.position = 0
   }
 
   const formatTime = (seconds: number) => {
@@ -75,11 +66,7 @@ export default function TransportBar() {
       </div>
 
       {/* Audio Context Status */}
-      {Tone.getContext().state !== "running" && (
-        <div className="text-yellow-400 text-xs">
-          Click Play to enable audio
-        </div>
-      )}
+      {/* Audio Context status is handled by sharedAudioContext */}
     </div>
   )
 }
