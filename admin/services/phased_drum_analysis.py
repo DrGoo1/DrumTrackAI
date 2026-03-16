@@ -8,6 +8,11 @@ by using the fallback-based audio processor approach from the original DrumTracK
 import os
 import json
 import logging
+import asyncio
+import subprocess
+import sys
+import time
+import hashlib
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,6 +24,7 @@ class AnalysisPhase(Enum):
     """Analysis phases"""
     DOWNLOAD = "download"
     ARRANGEMENT = "arrangement"
+    TEMPO_MAP = "tempo_map"
     MVSEP = "mvsep"
     DRUM_ANALYSIS = "drum_analysis"
     POST_PROCESSING = "post_processing"
@@ -50,6 +56,7 @@ class PhasedDrumAnalysis:
         self.phase_processors = {
             AnalysisPhase.DOWNLOAD: self._process_download_phase,
             AnalysisPhase.ARRANGEMENT: self._process_arrangement_analysis,
+            AnalysisPhase.TEMPO_MAP: self._process_tempo_map_phase,
             AnalysisPhase.MVSEP: self._process_mvsep_phase,
             AnalysisPhase.DRUM_ANALYSIS: self._process_drum_analysis,
             AnalysisPhase.POST_PROCESSING: self._process_post_processing,
@@ -275,6 +282,22 @@ class PhasedDrumAnalysis:
                 # Extract scalar value from numpy array if needed
                 tempo_1 = float(tempo_1) if hasattr(tempo_1, 'item') else float(tempo_1)
                 logger.info(f"Beat tracking tempo: {tempo_1:.1f} BPM")
+
+                tempo_is_variable = False
+                tempo_variability_bpm_std = 0.0
+                beat_times = []
+                try:
+                    beat_times = beats.tolist() if hasattr(beats, "tolist") else list(beats or [])
+                    if len(beat_times) >= 8:
+                        intervals = np.diff(np.array(beat_times, dtype=float))
+                        intervals = intervals[(intervals > 1e-6) & (intervals < 5.0)]
+                        if len(intervals) >= 6:
+                            inst_bpm = 60.0 / intervals
+                            tempo_variability_bpm_std = float(np.std(inst_bpm))
+                            tempo_is_variable = bool(tempo_variability_bpm_std >= 2.0)
+                except Exception:
+                    tempo_is_variable = False
+                    tempo_variability_bpm_std = 0.0
                 
                 # Algorithm 2: Onset-based tempo estimation
                 onset_frames = librosa.onset.onset_detect(y=y, sr=sr, units='time')
@@ -633,16 +656,14 @@ class PhasedDrumAnalysis:
             # Build comprehensive analysis results
             analysis_results = {
                 'tempo': float(tempo),
+                'tempo_is_variable': bool(tempo_is_variable),
+                'tempo_variability_bpm_std': float(tempo_variability_bpm_std),
+                'beats': beat_times,
                 'key': estimated_key,
                 'time_signature': time_signature,
                 'duration': float(duration),
                 'sections': sections,
-                'audio_info': {
-                    'sample_rate': int(sr),
-                    'channels': 1,
-                    'samples': len(y),
-                    'format': 'WAV'
-                },
+                'style': style_classification,
                 'analysis_metadata': {
                     'method': 'professional_librosa_analysis',
                     'timestamp': time.time(),
@@ -667,6 +688,161 @@ class PhasedDrumAnalysis:
             
             # NO FALLBACKS - Error out clearly
             return False, f"Arrangement analysis failed: {str(e)}", {}
+
+    def _process_tempo_map_phase(self, job: AnalysisJob) -> Tuple[bool, str, Dict]:
+        """Optionally build a variable tempo map for this job using the external Tempo backend."""
+        try:
+            tempo_is_variable = bool(job.results.get("tempo_is_variable"))
+            if not tempo_is_variable:
+                return True, "Tempo map not required (tempo appears constant)", {
+                    "tempo_map_used": False,
+                    "tempo_map_reason": "constant_tempo",
+                }
+
+            source_path = job.results.get("source_file") or job.source_file
+            if not source_path or not os.path.exists(str(source_path)):
+                return True, "Tempo map skipped (missing source audio)", {
+                    "tempo_map_used": False,
+                    "tempo_map_reason": "missing_source_audio",
+                }
+
+            tempo_backend_url = os.getenv("TEMPO_BACKEND_URL", "http://127.0.0.1:5757")
+            tempo_build_url = tempo_backend_url.rstrip("/") + "/tempo/build"
+            tempo_health_url = tempo_backend_url.rstrip("/") + "/health"
+
+            auto_start = str(os.getenv("TEMPO_BACKEND_AUTO_START", "1")).strip().lower() not in {"0", "false", "no", "off"}
+            tempo_repo_path = (os.getenv("TEMPO_REPO_PATH") or "").strip()
+
+            def _try_start_backend() -> Optional[subprocess.Popen]:
+                if not auto_start:
+                    return None
+                if not tempo_repo_path:
+                    return None
+                backend_dir = os.path.join(tempo_repo_path, "backend")
+                server_py = os.path.join(backend_dir, "server.py")
+                if not os.path.exists(server_py):
+                    return None
+
+                env = os.environ.copy()
+                env.setdefault("TRACKSCRIBE_BACKEND_HOST", "127.0.0.1")
+                try:
+                    port_text = tempo_backend_url.rsplit(":", 1)[-1]
+                    if port_text.isdigit():
+                        env.setdefault("TRACKSCRIBE_BACKEND_PORT", port_text)
+                except Exception:
+                    pass
+
+                return subprocess.Popen(
+                    [sys.executable, server_py],
+                    cwd=backend_dir,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+
+            async def _probe_health() -> bool:
+                import aiohttp
+
+                timeout = aiohttp.ClientTimeout(total=2)
+                try:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(tempo_health_url) as resp:
+                            return resp.status == 200
+                except Exception:
+                    return False
+
+            backend_proc: Optional[subprocess.Popen] = None
+            try:
+                ok = asyncio.run(_probe_health())
+                if not ok:
+                    backend_proc = _try_start_backend()
+                    if backend_proc is not None:
+                        # Give the server a moment to bind the port.
+                        for _ in range(20):
+                            time.sleep(0.25)
+                            try:
+                                if asyncio.run(_probe_health()):
+                                    break
+                            except Exception:
+                                continue
+            except Exception:
+                backend_proc = None
+
+            async def _call_tempo_backend() -> Dict[str, Any]:
+                import aiohttp
+
+                form = aiohttp.FormData()
+                form.add_field("tempo_mode", "auto")
+                form.add_field("auto_strategy", "fast_first")
+                form.add_field("auto_escalate", "1")
+                form.add_field("meter_mode", "auto")
+                form.add_field("meter_num", "4")
+                form.add_field("meter_den", "4")
+                form.add_field("tempo_min_bpm", "40.0")
+                form.add_field("tempo_max_bpm", "220.0")
+                form.add_field("smoothing", "med")
+                form.add_field("event_density", "every_4_bars")
+                form.add_field("max_bpm_per_sec", "8.0")
+
+                filename = os.path.basename(str(source_path))
+                with open(str(source_path), "rb") as f:
+                    form.add_field("audio", f, filename=filename, content_type="application/octet-stream")
+                    timeout = aiohttp.ClientTimeout(total=180)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(tempo_build_url, data=form) as resp:
+                            text = await resp.text()
+                            if resp.status != 200:
+                                raise RuntimeError(f"Tempo backend error {resp.status}: {text[:500]}")
+                            return json.loads(text)
+
+            try:
+                payload = asyncio.run(_call_tempo_backend())
+            except Exception as e:
+                return True, f"Tempo map skipped (Tempo backend not available): {e}", {
+                    "tempo_map_used": False,
+                    "tempo_map_reason": "tempo_backend_unavailable",
+                    "tempo_map_error": str(e),
+                    "tempo_backend_url": tempo_backend_url,
+                    "tempo_repo_path": tempo_repo_path or None,
+                }
+
+            tempo_map = payload.get("tempo_map") or {}
+            confidence = payload.get("confidence") or {}
+            engine_used = payload.get("engine_used")
+
+            tempo_map_path = os.path.join(job.output_directory, "tempo_map.json")
+            with open(tempo_map_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "engine_used": engine_used,
+                        "tempo_map": tempo_map,
+                        "confidence": confidence,
+                        "source": {
+                            "backend_url": tempo_backend_url,
+                            "build_url": tempo_build_url,
+                            "audio_path": str(source_path),
+                        },
+                    },
+                    f,
+                    indent=2,
+                )
+
+            return True, "Tempo map generated successfully", {
+                "tempo_map_used": True,
+                "tempo_map_path": tempo_map_path,
+                "tempo_engine_used": engine_used,
+                "tempo_confidence": confidence,
+                "tempo_map": tempo_map,
+            }
+
+        except Exception as e:
+            logger.error(f"Tempo map phase failed: {e}")
+            return True, f"Tempo map phase failed (continuing without tempo map): {e}", {
+                "tempo_map_used": False,
+                "tempo_map_reason": "tempo_phase_failed",
+                "tempo_map_error": str(e),
+            }
     
     def _process_mvsep_phase(self, job: AnalysisJob) -> Tuple[bool, str, Dict]:
         """Process the MVSep phase"""
@@ -690,13 +866,13 @@ class PhasedDrumAnalysis:
                     "drums": os.path.join(stems_dir, "drums.wav"),
                     "bass": os.path.join(stems_dir, "bass.wav"),
                     "vocals": os.path.join(stems_dir, "vocals.wav"),
-                    "other": os.path.join(stems_dir, "other.wav")
+                    "other": os.path.join(stems_dir, "other.wav"),
                 },
                 "processing_type": "placeholder",
-                "note": "MVSep integration not yet implemented"
+                "note": "MVSep integration not yet implemented",
             }
             
-            return True, "MVSep processing completed (placeholder)", results
+            return True, "MVSep processing completed (placeholder)", {"mvsep_results": results}
             
         except Exception as e:
             return False, f"MVSep processing error: {e}", {}
@@ -713,7 +889,14 @@ class PhasedDrumAnalysis:
             tempo = job.results.get("tempo", 120.0)
             style = job.results.get("style", "unknown")
             key = job.results.get("key", "C")
-            
+
+            beats_sec = None
+            try:
+                if bool(job.results.get("tempo_map_used")) and isinstance(job.results.get("tempo_map"), dict):
+                    beats_sec = (job.results.get("tempo_map") or {}).get("beats_sec")
+            except Exception:
+                beats_sec = None
+
             logger.info(f"Using context: tempo={tempo} BPM, style={style}, key={key}")
             
             # Get separated drum stems from MVSep results
@@ -766,7 +949,8 @@ class PhasedDrumAnalysis:
                 stem_files=stem_files,
                 tempo=tempo,
                 style=style,
-                key=key
+                key=key,
+                beats_sec=beats_sec,
             )
             
             # Save detailed drummer profile
@@ -784,6 +968,10 @@ class PhasedDrumAnalysis:
                 "style": drummer_profile.style,
                 "key": drummer_profile.key,
                 "duration": drummer_profile.duration,
+                "tempo_map_used": bool(job.results.get("tempo_map_used")),
+                "tempo_map_path": job.results.get("tempo_map_path"),
+                "tempo_engine_used": job.results.get("tempo_engine_used"),
+                "tempo_confidence": job.results.get("tempo_confidence"),
                 
                 # Component analysis summary
                 "components_analyzed": list(drummer_profile.components.keys()),
@@ -816,7 +1004,109 @@ class PhasedDrumAnalysis:
                 "stem_files_used": stem_files,
                 "analysis_timestamp": datetime.now().isoformat()
             }
-            
+
+            # Optionally persist the fingerprint into drummerbrain_clips.db so runtime
+            # controls can access it deterministically. This is a pure data write; it
+            # does not affect runtime selection unless that dataset is enabled.
+            try:
+                from backend.drummerbrain import db as drummerbrain_db
+
+                drummer_id = (
+                    job.results.get("drummer_id")
+                    or job.results.get("anonymized_drummer_id")
+                    or job.results.get("drummerbrain_drummer_id")
+                )
+
+                category_ids = job.results.get("category_ids")
+                if category_ids is None:
+                    category_ids = job.results.get("category_id")
+                if isinstance(category_ids, str):
+                    category_ids = [category_ids]
+                if not isinstance(category_ids, list):
+                    category_ids = []
+                category_ids = [str(x).strip() for x in category_ids if str(x).strip()]
+
+                dataset_id = "drummer_fingerprints"
+                asset_id = f"fingerprint:{job.job_id}"
+                source_path = str(profile_file)
+                content_sha256 = ""
+                try:
+                    with open(profile_file, "rb") as f:
+                        content_sha256 = hashlib.sha256(f.read()).hexdigest()
+                except Exception:
+                    content_sha256 = hashlib.sha256(source_path.encode("utf-8", errors="ignore")).hexdigest()
+
+                conn = drummerbrain_db.connect()
+                try:
+                    drummerbrain_db.ensure_schema(conn)
+                    drummerbrain_db.upsert_dataset(
+                        conn,
+                        dataset_id=dataset_id,
+                        label="Drummer Fingerprints",
+                        root_path=os.path.dirname(profile_file),
+                        dataset_type="fingerprint",
+                    )
+                    drummerbrain_db.set_dataset_enabled(conn, dataset_id=dataset_id, enabled=False)
+
+                    drummerbrain_db.upsert_audio_asset(
+                        conn,
+                        asset_id=asset_id,
+                        dataset_id=dataset_id,
+                        song_key=(category_ids[0] if category_ids else None),
+                        variant=None,
+                        source_path=source_path,
+                        content_sha256=content_sha256,
+                        size_bytes=(os.path.getsize(profile_file) if os.path.exists(profile_file) else None),
+                    )
+
+                    features = {
+                        "type": "drummer_fingerprint",
+                        "job_id": job.job_id,
+                        "drummer_id": str(drummer_id) if drummer_id else None,
+                        "category_ids": category_ids,
+                        "drum_results": drum_results,
+                    }
+
+                    drummerbrain_db.upsert_transcription_artifact(
+                        conn,
+                        asset_id=asset_id,
+                        transcription_version="advanced_drummer_analysis_v1",
+                        events=None,
+                        features=features,
+                        confidence=float(drum_results.get("tempo_confidence") or 1.0),
+                        provenance={
+                            "source": "phased_drum_analysis",
+                            "output_directory": job.output_directory,
+                            "profile_file": profile_file,
+                        },
+                    )
+
+                    if drummer_id and category_ids:
+                        drummerbrain_db.upsert_drummer(conn, drummer_id=str(drummer_id), display_name=None)
+                        for cid in category_ids:
+                            drummerbrain_db.upsert_category(conn, category_id=cid, label=None)
+                            drummerbrain_db.upsert_drummer_category_assignment(
+                                conn,
+                                drummer_id=str(drummer_id),
+                                category_id=str(cid),
+                                weight=None,
+                            )
+
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+                drum_results["drummerbrain_persisted"] = True
+                drum_results["drummerbrain_asset_id"] = asset_id
+                drum_results["drummerbrain_dataset_id"] = dataset_id
+                drum_results["drummerbrain_drummer_id"] = str(drummer_id) if drummer_id else None
+                drum_results["drummerbrain_category_ids"] = category_ids
+
+            except Exception as e:
+                logger.warning(f"DrummerBrain fingerprint persistence skipped/failed: {e}")
+
             # Save analysis results
             drum_analysis_file = os.path.join(job.output_directory, "drum_analysis.json")
             with open(drum_analysis_file, 'w') as f:

@@ -8,17 +8,21 @@ import subprocess
 import threading
 import time
 import traceback
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 
-import pytube
+try:
+    import pytube
+except Exception:
+    pytube = None
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QUrl, QThread, QObject
 from PySide6.QtGui import QIcon, QPixmap, QColor, QDesktopServices, QAction
 from PySide6.QtWidgets import (
     QWidget, QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QGroupBox, QListWidget, QListWidgetItem,
-    QTabWidget, QTextEdit, QSplitter, QTableWidgetItem, QHeaderView,
+    QTabWidget, QTextEdit, QPlainTextEdit, QSplitter, QTableWidgetItem, QHeaderView,
     QProgressBar, QToolButton, QMenu, QDialog,
     QFileDialog, QCheckBox, QRadioButton, QButtonGroup, QScrollArea, QSizePolicy
 )
@@ -149,6 +153,283 @@ except ImportError:
     except ImportError:
         logger.warning("PhasedDrumAnalysis not found, arrangement analysis will be unavailable")
         PhasedDrumAnalysis = None
+
+try:
+    from drummer_categories import DRUMMER_CATEGORIES
+except Exception:
+    DRUMMER_CATEGORIES = {}
+
+try:
+    from utils.youtube_search import YouTubeSearchAPI
+except Exception:
+    try:
+        from admin.utils.youtube_search import YouTubeSearchAPI
+    except Exception:
+        class YouTubeSearchAPI:
+            def __init__(self):
+                pass
+
+            def search(self, query, max_results=5):
+                return []
+
+try:
+    from services.llm_proposal_client import LLMProposalClient
+except Exception:
+    try:
+        from admin.services.llm_proposal_client import LLMProposalClient
+    except Exception:
+        LLMProposalClient = None
+
+
+class AutoIngestDialog(QDialog):
+    def __init__(self, parent=None, youtube_api=None, proposal_client_cls=None):
+        super().__init__(parent)
+        self.setWindowTitle("Auto-Ingest")
+        self.setMinimumSize(900, 600)
+        self.setModal(True)
+
+        self.youtube_api = youtube_api
+        self.proposal_client_cls = proposal_client_cls
+
+        self._proposal_client = None
+        self._plan_rows: List[Dict[str, Any]] = []
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        settings_group = QGroupBox("LLM Settings (Ollama)")
+        settings_layout = QHBoxLayout(settings_group)
+
+        settings_layout.addWidget(QLabel("URL:"))
+        self.ollama_url_edit = QLineEdit()
+        self.ollama_url_edit.setText(os.getenv("DRUMTRACAI_OLLAMA_URL", "http://localhost:11434"))
+        settings_layout.addWidget(self.ollama_url_edit)
+
+        settings_layout.addWidget(QLabel("Model:"))
+        self.ollama_model_edit = QLineEdit()
+        self.ollama_model_edit.setText(os.getenv("DRUMTRACAI_OLLAMA_MODEL", ""))
+        self.ollama_model_edit.setPlaceholderText("e.g. qwen2.5:7b-instruct")
+        settings_layout.addWidget(self.ollama_model_edit)
+
+        self.use_llm_checkbox = QCheckBox("Use LLM")
+        self.use_llm_checkbox.setChecked(True)
+        settings_layout.addWidget(self.use_llm_checkbox)
+
+        layout.addWidget(settings_group)
+
+        input_group = QGroupBox("Drummer Names (one per line)")
+        input_layout = QVBoxLayout(input_group)
+        self.drummer_names_edit = QPlainTextEdit()
+        self.drummer_names_edit.setPlaceholderText("John Bonham\nNeil Peart\nBuddy Rich")
+        input_layout.addWidget(self.drummer_names_edit)
+        layout.addWidget(input_group)
+
+        actions_layout = QHBoxLayout()
+        self.propose_btn = QPushButton("Propose")
+        self.propose_btn.clicked.connect(self._on_propose)
+        actions_layout.addWidget(self.propose_btn)
+        actions_layout.addStretch()
+        layout.addLayout(actions_layout)
+
+        self.plan_table = QTableWidget()
+        self.plan_table.setColumnCount(7)
+        self.plan_table.setHorizontalHeaderLabels([
+            "Approve",
+            "Drummer",
+            "Anon ID",
+            "Category IDs (comma)",
+            "Song 1",
+            "Song 2",
+            "Song 3",
+        ])
+        self.plan_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.plan_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.plan_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.plan_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.plan_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.plan_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.plan_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        layout.addWidget(self.plan_table)
+
+        buttons = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        ok_btn = QPushButton("Run")
+        ok_btn.clicked.connect(self._on_run)
+        ok_btn.setDefault(True)
+        buttons.addStretch()
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(ok_btn)
+        layout.addLayout(buttons)
+
+    def _on_run(self):
+        if not self._plan_rows:
+            QMessageBox.information(self, "Auto-Ingest", "Click 'Propose' first to generate a plan.")
+            return
+
+        approved = self.get_approved_plan_rows()
+        if not approved:
+            QMessageBox.information(self, "Auto-Ingest", "No approved rows. Check the 'Approve' box for at least one drummer.")
+            return
+
+        has_song = False
+        for row in approved:
+            songs = row.get("songs") or []
+            if not isinstance(songs, list):
+                continue
+            for song in songs:
+                if isinstance(song, dict) and str(song.get("url") or "").strip():
+                    has_song = True
+                    break
+            if has_song:
+                break
+
+        if not has_song:
+            QMessageBox.warning(self, "Auto-Ingest", "No valid YouTube URLs found in the proposed plan. Try 'Propose' again.")
+            return
+
+        self.accept()
+
+    def _make_proposal_client(self):
+        if self._proposal_client is not None:
+            return self._proposal_client
+
+        if not self.proposal_client_cls:
+            self._proposal_client = None
+            return None
+
+        try:
+            self._proposal_client = self.proposal_client_cls(
+                base_url=(self.ollama_url_edit.text() or "").strip(),
+                model=(self.ollama_model_edit.text() or "").strip(),
+            )
+        except Exception:
+            self._proposal_client = None
+        return self._proposal_client
+
+    def _default_anon_id(self, drummer_name: str) -> str:
+        v = abs(hash(drummer_name.strip().lower())) % 10000
+        return f"drm_{v:04d}"
+
+    def _on_propose(self):
+        drummer_names = [ln.strip() for ln in (self.drummer_names_edit.toPlainText() or "").splitlines() if ln.strip()]
+        if not drummer_names:
+            QMessageBox.warning(self, "Auto-Ingest", "Please enter at least one drummer name.")
+            return
+
+        if not self.youtube_api:
+            QMessageBox.critical(self, "Auto-Ingest", "YouTube search is not available.")
+            return
+
+        proposal_client = self._make_proposal_client()
+        use_llm = bool(self.use_llm_checkbox.isChecked())
+
+        self._plan_rows = []
+        self.plan_table.setRowCount(0)
+
+        available_category_ids = list((DRUMMER_CATEGORIES or {}).keys())
+
+        for drummer_name in drummer_names:
+            try:
+                query = f"{drummer_name} signature songs studio version"
+                results = self.youtube_api.search(query, max_results=15)
+
+                picked_songs: List[Dict[str, Any]] = []
+                if proposal_client:
+                    picked, _meta = proposal_client.propose_signature_songs(
+                        drummer_name=drummer_name,
+                        youtube_results=results,
+                        n=3,
+                        use_llm=use_llm,
+                    )
+                    for c in picked:
+                        picked_songs.append({"title": c.title, "url": c.url})
+                else:
+                    for r in results[:3]:
+                        title = str(r.get("title") or "").strip()
+                        url = str(r.get("url") or "").strip()
+                        if not url and r.get("id"):
+                            url = f"https://www.youtube.com/watch?v={r['id']}"
+                        if title and url:
+                            picked_songs.append({"title": title, "url": url})
+
+                chosen_titles = [s.get("title", "") for s in picked_songs]
+                category_ids: List[str] = []
+                if proposal_client and available_category_ids:
+                    category_ids, _cmeta = proposal_client.propose_category_ids(
+                        drummer_name=drummer_name,
+                        chosen_titles=chosen_titles,
+                        available_category_ids=available_category_ids,
+                        use_llm=use_llm,
+                    )
+
+                plan_row = {
+                    "drummer_name": drummer_name,
+                    "anonymized_drummer_id": self._default_anon_id(drummer_name),
+                    "category_ids": category_ids,
+                    "songs": picked_songs,
+                }
+                self._plan_rows.append(plan_row)
+
+            except Exception as e:
+                logger.error(f"Auto-ingest propose failed for '{drummer_name}': {e}")
+
+        self._render_plan_rows()
+
+    def _render_plan_rows(self):
+        self.plan_table.setRowCount(len(self._plan_rows))
+        for i, row in enumerate(self._plan_rows):
+            approve_item = QTableWidgetItem("")
+            approve_item.setFlags(approve_item.flags() | Qt.ItemIsUserCheckable)
+            approve_item.setCheckState(Qt.Checked)
+            self.plan_table.setItem(i, 0, approve_item)
+
+            self.plan_table.setItem(i, 1, QTableWidgetItem(str(row.get("drummer_name") or "")))
+
+            anon_item = QTableWidgetItem(str(row.get("anonymized_drummer_id") or ""))
+            self.plan_table.setItem(i, 2, anon_item)
+
+            cats = row.get("category_ids") or []
+            if isinstance(cats, list):
+                cats_txt = ",".join([str(x) for x in cats])
+            else:
+                cats_txt = str(cats)
+            self.plan_table.setItem(i, 3, QTableWidgetItem(cats_txt))
+
+            songs = row.get("songs") or []
+            for si in range(3):
+                title = ""
+                if si < len(songs) and isinstance(songs[si], dict):
+                    title = str(songs[si].get("title") or "")
+                self.plan_table.setItem(i, 4 + si, QTableWidgetItem(title))
+
+        self.plan_table.resizeRowsToContents()
+
+    def get_approved_plan_rows(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for i in range(self.plan_table.rowCount()):
+            approve_item = self.plan_table.item(i, 0)
+            if not approve_item or approve_item.checkState() != Qt.Checked:
+                continue
+
+            if i >= len(self._plan_rows):
+                continue
+
+            base = dict(self._plan_rows[i])
+            anon_item = self.plan_table.item(i, 2)
+            if anon_item:
+                base["anonymized_drummer_id"] = str(anon_item.text() or "").strip()
+
+            cat_item = self.plan_table.item(i, 3)
+            if cat_item:
+                cat_txt = str(cat_item.text() or "")
+                base["category_ids"] = [x.strip() for x in cat_txt.split(",") if x.strip()]
+
+            out.append(base)
+        return out
+
 
 class DrummersWidget(QWidget):
     # Signals
@@ -284,6 +565,29 @@ class DrummersWidget(QWidget):
         self.drummer_info.setReadOnly(True)
         details_layout.addWidget(self.drummer_info)
 
+        # Fingerprint assignment (copyright-safe)
+        assignment_group = QGroupBox("Fingerprint Assignment")
+        assignment_layout = QVBoxLayout(assignment_group)
+
+        drummer_id_row = QHBoxLayout()
+        drummer_id_row.addWidget(QLabel("Anonymized Drummer ID:"))
+        self.anonymized_drummer_id_edit = QLineEdit()
+        self.anonymized_drummer_id_edit.setPlaceholderText("e.g. drm_0007")
+        drummer_id_row.addWidget(self.anonymized_drummer_id_edit)
+        assignment_layout.addLayout(drummer_id_row)
+
+        assignment_layout.addWidget(QLabel("Category IDs:"))
+        self.category_ids_list = QListWidget()
+        self.category_ids_list.setSelectionMode(QListWidget.MultiSelection)
+        for cid, cdata in (DRUMMER_CATEGORIES or {}).items():
+            label = str((cdata or {}).get("display_name") or cid)
+            item = QListWidgetItem(f"{label} ({cid})")
+            item.setData(Qt.ItemDataRole.UserRole, str(cid))
+            self.category_ids_list.addItem(item)
+        assignment_layout.addWidget(self.category_ids_list)
+
+        details_layout.addWidget(assignment_group)
+
         # Signature songs
         songs_group = QGroupBox("Signature Songs")
         songs_layout = QVBoxLayout(songs_group)
@@ -306,9 +610,11 @@ class DrummersWidget(QWidget):
         self.add_song_btn = QPushButton("Add Song")
         self.find_on_youtube_btn = QPushButton("Find on YouTube")
         self.process_all_btn = QPushButton("Process All with MVSep")
+        self.auto_ingest_btn = QPushButton("Auto-Ingest")
         song_actions.addWidget(self.add_song_btn)
         song_actions.addWidget(self.find_on_youtube_btn)
         song_actions.addWidget(self.process_all_btn)
+        song_actions.addWidget(self.auto_ingest_btn)
         songs_layout.addLayout(song_actions)
 
         details_layout.addWidget(songs_group)
@@ -781,6 +1087,25 @@ class DrummersWidget(QWidget):
                 "arrangement_sections": tempo_style_data.get("sections", []),
                 "require_bass_stem": True  # Ensure bass stem is included for rhythm section analysis
             })
+
+            try:
+                anon_id = (self.anonymized_drummer_id_edit.text() or "").strip() if hasattr(self, "anonymized_drummer_id_edit") else ""
+                if anon_id:
+                    metadata["anonymized_drummer_id"] = anon_id
+            except Exception:
+                pass
+
+            try:
+                category_ids: List[str] = []
+                if hasattr(self, "category_ids_list"):
+                    for it in self.category_ids_list.selectedItems() or []:
+                        cid = it.data(Qt.ItemDataRole.UserRole)
+                        if cid:
+                            category_ids.append(str(cid))
+                if category_ids:
+                    metadata["category_ids"] = category_ids
+            except Exception:
+                pass
             
             # Add to batch processor queue
             success = batch_processor.add_to_queue(
@@ -830,7 +1155,7 @@ class DrummersWidget(QWidget):
             
         except Exception as e:
             logger.error(f"Error connecting batch processor signals: {e}")
-    
+
     def _on_batch_processing_completed(self, batch_id, summary):
         """Handle batch processing completion - start drum analysis phase"""
         try:
@@ -854,9 +1179,72 @@ class DrummersWidget(QWidget):
                 stems_dir = result.get("output_dir")
                 if stems_dir and os.path.exists(stems_dir):
                     self._analyze_drum_stems(file_path, stems_dir, result.get("metadata", {}))
+
+                # Also run the advanced drummer analysis phase (and persist fingerprint)
+                # using the same MVSep outputs.
+                try:
+                    self._run_advanced_drummer_analysis_from_mvsep(file_path, result)
+                except Exception as e:
+                    logger.error(f"Error running advanced drummer analysis after MVSep: {e}")
                     
         except Exception as e:
             logger.error(f"Error handling file processing completion: {e}")
+
+    def _run_advanced_drummer_analysis_from_mvsep(self, source_file: str, mvsep_result: Dict[str, Any]) -> None:
+        """Run AdvancedDrummerAnalysis via PhasedDrumAnalysis using an already-computed MVSep result."""
+        if not self.phased_analysis:
+            return
+
+        try:
+            from services.phased_drum_analysis import AnalysisJob
+        except Exception:
+            from admin.services.phased_drum_analysis import AnalysisJob
+
+        output_dir = mvsep_result.get("output_dir") or self.mvsep_output_path
+        os.makedirs(output_dir, exist_ok=True)
+
+        metadata = mvsep_result.get("metadata") or {}
+        tempo = metadata.get("tempo")
+        style = metadata.get("style")
+        key = metadata.get("key") or "C"
+
+        job = AnalysisJob(
+            job_id=str(uuid.uuid4()),
+            source_url="",
+            source_file=str(source_file),
+            output_directory=str(output_dir),
+        )
+
+        # Provide MVSep stems in the format PhasedDrumAnalysis expects.
+        stems = mvsep_result.get("result_files") or {}
+        job.results.update(
+            {
+                "source_file": str(source_file),
+                "tempo": tempo if tempo is not None else 120.0,
+                "style": style if style is not None else "unknown",
+                "key": key,
+                "mvsep_results": {"stems": stems},
+            }
+        )
+
+        # Pass the curator-assigned anonymized IDs through so the fingerprint persistence
+        # writes assignments into drummerbrain_clips.db.
+        anon_id = (metadata.get("anonymized_drummer_id") or metadata.get("drummer_id") or "").strip()
+        if anon_id:
+            job.results["anonymized_drummer_id"] = anon_id
+
+        category_ids = metadata.get("category_ids")
+        if isinstance(category_ids, str):
+            category_ids = [category_ids]
+        if isinstance(category_ids, list) and category_ids:
+            job.results["category_ids"] = [str(x).strip() for x in category_ids if str(x).strip()]
+
+        success, message, _drum_results = self.phased_analysis._process_drum_analysis(job)
+        if not success:
+            logger.warning(f"Advanced drummer analysis failed: {message}")
+            return
+
+        logger.info(f"Advanced drummer analysis completed: {message}")
     
     def _start_drum_analysis_phase(self, batch_id, summary):
         """Start the drum analysis phase with processed stems"""
@@ -1312,6 +1700,8 @@ class DrummersWidget(QWidget):
             self.add_song_btn.clicked.connect(self._on_add_song)
             self.find_on_youtube_btn.clicked.connect(self._on_find_song_on_youtube)
             self.process_all_btn.clicked.connect(self._on_process_all_with_mvsep)
+            if hasattr(self, "auto_ingest_btn"):
+                self.auto_ingest_btn.clicked.connect(self._on_auto_ingest)
 
             # YouTube search signals
             self.youtube_search_btn.clicked.connect(self._on_youtube_search)
@@ -1327,10 +1717,121 @@ class DrummersWidget(QWidget):
             logger.error(f"Error connecting signals: {e}")
             traceback.print_exc()
 
-    def set_batch_processor(self, batch_processor):
-        """Set the batch processor for MVSep processing"""
-        self.batch_processor = batch_processor
-        logger.info("Batch processor connected to DrummersWidget")
+    def _on_auto_ingest(self):
+        try:
+            dlg = AutoIngestDialog(self, youtube_api=self.youtube_api, proposal_client_cls=LLMProposalClient)
+            if dlg.exec() != QDialog.Accepted:
+                return
+
+            plan_rows = dlg.get_approved_plan_rows()
+            if not plan_rows:
+                QMessageBox.information(self, "Auto-Ingest", "Nothing to run. Click 'Propose' first, then ensure at least one row is approved.")
+                return
+
+            self._auto_ingest_execute_plan(plan_rows)
+
+        except Exception as e:
+            logger.error(f"Error starting auto-ingest: {e}")
+            QMessageBox.critical(self, "Auto-Ingest Error", f"Failed to start auto-ingest: {str(e)}")
+
+
+    def _auto_ingest_execute_plan(self, plan_rows: List[Dict[str, Any]]) -> None:
+        queued = 0
+        shown_download_errors = set()
+        for row in plan_rows:
+            try:
+                anon_id = str(row.get("anonymized_drummer_id") or "").strip()
+                category_ids = row.get("category_ids") or []
+                if isinstance(category_ids, str):
+                    category_ids = [x.strip() for x in category_ids.split(",") if x.strip()]
+                if not isinstance(category_ids, list):
+                    category_ids = []
+
+                songs = row.get("songs") or []
+                if not isinstance(songs, list):
+                    songs = []
+
+                for song in songs:
+                    if not isinstance(song, dict):
+                        continue
+                    title = str(song.get("title") or "Unknown").strip()
+                    url = str(song.get("url") or "").strip()
+                    if not url:
+                        continue
+
+                    safe_title = self._sanitize_filename(title)
+                    base = anon_id or "drm_unknown"
+                    filename = f"{base}_{safe_title}.mp3"
+                    output_path = os.path.join(self.download_path, filename)
+
+                    metadata = {
+                        "source": "drummers_tab",
+                        "analysis_type": "drum_profiling",
+                        "timestamp": datetime.now().isoformat(),
+                        "anonymized_drummer_id": anon_id,
+                        "category_ids": category_ids,
+                        "song_title": title,
+                        "youtube_url": url,
+                        "require_bass_stem": True,
+                    }
+
+                    def _on_download_done(local_path: str, md: Dict[str, Any] = metadata):
+                        try:
+                            if not local_path or not os.path.exists(local_path):
+                                raise RuntimeError("Downloaded file missing")
+                            self._send_to_batch_processor(local_path, md)
+                        except Exception as e:
+                            logger.error(f"Auto-ingest failed post-download: {e}")
+
+                    def _on_download_err(err: str, t: str = title):
+                        try:
+                            msg = str(err or "").strip() or "Unknown error"
+                            key = f"{t}::{msg}"
+                            if key in shown_download_errors:
+                                return
+                            shown_download_errors.add(key)
+
+                            if "ffprobe" in msg.lower() or "ffmpeg" in msg.lower():
+                                msg = msg + "\n\nThis usually means FFmpeg is not installed or not on PATH." \
+                                          "\nInstall FFmpeg (ffmpeg + ffprobe) and restart Admin, then retry."
+
+                            def _show():
+                                QMessageBox.warning(self, "Auto-Ingest Download Failed", f"'{t}'\n\n{msg}")
+
+                            try:
+                                self.thread_safe.run_in_main_thread(_show)
+                            except Exception:
+                                _show()
+                        except Exception:
+                            logger.error(f"Auto-ingest download failed for '{t}': {err}")
+
+                    self.youtube_service.download_audio(
+                        url,
+                        output_path,
+                        progress_callback=None,
+                        completion_callback=_on_download_done,
+                        error_callback=_on_download_err,
+                    )
+                    queued += 1
+
+            except Exception as e:
+                logger.error(f"Error executing auto-ingest plan row: {e}")
+
+        if queued <= 0:
+            QMessageBox.warning(
+                self,
+                "Auto-Ingest",
+                "No downloadable songs were queued. Click 'Propose' and confirm the proposed songs have valid YouTube URLs.",
+            )
+            logger.warning("Auto-ingest executed with zero downloads queued")
+        else:
+            QMessageBox.information(
+                self,
+                "Auto-Ingest",
+                f"Queued {queued} download(s). Files will be saved to:\n{self.download_path}\n\n"
+                "When each download completes, it will be sent to MVSep / analysis automatically.",
+            )
+
 
     def set_event_bus(self, event_bus):
         """Set the event bus for communication"""
@@ -2021,10 +2522,11 @@ class DrummersWidget(QWidget):
             logger.error(f"Traceback: {traceback.format_exc()}")
             QMessageBox.critical(self, "Processing Error", error_msg)
     
-    def _send_to_batch_processor(self, audio_file_path):
+    def _send_to_batch_processor(self, audio_file_path, metadata=None):
         """Send audio file to batch processor with context-aware metadata"""
         try:
             logger.info(f"Sending file to batch processor: {audio_file_path}")
+
             
             # Validate file exists
             if not os.path.exists(audio_file_path):
@@ -2034,38 +2536,68 @@ class DrummersWidget(QWidget):
             # Get tempo and style data from arrangement analysis
             tempo_style_data = self._get_tempo_style_data(audio_file_path)
             
-            # Create metadata for the batch processor
-            metadata = {
-                'source': 'drummers_widget',
-                'drummer_id': self.current_drummer.get('id', 'unknown') if self.current_drummer else 'unknown',
-                'drummer_name': self.current_drummer.get('name', 'Unknown') if self.current_drummer else 'Unknown',
-                'song_name': os.path.basename(audio_file_path),
-                'analysis_type': 'entire_song',
-                'tempo': tempo_style_data.get('tempo', 'Unknown'),
-                'style': tempo_style_data.get('style', 'Unknown'),
-                'sections': tempo_style_data.get('sections', []),
-                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-            }
+            if metadata is None:
+                metadata = {
+                    'source': 'drummers_widget',
+                    'drummer_id': self.current_drummer.get('id', 'unknown') if self.current_drummer else 'unknown',
+                    'drummer_name': self.current_drummer.get('name', 'Unknown') if self.current_drummer else 'Unknown',
+                    'song_name': os.path.basename(audio_file_path),
+                    'analysis_type': 'entire_song',
+                    'tempo': tempo_style_data.get('tempo', 'Unknown'),
+                    'style': tempo_style_data.get('style', 'Unknown'),
+                    'sections': tempo_style_data.get('sections', []),
+                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+            else:
+                try:
+                    metadata = dict(metadata)
+                except Exception:
+                    metadata = {'metadata': str(metadata)}
+            
+            try:
+                anon_id = (self.anonymized_drummer_id_edit.text() or "").strip() if hasattr(self, "anonymized_drummer_id_edit") else ""
+                if anon_id:
+                    metadata["anonymized_drummer_id"] = anon_id
+            except Exception:
+                pass
+
+            try:
+                category_ids: List[str] = []
+                if hasattr(self, "category_ids_list"):
+                    for it in self.category_ids_list.selectedItems() or []:
+                        cid = it.data(Qt.ItemDataRole.UserRole)
+                        if cid:
+                            category_ids.append(str(cid))
+                if category_ids:
+                    metadata["category_ids"] = category_ids
+            except Exception:
+                pass
             
             logger.info(f"Adding file to batch processor with metadata: {metadata}")
             
-            # Create output directory for MVSep results
-            if self.current_drummer:
-                drummer_id = self.current_drummer.get('id', 'unknown')
+            batch_processor = None
+            try:
+                from admin.ui.batch_processor_widget import get_batch_processor
+
+                batch_processor = get_batch_processor()
+            except Exception:
+                batch_processor = None
+
+            if batch_processor is not None:
+                success = batch_processor.add_to_queue(
+                    input_file=audio_file_path,
+                    output_dir=os.path.dirname(audio_file_path),
+                    metadata=metadata,
+                )
+            elif getattr(self, "batch_processor", None) is not None and getattr(self.batch_processor, "batch_processor", None) is not None:
+                success = self.batch_processor.batch_processor.add_to_queue(
+                    input_file=audio_file_path,
+                    output_dir=os.path.dirname(audio_file_path),
+                    metadata=metadata,
+                )
             else:
-                drummer_id = 'unknown'
-            
-            song_name = os.path.splitext(os.path.basename(audio_file_path))[0]
-            output_dir = os.path.join(os.path.dirname(audio_file_path), 'mvsep_output', drummer_id, song_name)
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Add to batch processor queue with correct parameters
-            # Access the actual BatchProcessor service through the widget
-            success = self.batch_processor.batch_processor.add_to_queue(
-                input_file=audio_file_path,
-                output_dir=output_dir,
-                metadata=metadata
-            )
+                logger.error("Batch processor is not available; cannot queue MVSep job")
+                return False
             
             if success:
                 logger.info(f"Successfully added {audio_file_path} to batch processing queue")

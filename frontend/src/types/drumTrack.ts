@@ -299,6 +299,12 @@ export interface DrumGenerationConfig {
   humanizeAmount?: number;  // 0.0-1.0 (default: 0.7)
   ghostNoteAmount?: number;  // 0.0-1.0 (default: 0.7)
   swingAmount?: number;  // 0.0-1.0 (default: 0.0)
+  quantizeStrength?: number;
+  quantizeBase?: number;
+  timingHumanizeMs?: number;
+  velocityHumanize?: number;
+  pushPullMs?: number;
+  feelSeed?: number;
   buildScope?: 'full_song' | 'selected_section';
   guideEnabled?: boolean;
   guideInstrument?: 'mix' | 'bass' | 'guitar' | 'keys' | 'vocal' | 'other';

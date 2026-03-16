@@ -235,11 +235,11 @@ export const LimbGrid: React.FC<LimbGridProps> = ({
 
   useEffect(() => {
     if (scrollContainerRef) {
-      scrollContainerRef.current = horizontalScrollRef.current;
+      (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = horizontalScrollRef.current;
     }
     return () => {
       if (scrollContainerRef && scrollContainerRef.current === horizontalScrollRef.current) {
-        scrollContainerRef.current = null;
+        (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = null;
       }
     };
   }, [scrollContainerRef, totalSteps]);

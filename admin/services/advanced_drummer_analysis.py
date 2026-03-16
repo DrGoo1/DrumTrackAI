@@ -64,11 +64,13 @@ class AdvancedDrummerAnalysis:
         
         logger.info("Advanced Drummer Analysis initialized")
     
-    def analyze_drummer_performance(self, 
-                                  stem_files: Dict[str, str], 
-                                  tempo: float, 
+    def analyze_drummer_performance(
+                                  self,
+                                  stem_files: Dict[str, str],
+                                  tempo: float,
                                   style: str = "unknown",
-                                  key: str = "C") -> DrummerProfile:
+                                  key: str = "C",
+                                  beats_sec: Optional[List[float]] = None) -> DrummerProfile:
         """Analyze drummer performance from separated stems"""
         logger.info(f"Starting advanced drummer analysis (tempo: {tempo} BPM)")
         
@@ -77,7 +79,7 @@ class AdvancedDrummerAnalysis:
         # Step 1: Analyze individual components
         for component_name in self.drum_components:
             if component_name in stem_files and os.path.exists(stem_files[component_name]):
-                component = self._analyze_drum_component(stem_files[component_name], component_name, tempo)
+                component = self._analyze_drum_component(stem_files[component_name], component_name, tempo, beats_sec=beats_sec)
                 profile.components[component_name] = component
                 
                 if component.hits:
@@ -102,7 +104,13 @@ class AdvancedDrummerAnalysis:
         logger.info("Advanced drummer analysis completed")
         return profile
     
-    def _analyze_drum_component(self, audio_file: str, component_name: str, tempo: float) -> DrumComponent:
+    def _analyze_drum_component(
+        self,
+        audio_file: str,
+        component_name: str,
+        tempo: float,
+        beats_sec: Optional[List[float]] = None,
+    ) -> DrumComponent:
         """Analyze individual drum component"""
         logger.info(f"Analyzing {component_name}: {audio_file}")
         
@@ -135,13 +143,34 @@ class AdvancedDrummerAnalysis:
                     velocities = [v / max_vel for v in velocities]
             
             # Calculate timing deviations
-            beat_interval = 60.0 / tempo
             timing_deviations = []
-            
-            for hit_time in onset_frames:
-                expected_beat = round(hit_time / beat_interval) * beat_interval
-                deviation = (hit_time - expected_beat) * 1000
-                timing_deviations.append(deviation)
+            beat_grid = None
+            try:
+                if beats_sec and len(beats_sec) >= 2:
+                    beat_grid = np.array(beats_sec, dtype=float)
+            except Exception:
+                beat_grid = None
+
+            if beat_grid is not None:
+                for hit_time in onset_frames:
+                    t = float(hit_time)
+                    idx = int(np.searchsorted(beat_grid, t))
+                    candidates = []
+                    if 0 <= idx < len(beat_grid):
+                        candidates.append(float(beat_grid[idx]))
+                    if 0 <= idx - 1 < len(beat_grid):
+                        candidates.append(float(beat_grid[idx - 1]))
+                    if not candidates:
+                        continue
+                    expected_beat = min(candidates, key=lambda bt: abs(bt - t))
+                    deviation = (t - expected_beat) * 1000.0
+                    timing_deviations.append(float(deviation))
+            else:
+                beat_interval = 60.0 / max(1e-6, float(tempo))
+                for hit_time in onset_frames:
+                    expected_beat = round(float(hit_time) / beat_interval) * beat_interval
+                    deviation = (float(hit_time) - expected_beat) * 1000.0
+                    timing_deviations.append(float(deviation))
             
             # Extract spectral features
             spectral_features = self._extract_spectral_features(y, sr)

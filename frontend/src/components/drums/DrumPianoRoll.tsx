@@ -1121,11 +1121,11 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
 
   React.useEffect(() => {
     if (scrollContainerRef) {
-      scrollContainerRef.current = laneScrollRef.current;
+      (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = laneScrollRef.current;
     }
     return () => {
       if (scrollContainerRef && scrollContainerRef.current === laneScrollRef.current) {
-        scrollContainerRef.current = null;
+        (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = null;
       }
     };
   }, [scrollContainerRef, drumTrack?.track_id]);

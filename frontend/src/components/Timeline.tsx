@@ -62,6 +62,7 @@ interface TimelineProps {
   bpm: number;
   tempoMap?: Array<{ tSec: number; bpm: number }>;
   beatTimes?: number[];
+  beatZeroOffsetSec?: number;
   tracks: UploadedTrack[];
   sections: Section[];
   onSectionsChange: (sections: Section[]) => void;
@@ -392,10 +393,10 @@ const Timeline: React.FC<TimelineProps> = ({
 
   useEffect(() => {
     if (!scrollSyncRef) return;
-    scrollSyncRef.current = scrollContainerRef.current;
+    (scrollSyncRef as React.MutableRefObject<HTMLDivElement | null>).current = scrollContainerRef.current;
     return () => {
-      if (scrollSyncRef.current === scrollContainerRef.current) {
-        scrollSyncRef.current = null;
+      if ((scrollSyncRef as React.MutableRefObject<HTMLDivElement | null>).current === scrollContainerRef.current) {
+        (scrollSyncRef as React.MutableRefObject<HTMLDivElement | null>).current = null;
       }
     };
   }, [scrollSyncRef]);

@@ -2261,7 +2261,7 @@ def generate_with_v2_builder(config: DrumGenerationConfig) -> Dict:
         internal_drum_events=internal_events,
         style_id=config.style,
         performance_spec=perf_spec,
-        resolution_ppq=960,
+        resolution_ppq=1920,
         section_label=section_label,
     )
     
@@ -3347,8 +3347,8 @@ def _load_internal_events_from_midi_path(*, midi_path: str, config: DrumGenerati
     tempo = float((getattr(config, "tempos", None) or [120])[0] or 120)
     total_bars = int(getattr(config, "measure_count", 1) or 1)
 
-    # Builder uses PPQ=960; normalize MIDI ticks into that grid.
-    resolution_ppq = 960
+    # Builder uses PPQ=1920; normalize MIDI ticks into that grid.
+    resolution_ppq = 1920
     src_ppq = int(getattr(mid, "ticks_per_beat", 480) or 480)
     scale = float(resolution_ppq) / float(max(1, src_ppq))
     bar_ticks = int(beats_per_bar * resolution_ppq)
@@ -4244,7 +4244,8 @@ def export_track_to_midi_base64(dcsm_track, config: DrumGenerationConfig) -> str
     except Exception:
         render_articulated_notes_to_midi = None
 
-    ppq = 480
+    ppq = int(getattr(dcsm_track, 'resolution_ppq', 480) or 480)
+    ppq = max(48, min(ppq, 1000000))
     beats_per_bar = int(config.time_signature[0]) if getattr(config, 'time_signature', None) else 4
     beats_per_bar = max(1, beats_per_bar)
     bar_ticks = beats_per_bar * ppq
@@ -4283,10 +4284,15 @@ def export_track_to_midi_base64(dcsm_track, config: DrumGenerationConfig) -> str
         )
 
     if render_articulated_notes_to_midi is not None:
+        try:
+            tempo_bpm = float((getattr(config, "tempos", None) or [120])[0] or 120)
+        except Exception:
+            tempo_bpm = 120.0
         rendered = render_articulated_notes_to_midi(
             {
                 'plugin': plugin,
                 'ppq': ppq,
+                'tempo_bpm': tempo_bpm,
                 'notes': notes_out,
             }
         )

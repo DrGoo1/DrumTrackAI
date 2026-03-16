@@ -97,13 +97,13 @@ export class DrumPlayerEngine {
 
     const attempt = async () => {
       try {
-        if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+        if (this.ctx.state === "suspended") {
           await this.ctx.resume();
         }
       } catch {
         // ignore
       }
-      if (this.ctx.state !== "suspended" && this.ctx.state !== "interrupted") {
+      if (this.ctx.state !== "suspended") {
         try {
           window.removeEventListener("pointerdown", onGesture, true);
           window.removeEventListener("touchstart", onGesture, true);
@@ -128,7 +128,7 @@ export class DrumPlayerEngine {
   }
 
   async ensureRunning() {
-    if (this.ctx.state !== "suspended" && this.ctx.state !== "interrupted") return;
+    if (this.ctx.state !== "suspended") return;
     this.installResumeHook();
     try {
       await this.ctx.resume();
@@ -136,7 +136,7 @@ export class DrumPlayerEngine {
       // keep hook installed; caller may retry after a gesture
       throw e;
     }
-    if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+    if (this.ctx.state === "suspended") {
       throw new Error("AudioContext is not running. Click anywhere in the page, then try Play again.");
     }
   }
@@ -278,7 +278,7 @@ export class DrumPlayerEngine {
     // gesture, the AudioContext can remain suspended and playback will be silent.
     // Resume opportunistically on play.
     try {
-      if (this.ctx.state === "suspended" || this.ctx.state === "interrupted") {
+      if (this.ctx.state === "suspended") {
         void this.ctx.resume();
       }
     } catch {

@@ -36,6 +36,7 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     plugin = str(payload.get("plugin", "jamstix"))
     ppq = int(payload.get("ppq", 480)) or 480
+    tempo_bpm = float(payload.get("tempo_bpm", 120.0) or 120.0)
     advanced = bool(payload.get("advancedArticulations", False))
     notes_in: List[Dict[str, Any]] = list(payload.get("notes", []))
 
@@ -47,8 +48,13 @@ def render_articulated_notes_to_midi(payload: Dict[str, Any]) -> Dict[str, Any]:
     track = MidiTrack()
     mid.tracks.append(track)
 
-    # Simple: constant 120 BPM tempo
-    track.append(MetaMessage("set_tempo", tempo=500000, time=0))
+    # Constant tempo (caller-provided). Tempo meta message uses microseconds per beat.
+    try:
+        tempo_bpm = max(1e-3, float(tempo_bpm))
+    except Exception:
+        tempo_bpm = 120.0
+    tempo_us = int(round(60_000_000.0 / tempo_bpm))
+    track.append(MetaMessage("set_tempo", tempo=tempo_us, time=0))
 
     # Sort by start tick
     events: List[Dict[str, Any]] = []

@@ -12,9 +12,14 @@ import threading
 from typing import Dict, List, Optional, Any
 from urllib.parse import quote_plus, urlparse, parse_qs
 
-import pytube
-from pytube import YouTube
-from pytube.innertube import InnerTube
+try:
+    import pytube
+    from pytube import YouTube
+    from pytube.innertube import InnerTube
+except Exception:
+    pytube = None
+    YouTube = None
+    InnerTube = None
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,8 @@ class YouTubeSearchAPI:
         
         # Configure PyTube for better compatibility
         try:
+            if pytube is None or InnerTube is None:
+                raise RuntimeError("pytube not installed")
             # Configure multiple client versions for better fallback options
             # Web client - Multiple version configurations
             web_clients = [
@@ -314,6 +321,8 @@ class YouTubeSearchAPI:
             Dictionary with video information or None if failed
         """
         try:
+            if YouTube is None:
+                return None
             if not video_id:
                 return None
                 

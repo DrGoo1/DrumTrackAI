@@ -18,7 +18,7 @@ export function getSharedAudioContext(opts?: SharedAudioContextOptions): AudioCo
 export async function resumeSharedAudioContext(): Promise<void> {
   const ctx = globalThis.__dtk_sharedAudioContext;
   if (!ctx) return;
-  if (ctx.state === "suspended" || ctx.state === "interrupted") {
+  if (ctx.state === "suspended") {
     await ctx.resume();
   }
 }
