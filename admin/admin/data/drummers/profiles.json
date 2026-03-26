@@ -1,0 +1,574 @@
+{
+  "profiles": [
+    {
+      "id": "gene_hoglan",
+      "name": "Gene Hoglan",
+      "band": "Death, Strapping Young Lad, Dark Angel",
+      "bands": [
+        "Death",
+        "Strapping Young Lad",
+        "Dark Angel",
+        "Testament",
+        "Dethklok"
+      ],
+      "styles": [
+        "Death Metal",
+        "Thrash Metal",
+        "Technical Metal"
+      ],
+      "alias": "The Atomic Clock",
+      "uniqueness_value": 0.95,
+      "notable_songs": [
+        "Crystal Mountain",
+        "Symbolic",
+        "Velvet Kevorkian",
+        "The Philosopher",
+        "Love?"
+      ],
+      "techniques": [
+        "Blast beats",
+        "Double bass",
+        "Complex fills",
+        "Odd time signatures",
+        "Precise timing"
+      ],
+      "youtube_urls": [
+        "https://www.youtube.com/watch?v=example1",
+        "https://www.youtube.com/watch?v=example2"
+      ]
+    },
+    {
+      "id": "lars_ulrich",
+      "name": "Lars Ulrich",
+      "band": "Metallica",
+      "bands": [
+        "Metallica"
+      ],
+      "styles": [
+        "Heavy Metal",
+        "Thrash Metal"
+      ],
+      "alias": "Mr. Napster",
+      "uniqueness_value": 0.85,
+      "notable_songs": [
+        "One",
+        "Master of Puppets",
+        "Enter Sandman",
+        "Battery",
+        "Creeping Death"
+      ],
+      "techniques": [
+        "Aggressive beats",
+        "Simple but effective patterns",
+        "Stadium fills",
+        "Double bass patterns"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "joey_jordison",
+      "name": "Joey Jordison",
+      "band": "Slipknot, Murderdolls",
+      "bands": [
+        "Slipknot",
+        "Murderdolls",
+        "Vimic",
+        "Sinsaenum"
+      ],
+      "styles": [
+        "Nu Metal",
+        "Alternative Metal",
+        "Industrial"
+      ],
+      "alias": "Number 1",
+      "uniqueness_value": 0.92,
+      "notable_songs": [
+        "Wait and Bleed",
+        "Duality",
+        "Psychosocial",
+        "Before I Forget",
+        "The Heretic Anthem"
+      ],
+      "techniques": [
+        "Fast double bass",
+        "Tribal rhythms",
+        "Percussive elements",
+        "Unconventional patterns"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "tomas_haake",
+      "name": "Tomas Haake",
+      "band": "Meshuggah",
+      "bands": [
+        "Meshuggah"
+      ],
+      "styles": [
+        "Djent",
+        "Progressive Metal",
+        "Technical Metal"
+      ],
+      "alias": "The Polyrhythm Master",
+      "uniqueness_value": 0.98,
+      "notable_songs": [
+        "Bleed",
+        "Demiurge",
+        "Rational Gaze",
+        "Future Breed Machine",
+        "Clockworks"
+      ],
+      "techniques": [
+        "Polyrhythms",
+        "Complex time signatures",
+        "Hertas",
+        "Mechanical precision",
+        "4-over-3 patterns"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "mike_portnoy",
+      "name": "Mike Portnoy",
+      "band": "Dream Theater, Sons of Apollo",
+      "bands": [
+        "Dream Theater",
+        "Sons of Apollo",
+        "The Winery Dogs",
+        "Flying Colors",
+        "Liquid Tension Experiment"
+      ],
+      "styles": [
+        "Progressive Rock",
+        "Progressive Metal"
+      ],
+      "alias": "The Octopus",
+      "uniqueness_value": 0.93,
+      "notable_songs": [
+        "Pull Me Under",
+        "The Dance of Eternity",
+        "Metropolis Pt. 1",
+        "6:00",
+        "As I Am"
+      ],
+      "techniques": [
+        "Complex arrangements",
+        "Odd time signatures",
+        "Dynamic control",
+        "Double bass grooves",
+        "Orchestral approach"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "danny_carey",
+      "name": "Danny Carey",
+      "band": "Tool",
+      "bands": [
+        "Tool",
+        "Legend",
+        "Volto!",
+        "Zaum"
+      ],
+      "styles": [
+        "Progressive Metal",
+        "Alternative Metal",
+        "Art Rock"
+      ],
+      "alias": "The Fibonacci Drummer",
+      "uniqueness_value": 0.96,
+      "notable_songs": [
+        "Schism",
+        "Pneuma",
+        "The Pot",
+        "Forty Six & 2",
+        "Vicarious"
+      ],
+      "techniques": [
+        "Polyrhythms",
+        "Sacred geometry patterns",
+        "Electronic integration",
+        "Tabla influences",
+        "Mathematical precision"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "gavin_harrison",
+      "name": "Gavin Harrison",
+      "band": "Porcupine Tree, King Crimson",
+      "bands": [
+        "Porcupine Tree",
+        "King Crimson",
+        "The Pineapple Thief"
+      ],
+      "styles": [
+        "Progressive Rock",
+        "Art Rock"
+      ],
+      "alias": "The Precision Machine",
+      "uniqueness_value": 0.94,
+      "notable_songs": [
+        "Anesthetize",
+        "Sound of Muzak",
+        "Blackest Eyes",
+        "Deadwing",
+        "Fear of a Blank Planet"
+      ],
+      "techniques": [
+        "Ghost notes",
+        "Displacement",
+        "Linear patterns",
+        "Subtle dynamics",
+        "Rhythmic illusions"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "keith_moon",
+      "name": "Keith Moon",
+      "band": "The Who",
+      "bands": [
+        "The Who"
+      ],
+      "styles": [
+        "Rock",
+        "Hard Rock"
+      ],
+      "alias": "Moon the Loon",
+      "uniqueness_value": 0.9,
+      "notable_songs": [
+        "Won't Get Fooled Again",
+        "Baba O'Riley",
+        "My Generation",
+        "Pinball Wizard",
+        "Behind Blue Eyes"
+      ],
+      "techniques": [
+        "Explosive fills",
+        "Lead drumming",
+        "Theatrical playing",
+        "Anarchic style",
+        "Constant motion"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "john_bonham",
+      "name": "John Bonham",
+      "band": "Led Zeppelin",
+      "bands": [
+        "Led Zeppelin",
+        "Band of Joy"
+      ],
+      "styles": [
+        "Rock",
+        "Blues Rock",
+        "Hard Rock"
+      ],
+      "alias": "Bonzo",
+      "uniqueness_value": 0.95,
+      "notable_songs": [
+        "Whole Lotta Love",
+        "Kashmir",
+        "When the Levee Breaks",
+        "Good Times Bad Times",
+        "Moby Dick"
+      ],
+      "techniques": [
+        "Triplet patterns",
+        "Heavy foot",
+        "Dynamic range",
+        "Groove-oriented",
+        "Single bass virtuosity"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "dave_grohl",
+      "name": "Dave Grohl",
+      "band": "Nirvana, Foo Fighters",
+      "bands": [
+        "Nirvana",
+        "Foo Fighters",
+        "Them Crooked Vultures",
+        "Queens of the Stone Age"
+      ],
+      "styles": [
+        "Grunge",
+        "Alternative Rock",
+        "Rock"
+      ],
+      "alias": "The Nice Guy of Rock",
+      "uniqueness_value": 0.87,
+      "notable_songs": [
+        "Smells Like Teen Spirit",
+        "In Bloom",
+        "Everlong",
+        "Monkey Wrench",
+        "The Pretender"
+      ],
+      "techniques": [
+        "Power playing",
+        "Simple effectiveness",
+        "Energetic style",
+        "Melodic approach",
+        "Primal energy"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "stewart_copeland",
+      "name": "Stewart Copeland",
+      "band": "The Police",
+      "bands": [
+        "The Police",
+        "Oysterhead",
+        "Animal Logic"
+      ],
+      "styles": [
+        "Rock",
+        "Reggae",
+        "New Wave"
+      ],
+      "alias": "The Rhythmatist",
+      "uniqueness_value": 0.91,
+      "notable_songs": [
+        "Roxanne",
+        "Message in a Bottle",
+        "Walking on the Moon",
+        "Every Breath You Take",
+        "Synchronicity II"
+      ],
+      "techniques": [
+        "Reggae influences",
+        "Hi-hat work",
+        "Splash cymbals",
+        "Syncopation",
+        "World music fusion"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "vinnie_colaiuta",
+      "name": "Vinnie Colaiuta",
+      "band": "Frank Zappa, Jeff Beck, Sting",
+      "bands": [
+        "Frank Zappa",
+        "Jeff Beck",
+        "Sting",
+        "Herbie Hancock"
+      ],
+      "styles": [
+        "Fusion",
+        "Jazz",
+        "Rock"
+      ],
+      "alias": "The Chameleon",
+      "uniqueness_value": 0.97,
+      "notable_songs": [
+        "Joe's Garage",
+        "Seven Days",
+        "I Can't Dance",
+        "Keep It Greasy",
+        "Black Page"
+      ],
+      "techniques": [
+        "Technical mastery",
+        "Versatility",
+        "Complex independence",
+        "Micro-timing",
+        "Genre fluidity"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "neil_peart",
+      "name": "Neil Peart",
+      "band": "Rush",
+      "bands": [
+        "Rush"
+      ],
+      "styles": [
+        "Progressive Rock",
+        "Hard Rock"
+      ],
+      "alias": "The Professor",
+      "uniqueness_value": 0.94,
+      "notable_songs": [
+        "Tom Sawyer",
+        "YYZ",
+        "The Spirit of Radio",
+        "Limelight",
+        "2112"
+      ],
+      "techniques": [
+        "Intricate patterns",
+        "Lyrical approach",
+        "Electronic integration",
+        "Compositional drumming",
+        "Time signature mastery"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "questlove",
+      "name": "Questlove",
+      "band": "The Roots",
+      "bands": [
+        "The Roots",
+        "The Philadelphia Experiment",
+        "Soulquarians"
+      ],
+      "styles": [
+        "Hip-Hop",
+        "Neo-Soul",
+        "R&B"
+      ],
+      "alias": "Questo",
+      "uniqueness_value": 0.89,
+      "notable_songs": [
+        "You Got Me",
+        "The Seed",
+        "Break You Off",
+        "How I Got Over",
+        "Rising Down"
+      ],
+      "techniques": [
+        "Hip-hop grooves",
+        "Sample-based playing",
+        "Pocket playing",
+        "Minimalist approach",
+        "Human MPC style"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "dennis_chambers",
+      "name": "Dennis Chambers",
+      "band": "Parliament-Funkadelic, John Scofield",
+      "bands": [
+        "Parliament-Funkadelic",
+        "John Scofield",
+        "Santana",
+        "CAB"
+      ],
+      "styles": [
+        "Funk",
+        "Fusion",
+        "Jazz"
+      ],
+      "alias": "The Funkmaster",
+      "uniqueness_value": 0.92,
+      "notable_songs": [
+        "Cissy Strut",
+        "What Is Hip",
+        "Pick Hits Live",
+        "Give Up the Funk",
+        "Blue Matter"
+      ],
+      "techniques": [
+        "Funk grooves",
+        "Fast single strokes",
+        "Gospel chops",
+        "Linear fills",
+        "Speed and power"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "jeff_porcaro",
+      "name": "Jeff Porcaro",
+      "band": "Toto, Steely Dan",
+      "bands": [
+        "Toto",
+        "Steely Dan",
+        "Michael Jackson",
+        "Boz Scaggs"
+      ],
+      "styles": [
+        "Rock",
+        "Pop",
+        "Jazz"
+      ],
+      "alias": "The Groove Master",
+      "uniqueness_value": 0.9,
+      "notable_songs": [
+        "Rosanna",
+        "Africa",
+        "Hold the Line",
+        "Aja",
+        "Human Nature"
+      ],
+      "techniques": [
+        "Half-time shuffle",
+        "Studio precision",
+        "Groove mastery",
+        "The Purdie Shuffle",
+        "Tasteful playing"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "elvin_jones",
+      "name": "Elvin Jones",
+      "band": "John Coltrane Quartet",
+      "bands": [
+        "John Coltrane Quartet",
+        "Elvin Jones Jazz Machine"
+      ],
+      "styles": [
+        "Jazz",
+        "Post-Bop"
+      ],
+      "alias": "The Polyrhythmic Pioneer",
+      "uniqueness_value": 0.93,
+      "notable_songs": [
+        "A Love Supreme",
+        "My Favorite Things",
+        "Impressions",
+        "Giant Steps",
+        "Naima"
+      ],
+      "techniques": [
+        "Polyrhythmic playing",
+        "Rolling triplets",
+        "Dynamic swells",
+        "Circular motions",
+        "Interactive playing"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "tony_williams",
+      "name": "Tony Williams",
+      "band": "Miles Davis Quintet",
+      "bands": [
+        "Miles Davis Quintet",
+        "Tony Williams Lifetime",
+        "V.S.O.P."
+      ],
+      "styles": [
+        "Jazz",
+        "Fusion"
+      ],
+      "alias": "The Prodigy",
+      "uniqueness_value": 0.92,
+      "notable_songs": [
+        "Seven Steps to Heaven",
+        "Nefertiti",
+        "Emergency!",
+        "Maiden Voyage",
+        "E.S.P."
+      ],
+      "techniques": [
+        "Speed",
+        "Polyrhythms",
+        "Ride cymbal patterns",
+        "Avant-garde approach",
+        "Dynamic innovation"
+      ],
+      "youtube_urls": []
+    }
+  ]
+}

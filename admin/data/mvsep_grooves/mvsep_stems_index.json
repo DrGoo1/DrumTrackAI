@@ -1,0 +1,178 @@
+{
+  "cissy_strut": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\cissy_strut\\drumsep_components\\drumsep_residual.wav"
+  },
+  "come_together": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\come_together\\drumsep_components\\drumsep_residual.wav"
+  },
+  "crazy_train": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\crazy_train\\drumsep_components\\drumsep_residual.wav"
+  },
+  "fifty_ways_to_leave_your_lover": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fifty_ways_to_leave_your_lover\\drumsep_components\\drumsep_residual.wav"
+  },
+  "fool_in_the_rain": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\fool_in_the_rain\\drumsep_components\\drumsep_residual.wav"
+  },
+  "hot_for_teacher": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\hot_for_teacher\\drumsep_components\\drumsep_residual.wav"
+  },
+  "rosanna": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\rosanna\\drumsep_components\\drumsep_residual.wav"
+  },
+  "sing_sing_sing": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sing_sing_sing\\drumsep_components\\drumsep_residual.wav"
+  },
+  "sunday_bloody_sunday": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\sunday_bloody_sunday\\drumsep_components\\drumsep_residual.wav"
+  },
+  "superstitious": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\superstitious\\drumsep_components\\drumsep_residual.wav"
+  },
+  "take_five": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\take_five\\drumsep_components\\drumsep_residual.wav"
+  },
+  "tom_sawyer": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\tom_sawyer\\drumsep_components\\drumsep_residual.wav"
+  },
+  "walk_this_way": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\walk_this_way\\drumsep_components\\drumsep_residual.wav"
+  },
+  "were_not_gonna_take_it": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\were_not_gonna_take_it\\drumsep_components\\drumsep_residual.wav"
+  },
+  "we_will_rock_you": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\we_will_rock_you\\drumsep_components\\drumsep_residual.wav"
+  },
+  "wipe_out": {
+    "drum_stem": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drums.wav",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_drums.wav",
+    "ride": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_ride.wav",
+    "hh": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_kick.wav",
+    "crash": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_crash.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_snare.wav",
+    "toms": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\mvsep_grooves\\wipe_out\\drumsep_components\\drumsep_residual.wav"
+  }
+}

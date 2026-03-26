@@ -1,0 +1,121 @@
+import { EuclideanLaneConfig } from "./euclidean";
+
+export interface EuclideanPreset {
+  id: string;
+  name: string;
+  description: string;
+  lanes: EuclideanLaneConfig[];
+}
+
+export const EUCLIDEAN_PRESETS: EuclideanPreset[] = [
+  {
+    id: "in_fives",
+    name: "In Fives",
+    description: "Polyrhythmic pattern with 5-based accents across the kit.",
+    lanes: [
+      {
+        id: "kick",
+        instrumentId: "kick",
+        label: "Kick",
+        color: "#9b5cff",
+        steps: 16,
+        hits: 5,
+        accents: 2,
+        rotate: 0,
+        velocity: 115,
+        accentVelocity: 125,
+      },
+      {
+        id: "snare",
+        instrumentId: "snare",
+        label: "Snare",
+        color: "#ff6f91",
+        steps: 16,
+        hits: 3,
+        accents: 1,
+        rotate: 2,
+        velocity: 100,
+        accentVelocity: 118,
+      },
+      {
+        id: "hh_closed",
+        instrumentId: "hihat_closed",
+        label: "Hi-Hat",
+        color: "#6ad4ff",
+        steps: 16,
+        hits: 7,
+        accents: 2,
+        rotate: 1,
+        velocity: 80,
+        accentVelocity: 95,
+      },
+      {
+        id: "ride",
+        instrumentId: "ride",
+        label: "Ride",
+        color: "#ffd56a",
+        steps: 16,
+        hits: 5,
+        accents: 1,
+        rotate: 0,
+        velocity: 90,
+        accentVelocity: 110,
+      },
+    ],
+  },
+  {
+    id: "techno_pulses",
+    name: "Techno Pulses",
+    description: "Four-on-the-floor kick, Euclidean hats, sparse snare.",
+    lanes: [
+      {
+        id: "kick",
+        instrumentId: "kick",
+        label: "Kick",
+        color: "#9b5cff",
+        steps: 16,
+        hits: 4,
+        accents: 4,
+        rotate: 0,
+        velocity: 120,
+        accentVelocity: 127,
+      },
+      {
+        id: "snare",
+        instrumentId: "snare",
+        label: "Snare",
+        color: "#ff6f91",
+        steps: 16,
+        hits: 2,
+        accents: 1,
+        rotate: 2,
+        velocity: 100,
+        accentVelocity: 115,
+      },
+      {
+        id: "hh_closed",
+        instrumentId: "hihat_closed",
+        label: "Hi-Hat",
+        color: "#6ad4ff",
+        steps: 16,
+        hits: 11,
+        accents: 3,
+        rotate: 0,
+        velocity: 80,
+        accentVelocity: 95,
+      },
+      {
+        id: "crash",
+        instrumentId: "crash",
+        label: "Crash",
+        color: "#ffd56a",
+        steps: 16,
+        hits: 1,
+        accents: 1,
+        rotate: 0,
+        velocity: 110,
+        accentVelocity: 127,
+      },
+    ],
+  },
+];

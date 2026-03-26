@@ -1,0 +1,49 @@
+{
+  "tempo": 120.0,
+  "key": "C major",
+  "time_signature": "4/4",
+  "duration": 240.0,
+  "sections": [
+    {
+      "name": "intro",
+      "start": 0.0,
+      "end": 16.0
+    },
+    {
+      "name": "verse_1",
+      "start": 16.0,
+      "end": 48.0
+    },
+    {
+      "name": "chorus_1",
+      "start": 48.0,
+      "end": 80.0
+    },
+    {
+      "name": "verse_2",
+      "start": 80.0,
+      "end": 112.0
+    },
+    {
+      "name": "chorus_2",
+      "start": 112.0,
+      "end": 144.0
+    },
+    {
+      "name": "bridge",
+      "start": 144.0,
+      "end": 176.0
+    },
+    {
+      "name": "chorus_3",
+      "start": 176.0,
+      "end": 208.0
+    },
+    {
+      "name": "outro",
+      "start": 208.0,
+      "end": 240.0
+    }
+  ],
+  "analysis_file": "H:\\DrumTracKAI_v1.1.7\\admin\\data\\analysis_results\\job_7eae2f57-761b-4448-85fb-1023b491f444\\arrangement_analysis.json"
+}

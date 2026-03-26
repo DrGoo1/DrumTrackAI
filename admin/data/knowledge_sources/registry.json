@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "drum_education_root_pdfs",
+      "type": "pdf_dir",
+      "path": "Drum_Education",
+      "tags": ["education", "technique", "grooves"],
+      "notes": "All PDFs in Drum_Education root"
+    },
+    {
+      "id": "bangthedrumschool_pdfs",
+      "type": "pdf_dir",
+      "path": "Drum_Education/BangTheDrumSchool",
+      "tags": ["fills", "chops", "phrasing"],
+      "notes": "Local PDFs downloaded via admin/tools/download_bang_pdfs.py"
+    },
+    {
+      "id": "bangthedrumschool_rag_jsonl",
+      "type": "jsonl_file",
+      "path": "Drum_Education/extracted/BangTheDrumSchool_rag.jsonl",
+      "tags": ["fills", "chops", "phrasing"],
+      "notes": "Pre-chunked RAG JSONL extracted from BangTheDrumSchool"
+    },
+    {
+      "id": "famous_drumbeats_ebook_pages_jsonl",
+      "type": "jsonl_file",
+      "path": "Drum_Education/extracted/FamousDrumBeats_eBook/pages.jsonl",
+      "tags": ["grooves", "transcriptions"],
+      "notes": "Pre-extracted text pages jsonl"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "drumtrackai_admin",
+  "version": "2.0.0",
+  "model_file": "drumtrackai_model_admin_db.pt",
+  "deployed_at": "2025-11-20T13:17:24.262514",
+  "metadata": {
+    "validation_score": 66.66666666666666,
+    "r2_score": 0.37161314487457275,
+    "train_samples": 7000,
+    "source": "admin_database",
+    "pattern_count": 91074
+  }
+}

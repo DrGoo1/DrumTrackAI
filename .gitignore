@@ -1,0 +1,91 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+drumtrackai_env/
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+build/
+dist/
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+*.lib
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+uploads/
+sessions/
+brain_configs/
+logs/
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!.env.template
+!**/.env.example
+!**/.env.template
+admin/mvsep_config.txt
+admin/admin/mvsep_config.txt
+*.wav
+*.mp3
+*.flac
+*.aac
+*.mid
+*.midi
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Local kit packs (kept outside git)
+frontend/public/kits/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets files
+secrets.yml
+secrets.yaml
+**/secrets.yml
+**/secrets.yaml
+
+# Ensure core repo dirs are tracked
+!admin/
+!backend/
+!frontend/
+!infrastructure/
+!_ARCHIVE_FRONTENDS/

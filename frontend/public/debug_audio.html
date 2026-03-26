@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Audio Debug Tool</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1e293b; color: #e2e8f0; }
+    button { padding: 10px 20px; margin: 5px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #2563eb; }
+    pre { background: #0f172a; padding: 15px; border-radius: 5px; overflow-x: auto; }
+    .warning { color: #fbbf24; }
+    .error { color: #ef4444; }
+    .success { color: #10b981; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Audio Element Debugger</h1>
+  <p>Use these tools to find duplicate audio sources</p>
+  
+  <button onclick="installPlayHook()">Install Play Hook</button>
+  <button onclick="listAllAudio()">List All Audio Elements</button>
+  <button onclick="muteAllButFirst()">Mute All But First</button>
+  <button onclick="muteAll()">Mute All</button>
+  <button onclick="clearLog()">Clear Log</button>
+  
+  <h2>Output:</h2>
+  <pre id="output"></pre>
+  
+  <script>
+    let logArea = document.getElementById('output');
+    
+    function log(msg, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      const className = type === 'warning' ? 'warning' : type === 'error' ? 'error' : type === 'success' ? 'success' : '';
+      logArea.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+    
+    function clearLog() {
+      logArea.innerHTML = '';
+    }
+    
+    function installPlayHook() {
+      if (window.__mediaPlayHookInstalled) {
+        log('❌ Hook already installed', 'warning');
+        return;
+      }
+      
+      window.__mediaPlayHookInstalled = true;
+      const origPlay = HTMLMediaElement.prototype.play;
+      
+      HTMLMediaElement.prototype.play = function(...args) {
+        try {
+          log(`[MEDIA PLAY] ${this.tagName} - ${this.currentSrc || this.src}`, 'success');
+          log(`  autoplay: ${this.autoplay}, loop: ${this.loop}, volume: ${this.volume}, muted: ${this.muted}`, 'info');
+        } catch (e) {
+          log(`Error logging media play: ${e}`, 'error');
+        }
+        return origPlay.apply(this, args);
+      };
+      
+      log('✅ Play hook installed! Now play audio and watch for duplicates.', 'success');
+    }
+    
+    function listAllAudio() {
+      const audios = document.querySelectorAll('audio, video');
+      log(`\n═══ Found ${audios.length} media elements ═══`, 'success');
+      
+      if (audios.length === 0) {
+        log('No audio/video elements found', 'warning');
+        return;
+      }
+      
+      audios.forEach((el, i) => {
+        log(`\n#${i} ${el.tagName}:`, 'success');
+        log(`  src: ${el.currentSrc || el.src || '(none)'}`);
+        log(`  autoplay: ${el.autoplay}, loop: ${el.loop}`);
+        log(`  volume: ${el.volume}, muted: ${el.muted}`);
+        log(`  paused: ${el.paused}, ended: ${el.ended}`);
+        log(`  currentTime: ${el.currentTime.toFixed(2)}s`);
+        log(`  duration: ${el.duration ? el.duration.toFixed(2) + 's' : 'unknown'}`);
+      });
+      
+      if (audios.length > 1) {
+        const srcs = new Set();
+        let dupes = 0;
+        audios.forEach(el => {
+          const src = el.currentSrc || el.src;
+          if (src && srcs.has(src)) dupes++;
+          if (src) srcs.add(src);
+        });
+        if (dupes > 0) {
+          log(`\n⚠️  WARNING: ${dupes} duplicate source(s) detected!`, 'warning');
+        }
+      }
+    }
+    
+    function muteAllButFirst() {
+      const els = Array.from(document.querySelectorAll('audio, video'));
+      if (els.length === 0) {
+        log('No media elements found', 'warning');
+        return;
+      }
+      
+      log(`\nMuting all except first element...`, 'success');
+      els.forEach((el, i) => {
+        if (i === 0) {
+          el.muted = false;
+          el.volume = 1.0;
+          log(`#${i} ACTIVE: ${el.currentSrc || el.src}`, 'success');
+        } else {
+          el.muted = true;
+          el.volume = 0.0;
+          log(`#${i} MUTED: ${el.currentSrc || el.src}`, 'warning');
+        }
+      });
+      log('✅ Done! If distortion is gone, duplicates were the problem.', 'success');
+    }
+    
+    function muteAll() {
+      const els = Array.from(document.querySelectorAll('audio, video'));
+      log(`\nMuting all ${els.length} elements...`, 'warning');
+      els.forEach((el, i) => {
+        el.pause();
+        el.muted = true;
+        el.volume = 0.0;
+        log(`#${i} MUTED: ${el.currentSrc || el.src}`);
+      });
+    }
+    
+    // Auto-install on load
+    window.addEventListener('load', () => {
+      log('🚀 Audio Debugger loaded. Click "Install Play Hook" then use your app.', 'success');
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-launcher
+  namespace: drumtrackai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: job-launcher
+  template:
+    metadata:
+      labels:
+        app: job-launcher
+    spec:
+      serviceAccountName: job-launcher
+      containers:
+        - name: job-launcher
+          image: drumtrackai/job-launcher:latest
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: JOB_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_ENDPOINT
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: S3_SECRET_KEY
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_BUCKET
+            - name: S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_REGION
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: MVSEP_JOB_TEMPLATE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: MVSEP_JOB_TEMPLATE_NAME
+            - name: MAX_CONCURRENT_MVSEP_JOBS
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: MAX_CONCURRENT_MVSEP_JOBS

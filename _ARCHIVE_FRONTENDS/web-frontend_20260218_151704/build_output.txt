@@ -1,0 +1,6 @@
+
+> drumtrackai-frontend@1.1.16 build
+> react-scripts build
+
+'react-scripts' is not recognized as an internal or external command,
+operable program or batch file.

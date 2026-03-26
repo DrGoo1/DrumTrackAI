@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DrumTracKAI + Superior Drummer 3 Monitor</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .online-dot {
+            width: 12px;
+            height: 12px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .offline-dot {
+            width: 12px;
+            height: 12px;
+            background: #ef4444;
+            border-radius: 50%;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 0.5rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            background: white;
+            color: #6366f1;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .tab:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .stat-info h3 {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-info p {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+        }
+
+        .item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .item-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .item-subtitle {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-completed {
+            background: rgba(34, 197, 94, 0.2);
+            color: #22c55e;
+        }
+
+        .status-processing {
+            background: rgba(59, 130, 246, 0.2);
+            color: #3b82f6;
+        }
+
+        .status-idle {
+            background: rgba(156, 163, 175, 0.2);
+            color: #9ca3af;
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .error {
+            text-align: center;
+            padding: 2rem;
+            color: #ef4444;
+        }
+
+        .sd3-highlight {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            padding: 1rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+        }
+
+        .sd3-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .sd3-stat {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+
+        .sd3-stat h4 {
+            font-size: 1.5rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .sd3-stat p {
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const API_BASE = 'http://localhost:5001/api';
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('sd3');
+            const [data, setData] = useState({
+                downloads: [],
+                mvsep: [],
+                activities: [],
+                stats: {},
+                gpu: {},
+                sd3: {},
+                loading: true,
+                error: null
+            });
+            const [connectionStatus, setConnectionStatus] = useState('connecting');
+
+            const fetchData = async () => {
+                try {
+                    setConnectionStatus('connecting');
+                    
+                    const healthResponse = await fetch(`${API_BASE}/health`, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (!healthResponse.ok) {
+                        throw new Error('API server not responding');
+                    }
+
+                    const [downloadsRes, mvsepRes, activitiesRes, statsRes, gpuRes, sd3Res] = await Promise.all([
+                        fetch(`${API_BASE}/downloads`),
+                        fetch(`${API_BASE}/mvsep`),
+                        fetch(`${API_BASE}/activities`),
+                        fetch(`${API_BASE}/stats`),
+                        fetch(`${API_BASE}/gpu`),
+                        fetch(`${API_BASE}/sd3`)
+                    ]);
+
+                    const [downloads, mvsep, activities, stats, gpu, sd3] = await Promise.all([
+                        downloadsRes.json(),
+                        mvsepRes.json(),
+                        activitiesRes.json(),
+                        statsRes.json(),
+                        gpuRes.json(),
+                        sd3Res.json()
+                    ]);
+
+                    setData({
+                        downloads,
+                        mvsep,
+                        activities,
+                        stats,
+                        gpu,
+                        sd3,
+                        loading: false,
+                        error: null
+                    });
+                    
+                    setConnectionStatus('connected');
+                } catch (error) {
+                    console.error('Failed to fetch data:', error);
+                    setData(prev => ({
+                        ...prev,
+                        loading: false,
+                        error: error.message
+                    }));
+                    setConnectionStatus('error');
+                }
+            };
+
+            useEffect(() => {
+                fetchData();
+                const interval = setInterval(fetchData, 5000);
+                return () => clearInterval(interval);
+            }, []);
+
+            const getStatusBadge = (status) => {
+                const statusMap = {
+                    'idle': 'status-idle',
+                    'running': 'status-processing',
+                    'completed': 'status-completed',
+                    'error': 'status-error'
+                };
+                return statusMap[status] || 'status-idle';
+            };
+
+            const SD3ExtractionTab = () => (
+                <div className="glass-card">
+                    <div className="sd3-highlight">
+                        <h2>🥁 Superior Drummer 3 Sample Extraction</h2>
+                        <p>Real-time monitoring of SD3 sample extraction for enhanced DrumTracKAI training</p>
+                        
+                        <div className="sd3-stats">
+                            <div className="sd3-stat">
+                                <h4>{data.sd3.total_patterns || 0}</h4>
+                                <p>Total Patterns</p>
+                            </div>
+                            <div className="sd3-stat">
+                                <h4>{data.sd3.completed_patterns || 0}</h4>
+                                <p>Completed</p>
+                            </div>
+                            <div className="sd3-stat">
+                                <h4>{data.sd3.samples_extracted || 0}</h4>
+                                <p>Samples Extracted</p>
+                            </div>
+                            <div className="sd3-stat">
+                                <h4>{data.sd3.progress || 0}%</h4>
+                                <p>Progress</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="item">
+                        <div className="item-header">
+                            <div>
+                                <div className="item-title">Extraction Status</div>
+                                <div className="item-subtitle">
+                                    {data.sd3.status === 'idle' && 'Ready to start extraction'}
+                                    {data.sd3.status === 'running' && `Processing: ${data.sd3.current_pattern || 'Unknown pattern'}`}
+                                    {data.sd3.status === 'completed' && 'All samples extracted successfully'}
+                                    {data.sd3.status === 'error' && 'Extraction encountered errors'}
+                                </div>
+                            </div>
+                            <div className={`status-badge ${getStatusBadge(data.sd3.status)}`}>
+                                {data.sd3.status?.toUpperCase() || 'IDLE'}
+                            </div>
+                        </div>
+                        {data.sd3.progress > 0 && (
+                            <div className="progress-bar">
+                                <div className="progress-fill" style={{width: `${data.sd3.progress}%`}}></div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="item">
+                        <div className="item-header">
+                            <div>
+                                <div className="item-title">Hi-hat Samples</div>
+                                <div className="item-subtitle">Enhanced sensitivity patterns (336 total)</div>
+                            </div>
+                            <div className="status-badge status-processing">
+                                HIGH PRIORITY
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="item">
+                        <div className="item-header">
+                            <div>
+                                <div className="item-title">Ride Samples</div>
+                                <div className="item-subtitle">Comprehensive articulation patterns (192 total)</div>
+                            </div>
+                            <div className="status-badge status-processing">
+                                HIGH PRIORITY
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="item">
+                        <div className="item-header">
+                            <div>
+                                <div className="item-title">Other Drum Samples</div>
+                                <div className="item-subtitle">Kick, snare, toms, cymbals (54 total)</div>
+                            </div>
+                            <div className="status-badge status-idle">
+                                STANDARD
+                            </div>
+                        </div>
+                    </div>
+
+                    {data.sd3.errors && data.sd3.errors.length > 0 && (
+                        <div className="item">
+                            <div className="item-title" style={{color: '#ef4444'}}>Errors</div>
+                            {data.sd3.errors.map((error, index) => (
+                                <div key={index} className="item-subtitle" style={{color: '#ef4444'}}>
+                                    {error}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+
+            const OverviewTab = () => (
+                <div className="stats-grid">
+                    <div className="glass-card">
+                        <div className="stat-card">
+                            <div className="stat-info">
+                                <h3>{data.downloads.length}</h3>
+                                <p>Downloads</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="glass-card">
+                        <div className="stat-card">
+                            <div className="stat-info">
+                                <h3>{data.mvsep.length}</h3>
+                                <p>MVSep Jobs</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="glass-card">
+                        <div className="stat-card">
+                            <div className="stat-info">
+                                <h3>{data.sd3.total_patterns || 0}</h3>
+                                <p>SD3 Patterns</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="glass-card">
+                        <div className="stat-card">
+                            <div className="stat-info">
+                                <h3>{data.sd3.progress || 0}%</h3>
+                                <p>SD3 Progress</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            if (data.loading) {
+                return (
+                    <div className="container">
+                        <div className="loading">
+                            <h2>Loading DrumTracKAI Monitor...</h2>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (data.error) {
+                return (
+                    <div className="container">
+                        <div className="error">
+                            <h2>Connection Error</h2>
+                            <p>{data.error}</p>
+                            <p>Make sure the API server is running on port 5001</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container">
+                    <div className="header">
+                        <h1>🥁 DrumTracKAI + Superior Drummer 3 Monitor</h1>
+                        <p>Real-time monitoring of drum analysis and sample extraction</p>
+                        <div className="status-indicator">
+                            <div className={connectionStatus === 'connected' ? 'online-dot' : 'offline-dot'}></div>
+                            <span>
+                                {connectionStatus === 'connected' ? 'Connected' : 
+                                 connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="tabs">
+                        <button 
+                            className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('overview')}
+                        >
+                            📊 Overview
+                        </button>
+                        <button 
+                            className={`tab ${activeTab === 'sd3' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('sd3')}
+                        >
+                            🎵 SD3 Extraction
+                        </button>
+                        <button 
+                            className={`tab ${activeTab === 'downloads' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('downloads')}
+                        >
+                            📥 Downloads
+                        </button>
+                        <button 
+                            className={`tab ${activeTab === 'mvsep' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('mvsep')}
+                        >
+                            🎛️ MVSep
+                        </button>
+                    </div>
+
+                    {activeTab === 'overview' && <OverviewTab />}
+                    {activeTab === 'sd3' && <SD3ExtractionTab />}
+                    {activeTab === 'downloads' && (
+                        <div className="glass-card">
+                            <h2>Downloads</h2>
+                            {data.downloads.map((download, index) => (
+                                <div key={index} className="item">
+                                    <div className="item-header">
+                                        <div>
+                                            <div className="item-title">{download.filename}</div>
+                                            <div className="item-subtitle">
+                                                {download.artist} - {download.drummer}
+                                            </div>
+                                        </div>
+                                        <div className="status-badge status-completed">
+                                            READY
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {activeTab === 'mvsep' && (
+                        <div className="glass-card">
+                            <h2>MVSep Jobs</h2>
+                            {data.mvsep.map((job, index) => (
+                                <div key={index} className="item">
+                                    <div className="item-header">
+                                        <div>
+                                            <div className="item-title">{job.name}</div>
+                                            <div className="item-subtitle">{job.status}</div>
+                                        </div>
+                                        <div className={`status-badge ${getStatusBadge(job.status)}`}>
+                                            {job.status?.toUpperCase()}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

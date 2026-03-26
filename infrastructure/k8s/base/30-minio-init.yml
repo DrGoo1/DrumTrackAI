@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-lifecycle
+  namespace: drumtrackai
+data:
+  minio-lifecycle.json: |
+    {
+      "Rules": [
+        {
+          "ID": "expire-uploads-30d",
+          "Status": "Enabled",
+          "Filter": { "Prefix": "uploads/" },
+          "Expiration": { "Days": 30 }
+        },
+        {
+          "ID": "expire-stems-30d",
+          "Status": "Enabled",
+          "Filter": { "Prefix": "stems/" },
+          "Expiration": { "Days": 30 }
+        },
+        {
+          "ID": "expire-logs-7d",
+          "Status": "Enabled",
+          "Filter": { "Prefix": "logs/" },
+          "Expiration": { "Days": 7 }
+        }
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: drumtrackai
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: minio-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2025-01-17T02-10-45Z
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_PASSWORD
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_BUCKET
+          volumeMounts:
+            - name: lifecycle
+              mountPath: /minio-lifecycle.json
+              subPath: minio-lifecycle.json
+          command: ["/bin/sh", "-lc"]
+          args:
+            - >-
+              until mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+                echo 'waiting for minio...';
+                sleep 2;
+              done;
+              mc mb -p local/$S3_BUCKET || true;
+              mc ilm import local/$S3_BUCKET /minio-lifecycle.json;
+              echo 'minio init complete';
+      volumes:
+        - name: lifecycle
+          configMap:
+            name: minio-lifecycle

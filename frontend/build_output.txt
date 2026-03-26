@@ -1,0 +1,25 @@
+
+> drumtrackai-frontend@1.1.16 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  224.86 kB (+2.61 kB)  build\static\js\main.4978f629.js
+  14.06 kB (+86 B)      build\static\css\main.40f89158.css
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+

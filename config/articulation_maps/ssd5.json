@@ -1,0 +1,39 @@
+{
+  "pluginName": "Slate SSD5",
+  "version": "5.x",
+
+  "articulations": {
+    "hh_closed_tight": {
+      "note": 42,
+      "cc": [ { "controller": 4, "value": 0 } ]
+    },
+    "hh_closed": {
+      "note": 42,
+      "cc": [ { "controller": 4, "value": 20 } ]
+    },
+    "hh_slightly_open": { "note": 23 },
+    "hh_half_open":     { "note": 25 },
+    "hh_fully_open":    { "note": 26 },
+    "hh_pedal_chick":   { "note": 44 },
+
+    "ride_bow_tip":      { "note": 51 },
+    "ride_bow_shoulder": { "note": 59 },
+    "ride_bell":         { "note": 53 },
+
+    "snare_center":   { "note": 38 },
+    "snare_ghost":    { "note": 38 },
+    "snare_rimshot":  { "note": 40 },
+    "snare_sidestick":{ "note": 37 },
+
+    "tom_high":  { "note": 50 },
+    "tom_mid":   { "note": 48 },
+    "tom_floor": { "note": 45 },
+
+    "crash_normal": { "note": 49 },
+    "crash_bell":   { "note": 55 },
+    "crash_choke": {
+      "note": 49,
+      "aftertouch": 127
+    }
+  }
+}

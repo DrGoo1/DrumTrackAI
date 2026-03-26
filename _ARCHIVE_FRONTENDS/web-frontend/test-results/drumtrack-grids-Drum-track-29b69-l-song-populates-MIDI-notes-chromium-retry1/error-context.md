@@ -1,0 +1,127 @@
+# Page snapshot
+
+```yaml
+- navigation:
+  - link "DT DrumTracKAI Release Candidate":
+    - /url: /
+    - text: DT
+    - paragraph: DrumTracKAI
+    - paragraph: Release Candidate
+  - link "Features":
+    - /url: /#studio-workflows
+  - link "Beat Tools":
+    - /url: /beat-tools
+  - link "Pricing":
+    - /url: /#pricing
+  - link "Pro Studio":
+    - /url: /daw
+  - link "Benchmarks":
+    - /url: /bench
+  - link "Sign in":
+    - /url: /beat-prompt?auth=signin
+  - link "Sign up":
+    - /url: /beat-prompt?auth=signup
+- button "Play"
+- button "100%"
+- button "QA 4-bar Preview"
+- text: BPM
+- spinbutton: "120"
+- text: "Time Sig: 4/4 Cursor: 0.00s"
+- button "Kit Builder"
+- button "Export"
+- text: Export
+- combobox:
+  - option "Clip" [selected]
+  - option "First Section"
+- button "Export Drums MIDI"
+- button "Pocket Transfer"
+- text: Mousewheel + Ctrl/⌘ to Zoom Source Song Torn_no_drums.mp3 File is sent to backend for arrangement & tempo analysis Arrangement Sections
+- button "Auto Sectionize"
+- text: "No sections yet. Auto-sectionize to begin. Debug \x13 sections: 0, waveformPeaks: 3000 Drum Editor View"
+- combobox:
+  - option "Limb View" [selected]
+  - option "Piano Roll"
+- button "BAR"
+- combobox:
+  - option "1" [selected]
+  - option "2"
+  - option "3"
+  - option "4"
+- button "CLEAR"
+- button "PREVIEW"
+- button "FULL"
+- button "AUTO"
+- button "BAR"
+- button "RECOMPOSE"
+- text: SPAN
+- button "1"
+- button "1/2"
+- button "1/4"
+- button "1/8"
+- text: RES
+- button "16"
+- button "32"
+- button "64"
+- button "SINGLE"
+- button "DOUBLE"
+- button "BOUNCED"
+- button "LOCKED"
+- img
+- text: OPEN 0%
+- img
+- text: PRIORITY 50%
+- img
+- text: TIMING 50%
+- img
+- text: POWER 80% LH RH LF RF Drum Creation
+- button "Basic"
+- button "Advanced"
+- text: "Persona Presets:"
+- button "Studio Shuffle (Porcaro)"
+- text: Style
+- combobox "Style":
+  - option "Studio Rock" [selected]
+  - option "Funk Pocket"
+  - option "Fusion / Prog"
+  - option "Neo-Soul"
+  - option "Afro 12/8"
+- text: Drummer Category
+- combobox "Drummer Category":
+  - option "Studio Rock" [selected]
+  - option "Funk Pocket"
+  - option "Fusion / Prog"
+  - option "Neo-Soul"
+  - option "Metal Power"
+- button "Groove & Performance Hide"
+- checkbox
+- text: Lock groove to persona defaults
+- img
+- text: Intensity 70%
+- img
+- text: Variation 50% Swing
+- slider "Swing": "0"
+- img
+- text: Drum Dens. 70%
+- img
+- text: Cymbal Dens. 60%
+- img
+- text: Chorus Ride 0% Kick/Snare activity Hats / Ride / Crashes Preference for ride in choruses
+- button "Fills & Structure Hide"
+- checkbox
+- text: Lock fills to persona defaults Fill Type
+- combobox "Fill Type":
+  - option "Auto" [selected]
+  - option "Tom Run"
+  - option "Crash Buildup"
+  - option "Snare Fill"
+- text: Fill Density Locations follow Arrangement "Fill In/Out" flags (0 in, 0 out)
+- img
+- text: Density 70%
+- button "Generate Drum Track" [disabled]
+- button "Impact / Saturation Show"
+- text: Groove Coach
+- button "Analyze Groove"
+- text: Review
+- textbox "Leave a note at the current cursor…"
+- button "Add"
+```

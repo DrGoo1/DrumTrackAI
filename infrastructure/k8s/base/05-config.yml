@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drumtrackai-config
+  namespace: drumtrackai
+data:
+  POSTGRES_DB: drumtrackai
+  POSTGRES_USER: drumtrackai
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: user-uploads
+  S3_REGION: us-east-1
+  S3_FORCE_PATH_STYLE: "true"
+  MVSEP_JOB_TEMPLATE_NAME: mvsep-template
+  MAX_CONCURRENT_MVSEP_JOBS: "1"
+  UPLOAD_RETENTION_DAYS: "30"
+  STEM_RETENTION_DAYS: "30"
+  LOG_RETENTION_DAYS: "7"

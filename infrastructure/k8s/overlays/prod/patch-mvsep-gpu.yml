@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mvsep-template
+  namespace: drumtrackai
+spec:
+  template:
+    spec:
+      nodeSelector:
+        drumtrack.io/gpu: "true"
+      tolerations:
+        - key: "drumtrack.io/gpu"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: mvsep
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "8"
+              memory: "24Gi"
+              nvidia.com/gpu: 1

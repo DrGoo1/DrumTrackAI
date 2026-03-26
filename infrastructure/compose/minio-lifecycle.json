@@ -1,0 +1,34 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-uploads-30d",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "uploads/"
+      },
+      "Expiration": {
+        "Days": 30
+      }
+    },
+    {
+      "ID": "expire-stems-30d",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "stems/"
+      },
+      "Expiration": {
+        "Days": 30
+      }
+    },
+    {
+      "ID": "expire-logs-7d",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "logs/"
+      },
+      "Expiration": {
+        "Days": 7
+      }
+    }
+  ]
+}

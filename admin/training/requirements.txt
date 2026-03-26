@@ -1,0 +1,33 @@
+# Training System Requirements
+# Install with: pip install -r requirements.txt
+
+# Core ML/AI
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Data Science
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Audio Processing
+librosa>=0.10.1
+soundfile>=0.12.0
+
+# Database
+sqlite3  # Built into Python
+
+# Utilities
+dataclasses  # Built into Python 3.7+
+pathlib  # Built into Python 3.4+
+logging  # Built into Python
+
+# Optional but recommended
+matplotlib>=3.7.0  # For visualization
+seaborn>=0.12.0  # For better plots
+jupyter>=1.0.0  # For interactive analysis
+tensorboard>=2.13.0  # For training visualization
+
+# GUI (should already be installed in your admin app)
+PySide6>=6.5.0

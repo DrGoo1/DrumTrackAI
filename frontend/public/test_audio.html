@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Audio Test</title>
+</head>
+<body>
+  <h1>Simple Audio Test</h1>
+  <p>This tests the audio file directly without any React/Tone.js interference</p>
+  
+  <audio id="testAudio" controls style="width: 100%;">
+    <source src="http://localhost:8100/files/audio?key=1763565606843-Peg_No_Drums.mp3" type="audio/mpeg">
+  </audio>
+  
+  <script>
+    const audio = document.getElementById('testAudio');
+    audio.volume = 0.5;
+    
+    console.log('Audio element created:', {
+      src: audio.src,
+      volume: audio.volume,
+      playbackRate: audio.playbackRate
+    });
+    
+    audio.addEventListener('loadeddata', () => {
+      console.log('✅ Audio loaded successfully');
+    });
+    
+    audio.addEventListener('error', (e) => {
+      console.error('❌ Audio error:', e);
+    });
+  </script>
+</body>
+</html>

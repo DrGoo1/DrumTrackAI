@@ -1,0 +1,212 @@
+"""
+YouTube Download Service
+=======================
+Service for downloading audio from YouTube videos using yt-dlp.
+Provides a thread-safe implementation with progress updates.
+"""
+import os
+import sys
+import subprocess
+import time
+import traceback
+import logging
+import shutil
+import threading
+import yt_dlp
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
+
+
+class YouTubeDownloadThread(QObject):
+    """Thread for downloading YouTube videos as audio files using yt-dlp."""
+
+    progress_updated = Signal(int)
+    download_complete = Signal(str)
+    download_error = Signal(str)
+
+    def __init__(self, youtube_id, output_path):
+        """
+        Initialize the YouTube download thread.
+
+        Args:
+            youtube_id (str): The YouTube video ID or URL
+            output_path (str): The path to save the downloaded audio file
+        """
+        super().__init__()
+        self.youtube_id = youtube_id
+        self.output_path = output_path
+        self.canceled = False
+
+    def _progress_hook(self, d):
+        """
+        Progress callback for yt-dlp.
+        
+        Args:
+            d (dict): Progress information from yt-dlp
+        """
+        if self.canceled:
+            raise Exception("Download canceled by user")
+            
+        try:
+            if d['status'] == 'downloading':
+                # Calculate progress
+                if 'total_bytes' in d and d['total_bytes'] > 0:
+                    percentage = int(d['downloaded_bytes'] / d['total_bytes'] * 100)
+                elif 'total_bytes_estimate' in d and d['total_bytes_estimate'] > 0:
+                    percentage = int(d['downloaded_bytes'] / d['total_bytes_estimate'] * 100)
+                else:
+                    # If we can't calculate percentage, use a placeholder
+                    # This might happen with some YouTube streams
+                    percentage = -1
+                    
+                if percentage >= 0:
+                    # Update UI with progress
+                    print(f"Download progress: {percentage}%")
+                    self.progress_updated.emit(percentage)
+                    
+            elif d['status'] == 'finished':
+                print("Download finished, now converting...")
+                self.progress_updated.emit(95)  # Show high percentage during conversion
+                
+        except Exception as e:
+            print(f"Error in progress callback: {e}")
+
+    def download(self):
+        """Download the YouTube video as audio."""
+        try:
+            print("\n===== YOUTUBE DOWNLOAD STARTED =====")
+            print(f"YouTube ID/URL: {self.youtube_id}")
+            print(f"Output path: {self.output_path}")
+
+            # Make sure target directory exists
+            os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+
+            # If input is just an ID, convert to full URL
+            if not self.youtube_id.startswith(('http://', 'https://')):
+                url = f'https://www.youtube.com/watch?v={self.youtube_id}'
+            else:
+                url = self.youtube_id
+                
+            print(f"Using URL: {url}")
+            
+            # Set download options
+            output_template = os.path.join(os.path.dirname(self.output_path), "%(title)s.%(ext)s")
+            
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': output_template,
+                'progress_hooks': [self._progress_hook],
+                'verbose': True,
+                'no_warnings': False,
+                'ignoreerrors': False,
+                'noplaylist': True,
+                # Retries and timeouts
+                'retries': 5,
+                'fragment_retries': 5,
+                'skip_unavailable_fragments': False,
+                'socket_timeout': 60,  # 60 seconds timeout
+            }
+            
+            # Download the audio
+            print("Starting yt-dlp download...")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                
+                if not info:
+                    raise Exception("No video information extracted")
+                
+                # Get the downloaded filename
+                if 'requested_downloads' in info and info['requested_downloads']:
+                    downloaded_file = info['requested_downloads'][0]['filepath']
+                else:
+                    # Fall back to title-based filename
+                    title = info.get('title', 'video')
+                    # Remove invalid characters from title
+                    title = ''.join(c for c in title if c not in '\\/:*?"<>|')  # Fixed invalid escape sequence
+                    downloaded_file = os.path.join(os.path.dirname(self.output_path), f"{title}.mp3")
+                
+                print(f"Downloaded file: {downloaded_file}")
+                
+                # Move to final destination if different
+                if os.path.abspath(downloaded_file) != os.path.abspath(self.output_path):
+                    print(f"Moving to final destination: {self.output_path}")
+                    
+                    # Remove destination file if it exists
+                    if os.path.exists(self.output_path):
+                        try:
+                            os.remove(self.output_path)
+                            print(f"Removed existing file at destination: {self.output_path}")
+                        except Exception as e:
+                            print(f"Error removing existing file: {e}")
+                            
+                    # Move the file
+                    shutil.move(downloaded_file, self.output_path)
+                    print(f"Moved file to: {self.output_path}")
+                
+                print(f"\n===== YOUTUBE DOWNLOAD COMPLETED =====\nFile: {self.output_path}")
+                self.download_complete.emit(self.output_path)
+
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            error_msg = f"Error downloading video: {str(e)}\n{error_trace}"
+            print(f"\n===== YOUTUBE DOWNLOAD ERROR =====\n{error_msg}")
+            self.download_error.emit(error_msg)
+
+    def cancel(self):
+        """Cancel the download."""
+        self.canceled = True
+
+
+class YouTubeService:
+    """Service for downloading audio from YouTube videos using yt-dlp."""
+
+    def __init__(self):
+        """Initialize the YouTube service."""
+        pass
+
+    def download_audio(self, youtube_id, output_path,
+                       progress_callback=None,
+                       completion_callback=None,
+                       error_callback=None):
+        """
+        Download audio from a YouTube video.
+
+        Args:
+            youtube_id (str): The YouTube video ID or URL
+            output_path (str): The path to save the downloaded audio file
+            progress_callback (function): Callback function for progress updates
+            completion_callback (function): Callback function for download completion
+            error_callback (function): Callback function for download errors
+
+        Returns:
+            YouTubeDownloadThread: The download thread object
+            threading.Thread: The thread object
+        """
+        # Create download thread
+        download_thread = YouTubeDownloadThread(youtube_id, output_path)
+
+        # Connect signals to callbacks if provided
+        if progress_callback:
+            download_thread.progress_updated.connect(progress_callback)
+
+        if completion_callback:
+            download_thread.download_complete.connect(completion_callback)
+
+        if error_callback:
+            download_thread.download_error.connect(error_callback)
+
+        # Create and start thread
+        thread = threading.Thread(target=download_thread.download)
+        thread.daemon = True
+        thread.start()
+
+        # Return the download thread object so it can be canceled if needed
+        return download_thread, thread

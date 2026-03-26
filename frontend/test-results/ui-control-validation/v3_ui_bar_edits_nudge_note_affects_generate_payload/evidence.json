@@ -1,0 +1,116 @@
+{
+  "controlId": "v3_ui_bar_edits_nudge_note_affects_generate_payload",
+  "controlName": "V3 UI: Bar Edits Nudge Note affects generate payload",
+  "status": "pass",
+  "startedAt": "2026-02-07T15:17:41.836Z",
+  "finishedAt": "2026-02-07T15:17:44.424Z",
+  "durationMs": 2588,
+  "baseURL": "http://localhost:3000",
+  "audioPath": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\drummer_songs\\jeff_porcaro_Rosanna.mp3",
+  "details": {
+    "req": {
+      "sectionId": "v3-0-0.000-16.000",
+      "startMeasure": 0,
+      "endMeasure": 7,
+      "tempos": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ],
+      "timeSignature": [
+        4,
+        4
+      ],
+      "style": "rock",
+      "drummer": "default_neutral",
+      "publicDrummerId": "default_neutral",
+      "globalPresetStack": [],
+      "sectionPresetStack": [],
+      "chorusRidePreference": 0,
+      "cymbalFocusMode": "continuous",
+      "hatsToRideBlend": 0,
+      "hatsToRideThreshold": 0.6,
+      "rideBellPercent": 0.2,
+      "footHatPulseSubdivision": "off",
+      "footHatPulseApply": "both",
+      "forceFillBars": [],
+      "suppressFillBars": [],
+      "barEdits": {
+        "0": {
+          "addedNotes": [
+            {
+              "id": "bar-v3-0-0.000-16.000-0-1770477464024-770391",
+              "barIndex": 0,
+              "tickInBar": 0,
+              "tickLength": 240,
+              "midiPitch": 36,
+              "velocity": 100,
+              "instrumentId": "kick",
+              "channel": 9
+            }
+          ],
+          "deletedNoteIds": [],
+          "tickDeltaByNoteId": {
+            "hihat_closed-0-0": 240
+          }
+        }
+      },
+      "styleGroup": "rock",
+      "intensity": 0.7,
+      "variation": 0.8,
+      "generationMode": "ai_variation",
+      "humanize": true,
+      "fillLocations": [],
+      "fillType": "auto",
+      "fillDensity": 0.7,
+      "humanizeAmount": 0.7,
+      "ghostNoteAmount": 0.7,
+      "swingAmount": 0,
+      "rudimentControls": {
+        "enabled": true,
+        "preferredFamilies": [],
+        "preferredRudiments": [],
+        "density": 0.7,
+        "ensureDownbeatKick": true,
+        "preserveHatTail": true,
+        "handLead": "auto"
+      },
+      "quantizeStrength": 0,
+      "quantizeBase": "16th",
+      "timingHumanizeMs": 0,
+      "velocityHumanize": 0,
+      "pushPullMs": 0,
+      "feelSeed": 0,
+      "buildScope": "selected_section",
+      "songSections": [
+        {
+          "name": "verse",
+          "bars": 8
+        },
+        {
+          "name": "chorus",
+          "bars": 8
+        }
+      ],
+      "guideEnabled": false
+    },
+    "noteId": "hihat_closed-0-0"
+  },
+  "artifacts": {
+    "evidenceJson": "ui-control-validation/v3_ui_bar_edits_nudge_note_affects_generate_payload/evidence.json",
+    "screenshotPng": "ui-control-validation/v3_ui_bar_edits_nudge_note_affects_generate_payload/screenshot.png"
+  }
+}

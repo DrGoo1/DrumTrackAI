@@ -1,0 +1,16 @@
+{
+  "name": "drumtrackai",
+  "version": "1.0.0",
+  "model_file": "drumtrackai_model_v1.pt",
+  "deployed_at": "2025-11-20T12:58:10.431885",
+  "metadata": {
+    "validation_score": 50.0,
+    "r2_score": -1.0992548376064775e+31,
+    "train_samples": 35,
+    "sources": [
+      "egmd",
+      "rudiments",
+      "loops"
+    ]
+  }
+}

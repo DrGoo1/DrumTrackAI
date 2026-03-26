@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Check Audio Elements</title>
+</head>
+<body>
+  <h1>Audio Element Checker</h1>
+  <p>Open browser console and check the count...</p>
+  
+  <button onclick="checkAudio()">Check Audio Elements</button>
+  <pre id="output"></pre>
+  
+  <script>
+    function checkAudio() {
+      const audios = document.querySelectorAll("audio");
+      const output = document.getElementById('output');
+      
+      output.textContent = `Total audio elements: ${audios.length}\n\n`;
+      
+      audios.forEach((a, i) => {
+        output.textContent += `Audio ${i + 1}:\n`;
+        output.textContent += `  src: ${a.src}\n`;
+        output.textContent += `  paused: ${a.paused}\n`;
+        output.textContent += `  volume: ${a.volume}\n`;
+        output.textContent += `  currentTime: ${a.currentTime}\n\n`;
+      });
+      
+      console.log('Audio elements:', audios.length);
+      audios.forEach(a => console.log('  -', a.src));
+    }
+    
+    // Auto-check after 2 seconds
+    setTimeout(checkAudio, 2000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mvsep-template
+  namespace: drumtrackai
+  labels:
+    app: mvsep
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: mvsep
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mvsep
+          image: drumtrackai/mvsep-worker:latest
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_ENDPOINT
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: S3_SECRET_KEY
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_BUCKET
+            - name: S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_REGION
+            - name: S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: drumtrackai-config
+                  key: S3_FORCE_PATH_STYLE
+            - name: WORK_DIR
+              value: /work
+            - name: INPUT_KEY
+              value: ""
+            - name: OUTPUT_PREFIX
+              value: ""
+            - name: LOG_PREFIX
+              value: ""
