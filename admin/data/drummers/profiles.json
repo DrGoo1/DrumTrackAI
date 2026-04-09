@@ -540,35 +540,196 @@
       "youtube_urls": []
     },
     {
-      "id": "tony_williams",
-      "name": "Tony Williams",
-      "band": "Miles Davis Quintet",
+      "id": "clyde_stubblefield",
+      "name": "Clyde Stubblefield",
+      "band": "James Brown",
       "bands": [
-        "Miles Davis Quintet",
-        "Tony Williams Lifetime",
-        "V.S.O.P."
+        "James Brown"
+      ],
+      "styles": [
+        "Funk",
+        "Soul",
+        "R&B"
+      ],
+      "alias": "The Funky Drummer",
+      "uniqueness_value": 0.94,
+      "notable_songs": [
+        "Funky Drummer",
+        "Cold Sweat",
+        "Mother Popcorn",
+        "Give It Up or Turnit a Loose",
+        "I Got the Feelin'"
+      ],
+      "techniques": [
+        "Pocket playing",
+        "Syncopation",
+        "Ghost notes",
+        "Tight hi-hat articulation",
+        "Minimalist funk grooves"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "buddy_rich",
+      "name": "Buddy Rich",
+      "band": "Buddy Rich Big Band",
+      "bands": [
+        "Buddy Rich Big Band"
       ],
       "styles": [
         "Jazz",
-        "Fusion"
+        "Big Band",
+        "Swing"
       ],
-      "alias": "The Prodigy",
-      "uniqueness_value": 0.92,
+      "alias": "The World's Greatest Drummer",
+      "uniqueness_value": 0.97,
       "notable_songs": [
-        "Seven Steps to Heaven",
-        "Nefertiti",
-        "Emergency!",
-        "Maiden Voyage",
-        "E.S.P."
+        "West Side Story Medley",
+        "Channel One Suite",
+        "Love for Sale",
+        "Time Check",
+        "Big Swing Face"
       ],
       "techniques": [
-        "Speed",
-        "Polyrhythms",
-        "Ride cymbal patterns",
-        "Avant-garde approach",
-        "Dynamic innovation"
+        "High-speed single strokes",
+        "Explosive big band fills",
+        "Brush technique",
+        "Dynamic control",
+        "Soloing virtuosity"
       ],
       "youtube_urls": []
+    },
+    {
+      "id": "travis_barker",
+      "name": "Travis Barker",
+      "band": "Blink-182",
+      "bands": ["Blink-182", "+44", "Transplants"],
+      "styles": ["Pop Punk", "Rock", "Hip-Hop"],
+      "alias": "The Baron von Tito",
+      "uniqueness_value": 0.9,
+      "notable_songs": ["All The Small Things", "Feeling This", "Family Reunion"],
+      "techniques": [
+        "Hybrid kit integration",
+        "High-energy fills",
+        "Cross-genre collaborations",
+        "Fast single-stroke rolls",
+        "Latin-influenced grooves"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/9Ht5RZpzPqw?si=LPcWnsgwEQ3PeNtW",
+        "https://youtu.be/4kMZ23T9VHE?si=h2bHLDBXd4XqwUp4",
+        "https://youtu.be/W5wL_mwGGgg?si=JWOgRrG9K6WEWKGB"
+      ]
+    },
+    {
+      "id": "carter_beauford",
+      "name": "Carter Beauford",
+      "band": "Dave Matthews Band",
+      "bands": ["Dave Matthews Band", "Secrets", "Vertical Horizon"],
+      "styles": ["Fusion", "Rock", "Jazz"],
+      "alias": "The Ambidextrous Maestro",
+      "uniqueness_value": 0.96,
+      "notable_songs": ["Ants Marching", "Drive In Drive Out", "Rapunzel"],
+      "techniques": [
+        "Open-handed drumming",
+        "Linear independence",
+        "Multi-layered ghost notes",
+        "Splash cymbal textures",
+        "Polyrhythmic phrasing"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/OtMVMNST_g4",
+        "https://youtu.be/7CnxPchG0nY",
+        "https://youtu.be/4TJ5QBs8SU0"
+      ]
+    },
+    {
+      "id": "steve_gadd",
+      "name": "Steve Gadd",
+      "band": "Session Legend",
+      "bands": ["Stuff", "Eric Clapton", "Paul Simon"],
+      "styles": ["Jazz", "Fusion", "Pop"],
+      "alias": "The Groove Architect",
+      "uniqueness_value": 0.95,
+      "notable_songs": ["50 Ways to Leave Your Lover", "Aja", "Late in the Evening"],
+      "techniques": [
+        "Linear drumming",
+        "Paradiddle groove mastery",
+        "Brush artistry",
+        "Dynamic control",
+        "Latin-influenced phrasing"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/S-3tqA0QF1M",
+        "https://youtu.be/UnmRcTLjFQM",
+        "https://youtu.be/7Gdn1k-74yI"
+      ]
+    },
+    {
+      "id": "simon_phillips",
+      "name": "Simon Phillips",
+      "band": "Toto",
+      "bands": ["Toto", "Protocol", "Hiromi"],
+      "styles": ["Rock", "Fusion", "Progressive"],
+      "alias": "The Precision Powerhouse",
+      "uniqueness_value": 0.93,
+      "notable_songs": ["Rosanna", "Burning Organ", "Protocol"],
+      "techniques": [
+        "Double bass precision",
+        "Odd-time mastery",
+        "Symmetrical independence",
+        "Powerful tom orchestrations",
+        "Immaculate timing"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/8pNwZuYEM2k",
+        "https://youtu.be/9zWv7YzWx_w",
+        "https://youtu.be/ytD3RT5tZp0"
+      ]
+    },
+    {
+      "id": "ringo_starr",
+      "name": "Ringo Starr",
+      "band": "The Beatles",
+      "bands": ["The Beatles", "Ringo Starr & His All-Starr Band"],
+      "styles": ["Rock", "Pop"],
+      "alias": "The Beatle",
+      "uniqueness_value": 0.88,
+      "notable_songs": ["Come Together", "A Day in the Life", "Ticket to Ride"],
+      "techniques": [
+        "Left-handed feel on right-handed kit",
+        "Song-first phrasing",
+        "Creative tom beats",
+        "Laid-back swing",
+        "Inventive fills"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/45cYwDMibGo",
+        "https://youtu.be/1A1L40u7KQk",
+        "https://youtu.be/zc8hbSM1zVo"
+      ]
+    },
+    {
+      "id": "charlie_watts",
+      "name": "Charlie Watts",
+      "band": "The Rolling Stones",
+      "bands": ["The Rolling Stones", "Charlie Watts Quintet"],
+      "styles": ["Rock", "Blues", "Jazz"],
+      "alias": "The Gentleman Drummer",
+      "uniqueness_value": 0.87,
+      "notable_songs": ["Paint It Black", "Gimme Shelter", "Sympathy for the Devil"],
+      "techniques": [
+        "Jazz-influenced rock grooves",
+        "Subtle swing feel",
+        "Understated backbeat",
+        "Dynamic accents",
+        "Steady tempo control"
+      ],
+      "youtube_urls": [
+        "https://youtu.be/nrIPxlFzDi0",
+        "https://youtu.be/SfPW3J_RQ2A",
+        "https://youtu.be/NG1jL_4AbnE"
+      ]
     }
   ]
 }

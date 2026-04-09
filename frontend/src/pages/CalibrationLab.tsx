@@ -1,0 +1,934 @@
+import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
+import {
+  Activity,
+  ArrowRight,
+  ClipboardList,
+  Gauge,
+  RefreshCcw,
+  Save,
+  Sparkles,
+  Users,
+} from 'lucide-react';
+
+type CompletionStatus = 'ready' | 'refine' | 'needs_tuning' | 'unknown';
+type TabId = 'adjustments' | 'metrics' | 'feedback';
+
+interface CompletionStatusInfo {
+  status: CompletionStatus;
+  completion_ratio: number | null;
+}
+
+interface DrummerListItem {
+  slug: string;
+  displayName: string;
+  headline?: string;
+  completionStatus: CompletionStatusInfo;
+  latestRunAt?: string | null;
+  metricsWithin?: number;
+  metricsCompared?: number;
+}
+
+interface AdjustmentMetadata {
+  field_help?: Record<string, string>;
+}
+
+interface CalibrationRun {
+  id: string;
+  started_at: string;
+  completed_at?: string;
+  outcome: 'success' | 'failure' | 'pending';
+  note_count?: number;
+  fills_per_minute?: number | null;
+  delta_summary?: string;
+}
+
+interface FeedbackEntry {
+  id: string;
+  submitted_at: string;
+  author: string;
+  rating: number;
+  comment: string;
+}
+
+interface DrummerDetailPayload {
+  slug: string;
+  displayName: string;
+  adjustments: Record<string, any>;
+  rollupTargets: Record<string, any>;
+  metrics?: Record<string, any>;
+  metadata?: AdjustmentMetadata;
+  runHistory?: CalibrationRun[];
+  feedbackSamples?: FeedbackEntry[];
+  completionStatus?: CompletionStatusInfo;
+}
+
+interface DrummerDetail extends DrummerDetailPayload {
+  originalAdjustments: Record<string, any>;
+}
+
+const STATUS_LABEL: Record<CompletionStatus, string> = {
+  ready: 'Ready',
+  refine: 'Needs Review',
+  needs_tuning: 'Needs Tuning',
+  unknown: 'Unknown',
+};
+
+const STATUS_STYLE: Record<CompletionStatus, string> = {
+  ready: 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40',
+  refine: 'bg-amber-500/20 text-amber-200 border border-amber-400/40',
+  needs_tuning: 'bg-rose-500/20 text-rose-200 border border-rose-400/40',
+  unknown: 'bg-slate-500/20 text-slate-200 border border-slate-400/40',
+};
+
+const STATUS_FILTERS: Array<{ id: 'all' | CompletionStatus; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'ready', label: 'Ready' },
+  { id: 'refine', label: 'Needs Review' },
+  { id: 'needs_tuning', label: 'Needs Tuning' },
+];
+
+const CONTROL_BOUNDS: Record<string, { min: number; max: number; step: number }> = {
+  timing_scale: { min: 0.6, max: 1.6, step: 0.01 },
+  velocity_std_scale: { min: 0.6, max: 1.6, step: 0.01 },
+  fill_factor: { min: 0, max: 2.5, step: 0.01 },
+  fill_fpm_cap: { min: 0, max: 12, step: 0.05 },
+  snare_share_scale: { min: 0.2, max: 2.5, step: 0.01 },
+  hihat_share_scale: { min: 0.2, max: 1.6, step: 0.01 },
+  kick_share_scale: { min: 0.2, max: 1.6, step: 0.01 },
+  tom_share_scale: { min: 0.2, max: 1.6, step: 0.01 },
+  ride_share_scale: { min: 0.2, max: 1.6, step: 0.01 },
+  cymbal_share_scale: { min: 0.2, max: 1.6, step: 0.01 },
+  hihat_share_floor: { min: 0, max: 0.6, step: 0.01 },
+  max_fills_per_bar_scale: { min: 0.5, max: 2.5, step: 0.05 },
+  fill_velocity_scale: { min: 0.4, max: 1.4, step: 0.01 },
+};
+
+const NUMBER_FIELDS = new Set(Object.keys(CONTROL_BOUNDS));
+
+const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
+  {
+    title: 'Microtiming & Feel',
+    keys: ['timing_scale', 'velocity_std_scale'],
+    blurb: "Loosen or tighten pocket and adjust dynamic spread to match the drummer's touch.",
+  },
+  {
+    title: 'Fill Density & Flow',
+    keys: ['fill_factor', 'fill_fpm_cap', 'max_fills_per_bar_scale', 'fill_velocity_scale'],
+    blurb: 'Control how often fills appear, how clustered they get, and how aggressive they land.',
+  },
+  {
+    title: 'Kit Balance',
+    keys: [
+      'snare_share_scale',
+      'hihat_share_scale',
+      'kick_share_scale',
+      'tom_share_scale',
+      'ride_share_scale',
+      'cymbal_share_scale',
+      'hihat_share_floor',
+    ],
+    blurb: 'Reallocate note share across the kit to preserve each drummer fingerprint.',
+  },
+];
+
+const api = axios.create({ baseURL: '/calibration' });
+
+const formatPercent = (value?: number | null) => {
+  if (value == null) return '—';
+  return ${Math.round(value * 100)}%;
+};
+
+const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : 'No runs yet');
+
+const sanitizeNumber = (key: string, raw: string) => {
+  const parsed = Number(raw);
+  if (Number.isNaN(parsed)) return null;
+  const bounds = CONTROL_BOUNDS[key];
+  if (!bounds) return parsed;
+  return Math.min(bounds.max, Math.max(bounds.min, parsed));
+};
+
+const diffKeys = (baseline: Record<string, any>, next: Record<string, any>) => {
+  const list: string[] = [];
+  Object.keys(next).forEach((key) => {
+    if (JSON.stringify(baseline[key]) !== JSON.stringify(next[key])) {
+      list.push(key);
+    }
+  });
+  return list;
+};
+
+const slugToTitle = (value: string) =>
+  value
+    .split('_')
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+
+const CompletionBadge: React.FC<{ status: CompletionStatus; ratio?: number | null }> = ({ status, ratio }) => (
+  <span
+    className={inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide }
+  >
+    <span className="h-2 w-2 rounded-full bg-current" />
+    {STATUS_LABEL[status]}
+    {ratio != null && <span className="text-white/70">{formatPercent(ratio)}</span>}
+  </span>
+);
+
+const labelize = (key: string) =>
+  key
+    .replace(/_/g, ' ')
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase())
+    .replace('Fpm', 'FPM');
+
+const formatShare = (value?: number | null) => {
+  if (value == null) return '—';
+  return ${(value * 100).toFixed(1)}%;
+};
+
+const describeRunOutcome = (run: CalibrationRun) => {
+  if (run.outcome === 'pending') return 'Processing';
+  if (run.outcome === 'failure') return 'Failed';
+  return 'Successful';
+};
+
+const RUN_BADGE_STYLE: Record<CalibrationRun['outcome'], string> = {
+  success: 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30',
+  failure: 'bg-rose-500/15 text-rose-200 border border-rose-500/30',
+  pending: 'bg-amber-500/15 text-amber-200 border border-amber-500/30',
+};
+
+const asShareMap = (shares: unknown): Record<string, number> => {
+  if (!shares) return {};
+  if (typeof shares === 'string') {
+    try {
+      const parsed = JSON.parse(shares);
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+  if (typeof shares === 'object') {
+    return shares as Record<string, number>;
+  }
+  return {};
+};
+
+const CalibrationLab: React.FC = () => {
+  const [drummers, setDrummers] = useState<DrummerListItem[]>([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | CompletionStatus>('all');
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [detail, setDetail] = useState<DrummerDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [pendingAdjustments, setPendingAdjustments] = useState<Record<string, any> | null>(null);
+  const [tab, setTab] = useState<TabId>('adjustments');
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [textDrafts, setTextDrafts] = useState<Record<string, string>>({});
+  const [textErrors, setTextErrors] = useState<Record<string, string>>({});
+  const [feedbackForm, setFeedbackForm] = useState<{ rating: number; comment: string }>({ rating: 4, comment: '' });
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+
+  const loadDrummers = useCallback(async () => {
+    setListLoading(true);
+    setListError(null);
+    try {
+      const response = await api.get<DrummerListItem[]>('/drummers');
+      const payload = response.data || [];
+      setDrummers(payload);
+      if (payload.length && !selectedSlug) {
+        setSelectedSlug(payload[0].slug);
+      }
+    } catch (error) {
+      setListError('Unable to load drummer roster. Confirm the calibration API is available.');
+    } finally {
+      setListLoading(false);
+    }
+  }, [selectedSlug]);
+
+  const loadDetail = useCallback(
+    async (slug: string | null) => {
+      if (!slug) {
+        setDetail(null);
+        setPendingAdjustments(null);
+        return;
+      }
+      setDetailLoading(true);
+      setDetailError(null);
+      setStatusMessage(null);
+      try {
+        const response = await api.get<DrummerDetailPayload>(/drummers/);
+        const payload = response.data;
+        const merged: DrummerDetail = {
+          ...payload,
+          originalAdjustments: { ...payload.adjustments },
+        };
+        setDetail(merged);
+        setPendingAdjustments({ ...payload.adjustments });
+        const newDrafts: Record<string, string> = {};
+        Object.entries(payload.adjustments).forEach(([key, value]) => {
+          if (!NUMBER_FIELDS.has(key)) {
+            newDrafts[key] = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+          }
+        });
+        setTextDrafts(newDrafts);
+        setTextErrors({});
+      } catch (error) {
+        setDetailError('Failed to load calibration detail.');
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    loadDrummers();
+  }, [loadDrummers]);
+
+  useEffect(() => {
+    loadDetail(selectedSlug);
+  }, [selectedSlug, loadDetail]);
+
+  const filteredDrummers = useMemo(() => {
+    if (filter === 'all') return drummers;
+    return drummers.filter((entry) => entry.completionStatus.status === filter);
+  }, [drummers, filter]);
+
+  const sortedDrummers = useMemo(() => {
+    const pool = filteredDrummers.length ? filteredDrummers : drummers;
+    return [...pool].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [filteredDrummers, drummers]);
+
+  const changedKeys = useMemo(() => {
+    if (!detail || !pendingAdjustments) return [];
+    return diffKeys(detail.originalAdjustments, pendingAdjustments);
+  }, [detail, pendingAdjustments]);
+
+  const hasPendingChanges = changedKeys.length > 0;
+
+  const completion = detail?.completionStatus ?? detail?.metrics?.completion_status;
+
+  const handleSelectDrummer = (slug: string) => {
+    setSelectedSlug(slug);
+    setTab('adjustments');
+  };
+
+  const handleNumberChange = (key: string, raw: string) => {
+    if (!pendingAdjustments) return;
+    const value = sanitizeNumber(key, raw);
+    if (value == null) return;
+    setPendingAdjustments((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleTextDraftChange = (key: string, value: string) => {
+    setTextDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleTextDraftCommit = (key: string) => {
+    const draft = textDrafts[key];
+    try {
+      const parsed = JSON.parse(draft);
+      setPendingAdjustments((prev) => (prev ? { ...prev, [key]: parsed } : prev));
+      setTextErrors((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      setTextErrors((prev) => ({ ...prev, [key]: 'Invalid JSON. Ensure objects and arrays are well-formed.' }));
+    }
+  };
+
+  const handleSave = async () => {
+    if (!pendingAdjustments || !selectedSlug) return;
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await api.post(/drummers//adjustments, {
+        adjustments: pendingAdjustments,
+      });
+      setStatusMessage('Adjustments saved. Regenerate to validate the new feel.');
+      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+    } catch (error) {
+      setStatusMessage('Failed to save adjustments. Review your changes and retry.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedSlug) return;
+    setGenerating(true);
+    setStatusMessage('Launching calibration run…');
+    try {
+      await api.post(/drummers//generate);
+      setStatusMessage('Generation triggered. Refresh for updated metrics once the run completes.');
+      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+    } catch (error) {
+      setStatusMessage('Failed to trigger generation. Check backend logs for details.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleFeedbackSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedSlug) return;
+    if (!feedbackForm.comment.trim()) {
+      setStatusMessage('Add a comment before submitting feedback.');
+      return;
+    }
+    setFeedbackSubmitting(true);
+    setStatusMessage(null);
+    try {
+      await api.post('/feedback', {
+        drummer: selectedSlug,
+        rating: feedbackForm.rating,
+        comment: feedbackForm.comment.trim(),
+      });
+      setFeedbackForm({ rating: 4, comment: '' });
+      setStatusMessage('Feedback submitted. Thanks for the perspective!');
+      await loadDetail(selectedSlug);
+    } catch (error) {
+      setStatusMessage('Unable to send feedback. Please try again.');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const rollupShares = useMemo(() => asShareMap(detail?.rollupTargets?.instrument_shares), [detail]);
+  const actualShares = useMemo(() => asShareMap(detail?.metrics?.instrument_category_shares), [detail]);
+
+  const metricsRows = useMemo(
+    () => [
+      {
+        key: 'velocity_mean',
+        label: 'Velocity Mean',
+        actual: detail?.metrics?.velocity_mean,
+        target: detail?.rollupTargets?.velocity_mean,
+      },
+      {
+        key: 'velocity_std',
+        label: 'Velocity Std',
+        actual: detail?.metrics?.velocity_std,
+        target: detail?.rollupTargets?.velocity_std,
+      },
+      {
+        key: 'micro_timing_std',
+        label: 'Micro Timing Std (ms)',
+        actual: detail?.metrics?.micro_timing_std,
+        target: detail?.rollupTargets?.timing_std_ms,
+      },
+      {
+        key: 'fills_per_minute',
+        label: 'Fills per Minute',
+        actual: detail?.metrics?.fills_per_minute,
+        target: detail?.rollupTargets?.fills_per_min,
+      },
+      {
+        key: 'ghost_ratio',
+        label: 'Ghost Ratio',
+        actual: detail?.metrics?.ghost_ratio,
+        target: detail?.rollupTargets?.ghost_ratio,
+      },
+      {
+        key: 'fill_ratio',
+        label: 'Fill Ratio',
+        actual: detail?.metrics?.fill_ratio,
+        target: detail?.rollupTargets?.fill_ratio,
+      },
+    ],
+    [detail]
+  );
+
+  return (
+    <div className="min-h-screen bg-[#09031a] text-white">
+      <header className="relative overflow-hidden border-b border-purple-500/20 bg-gradient-to-br from-purple-950/80 via-purple-900/40 to-amber-900/20">
+        <div className="absolute inset-0 opacity-40">
+          <div className="absolute -top-24 -left-24 h-64 w-64 rounded-full bg-purple-700 blur-3xl" />
+          <div className="absolute bottom-0 right-0 h-72 w-72 rounded-full bg-amber-500 blur-[120px]" />
+        </div>
+        <div className="relative mx-auto flex max-w-6xl flex-col gap-6 px-6 py-14 md:flex-row md:items-center md:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-xs uppercase tracking-[0.6em] text-purple-200/80">Drummer Calibration Lab</p>
+            <h1 className="mt-4 text-4xl font-black leading-tight md:text-6xl">
+              Harmonize human feel with <span className="text-amber-300">AI precision</span>
+            </h1>
+            <p className="mt-4 text-base text-purple-100/70 md:text-lg">
+              Tune assimilation knobs, re-run the generator, and capture pro drummer feedback. The purple/gold lab keeps
+              everyone aligned on what each control does and how close we are to target rollups.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3 text-xs text-purple-100/70">
+              <span className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1">
+                <Sparkles className="h-3 w-3 text-amber-300" />
+                Collaborative calibration ready
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1">
+                <Gauge className="h-3 w-3 text-amber-200" />
+                Metric tolerance target ±10%
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 text-sm text-purple-100/80">
+            <div className="rounded-2xl border border-purple-500/40 bg-purple-500/10 p-5 shadow-2xl shadow-purple-950/30">
+              <p className="text-xs uppercase tracking-[0.4em] text-purple-200/70">Workflow Snapshot</p>
+              <ul className="mt-3 space-y-2 text-sm">
+                <li className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-300" /> Adjust feel & kit balance
+                </li>
+                <li className="flex items-center gap-2">
+                  <RefreshCcw className="h-4 w-4 text-purple-200" /> Trigger new calibration run
+                </li>
+                <li className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-purple-200" /> Capture pro drummer feedback
+                </li>
+              </ul>
+            </div>
+            {statusMessage && (
+              <div className="rounded-xl border border-purple-400/40 bg-purple-500/10 p-4 text-xs text-purple-100">
+                {statusMessage}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto grid max-w-6xl gap-10 px-6 py-12 lg:grid-cols-[320px,1fr]">
+        <aside className="space-y-8">
+          <section className="rounded-3xl border border-purple-500/30 bg-purple-900/20 p-6">
+            <div className="flex items-center gap-3 text-sm font-medium uppercase tracking-[0.3em] text-purple-200">
+              <Activity className="h-4 w-4 text-amber-300" /> Status Filters
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setFilter(option.id)}
+                  className={ounded-full px-3.5 py-1.5 text-xs font-semibold transition }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            {listLoading ? (
+              <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-6 text-sm text-purple-100/70">
+                Loading roster…
+              </div>
+            ) : listError ? (
+              <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-100/90">
+                {listError}
+              </div>
+            ) : sortedDrummers.length === 0 ? (
+              <div className="rounded-3xl border border-purple-500/30 bg-purple-900/10 p-6 text-sm text-purple-100/70">
+                No drummers match the current filter.
+              </div>
+            ) : (
+              sortedDrummers.map((entry) => (
+                <button
+                  key={entry.slug}
+                  type="button"
+                  onClick={() => handleSelectDrummer(entry.slug)}
+                  className={w-full rounded-3xl border px-5 py-4 text-left transition hover:-translate-y-1 hover:border-amber-300/60 hover:shadow-lg hover:shadow-purple-900/30 }
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-[0.3em] text-purple-200/90">
+                        {entry.displayName}
+                      </p>
+                      <p className="mt-1 text-xs text-purple-100/70">
+                        {entry.headline || 'Assimilation profile alignment'}
+                      </p>
+                    </div>
+                    <CompletionBadge
+                      status={entry.completionStatus.status}
+                      ratio={entry.completionStatus.completion_ratio}
+                    />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-3 text-[11px] text-purple-100/60">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5">
+                      <Gauge className="h-3 w-3 text-amber-300" />
+                      {entry.metricsWithin ?? 0}/{entry.metricsCompared ?? 0} metrics in tolerance
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5">
+                      <RefreshCcw className="h-3 w-3" />
+                      {formatDate(entry.latestRunAt)}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
+          </section>
+
+          <section className="rounded-3xl border border-purple-500/30 bg-purple-900/20 p-6">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.4em] text-purple-200/80">
+              <ClipboardList className="h-4 w-4 text-amber-300" /> Contributor Guide
+            </div>
+            <p className="mt-4 text-sm text-purple-100/70">
+              Calibrators, follow this flow for meaningful tweaks:
+            </p>
+            <ol className="mt-4 space-y-3 text-sm text-purple-100/80">
+              <li>
+                <span className="font-semibold text-amber-200">1.</span> Skim the status grid and choose the drummer with
+                the lowest completion ratio.
+              </li>
+              <li>
+                <span className="font-semibold text-amber-200">2.</span> In <em>Adjustments</em>, move one control family at a
+                time. Start with kit balance, then feel, then fills.
+              </li>
+              <li>
+                <span className="font-semibold text-amber-200">3.</span> Hover the info labels to understand the musical impact. Log why you changed each control in the notes box below the sliders.
+              </li>
+              <li>
+                <span className="font-semibold text-amber-200">4.</span> Launch a calibration run. Wait for metrics to land,
+                then compare target vs actual in the <em>Metrics</em> tab.
+              </li>
+              <li>
+                <span className="font-semibold text-amber-200">5.</span> Share qualitative feedback in the <em>Feedback</em> tab— focus on feel, fills, and balance observations.
+              </li>
+            </ol>
+            <p className="mt-4 text-xs italic text-purple-100/60">
+              Producers: once a profile holds =80% metrics within tolerance and external feedback is positive, flip the
+              completion status to “ready” in the backend.
+            </p>
+          </section>
+        </aside>
+
+        <section className="space-y-8">
+          <div className="rounded-3xl border border-purple-500/30 bg-purple-900/20 p-6">
+            {detailLoading ? (
+              <div className="text-sm text-purple-100/70">Loading calibration detail…</div>
+            ) : detailError ? (
+              <div className="text-sm text-rose-100/80">{detailError}</div>
+            ) : !detail ? (
+              <div className="text-sm text-purple-100/70">Select a drummer to begin calibration.</div>
+            ) : (
+              <div className="space-y-6">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.5em] text-purple-200/70">Current Drummer</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <h2 className="text-2xl font-semibold text-white">{detail.displayName}</h2>
+                      {completion && (
+                        <CompletionBadge status={completion.status} ratio={completion.completion_ratio} />
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-purple-100/70">
+                      Last run: {formatDate(detail?.runHistory?.[0]?.started_at)} • Note count:{' '}
+                      {detail?.metrics?.note_count ?? '—'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={!hasPendingChanges || saving}
+                      className={inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition }
+                    >
+                      <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Adjustments'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGenerate}
+                      disabled={generating}
+                      className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
+                    >
+                      <RefreshCcw className="h-4 w-4" /> {generating ? 'Launching…' : 'Run Calibration'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => loadDetail(selectedSlug)}
+                      className="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-900/30 px-4 py-2 text-sm text-purple-100"
+                    >
+                      <ArrowRight className="h-4 w-4" /> Refresh Detail
+                    </button>
+                  </div>
+                </div>
+
+                {hasPendingChanges && (
+                  <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-xs text-amber-100">
+                    <p className="font-semibold uppercase tracking-[0.3em]">Pending Changes</p>
+                    <ul className="mt-2 grid gap-2 md:grid-cols-2">
+                      {changedKeys.map((key) => (
+                        <li key={key} className="rounded-xl bg-purple-900/30 p-3">
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-purple-200/80">{labelize(key)}</p>
+                          <p className="mt-1 text-xs text-purple-100/80">
+                            from <span className="font-mono text-purple-200">{JSON.stringify(detail.originalAdjustments[key])}</span>
+                            <br />to{' '}
+                            <span className="font-mono text-amber-200">{JSON.stringify(pendingAdjustments?.[key])}</span>
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-3 text-xs">
+                  {(['adjustments', 'metrics', 'feedback'] as TabId[]).map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTab(id)}
+                      className={ounded-full px-4 py-2 font-semibold transition }
+                    >
+                      {labelize(id)}
+                    </button>
+                  ))}
+                </div>
+
+                {tab === 'adjustments' && pendingAdjustments && (
+                  <div className="space-y-6">
+                    {FIELD_GROUPS.map((group) => (
+                      <div key={group.title} className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-white">{group.title}</p>
+                            <p className="text-xs text-purple-100/70">{group.blurb}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                          {group.keys.map((key) => {
+                            const value = pendingAdjustments[key];
+                            const meta = CONTROL_BOUNDS[key];
+                            const help = detail.metadata?.field_help?.[key];
+                            if (meta) {
+                              return (
+                                <div key={key} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
+                                  <div className="flex items-center justify-between text-xs text-purple-100/70">
+                                    <span className="font-semibold text-white">{labelize(key)}</span>
+                                    <span className="font-mono text-amber-200">{Number(value).toFixed(2)}</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={meta.min}
+                                    max={meta.max}
+                                    step={meta.step}
+                                    value={Number(value)}
+                                    onChange={(event) => handleNumberChange(key, event.target.value)}
+                                    className="mt-3 w-full accent-amber-400"
+                                  />
+                                  <div className="mt-3 flex items-center gap-2 text-xs text-purple-100/70">
+                                    <input
+                                      type="number"
+                                      value={Number(value)}
+                                      min={meta.min}
+                                      max={meta.max}
+                                      step={meta.step}
+                                      onChange={(event) => handleNumberChange(key, event.target.value)}
+                                      className="w-24 rounded-lg border border-purple-500/30 bg-purple-950/60 px-2 py-1 text-xs"
+                                    />
+                                    {help && <span className="text-[11px] text-purple-200/70">{help}</span>}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            const draftValue = textDrafts[key] ?? '';
+                            return (
+                              <div key={key} className="space-y-2 rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
+                                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-purple-200">
+                                  {labelize(key)}
+                                </div>
+                                <textarea
+                                  value={draftValue}
+                                  onChange={(event) => handleTextDraftChange(key, event.target.value)}
+                                  onBlur={() => handleTextDraftCommit(key)}
+                                  rows={6}
+                                  className="w-full resize-none rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs font-mono text-purple-100"
+                                />
+                                {help && <div className="text-[11px] text-purple-200/70">{help}</div>}
+                                {textErrors[key] && <div className="text-[11px] text-rose-200/80">{textErrors[key]}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5 text-xs text-purple-100/70">
+                      <p className="font-semibold uppercase tracking-[0.3em] text-purple-200">Calibration Notes</p>
+                      <p className="mt-2">
+                        Before saving, bullet why you changed each control in your personal notebook or shared doc. Producers
+                        use that context to approve merges and keep profiles consistent across songs.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {tab === 'metrics' && (
+                  <div className="space-y-6">
+                    <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                      <p className="text-sm font-semibold text-white">Core Metric Alignment</p>
+                      <div className="mt-3 overflow-hidden rounded-2xl border border-purple-500/20">
+                        <table className="min-w-full text-left text-xs text-purple-100">
+                          <thead className="bg-purple-900/60 text-[11px] uppercase tracking-[0.3em] text-purple-200/80">
+                            <tr>
+                              <th className="px-4 py-3">Metric</th>
+                              <th className="px-4 py-3">Generated</th>
+                              <th className="px-4 py-3">Target</th>
+                              <th className="px-4 py-3">Diff</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-purple-500/20">
+                            {metricsRows.map((row) => {
+                              const actual = row.actual ?? null;
+                              const target = row.target ?? null;
+                              const diff = actual != null && target != null && target !== 0 ? (actual - target) / target : null;
+                              return (
+                                <tr key={row.key}>
+                                  <td className="px-4 py-3 font-medium text-white">{row.label}</td>
+                                  <td className="px-4 py-3">{actual != null ? actual.toFixed(3) : '—'}</td>
+                                  <td className="px-4 py-3">{target != null ? target.toFixed(3) : '—'}</td>
+                                  <td className={px-4 py-3 }>
+                                    {diff != null ? formatPercent(diff) : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                        <p className="text-sm font-semibold text-white">Rollup Share Targets</p>
+                        <ul className="mt-3 space-y-2 text-xs text-purple-100/70">
+                          {Object.entries(rollupShares).map(([key, value]) => (
+                            <li key={key} className="flex items-center justify-between rounded-2xl bg-purple-900/20 px-3 py-2">
+                              <span className="font-semibold text-purple-100">{labelize(key)}</span>
+                              <span className="font-mono text-amber-200">{formatShare(value)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                        <p className="text-sm font-semibold text-white">Generated Share Actuals</p>
+                        <ul className="mt-3 space-y-2 text-xs text-purple-100/70">
+                          {Object.entries(actualShares).map(([key, value]) => (
+                            <li key={key} className="flex items-center justify-between rounded-2xl bg-purple-900/20 px-3 py-2">
+                              <span className="font-semibold text-purple-100">{labelize(key)}</span>
+                              <span className="font-m??? text-amber-200">{formatShare(value)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                      <p className="text-sm font-semibold text-white">Run History</p>
+                      <div className="mt-3 space-y-3">
+                        {detail.runHistory?.length ? (
+                          detail.runHistory.map((run) => (
+                            <div
+                              key={run.id}
+                              className="flex flex-col gap-2 rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4 md:flex-row md:items-center md:justify-between"
+                            >
+                              <div className="space-y-1 text-xs text-purple-100/80">
+                                <div className="flex items-center gap-2">
+                                  <span className={ounded-full px-2 py-0.5 text-[11px] }>
+                                    {describeRunOutcome(run)}
+                                  </span>
+                                  <span>{formatDate(run.started_at)}</span>
+                                </div>
+                                <div>
+                                  <span className="font-semibold text-purple-100">Notes:</span>{' '}
+                                  {run.delta_summary || 'Not provided'}
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-purple-100/70">
+                                  <span>Notes: {run.note_count ?? '—'}</span>
+                                  <span>FPM: {run.fills_per_minute?.toFixed(2) ?? '—'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-xs text-purple-100/60">No calibration runs logged yet. Trigger one to populate history.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {tab === 'feedback' && (
+                  <div className="grid gap-6 lg:grid-cols-[1.2fr,1fr]">
+                    <div className="space-y-4 rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                      <p className="text-sm font-semibold text-white">Team Feedback Log</p>
+                      <div className="space-y-3 text-xs text-purple-100/80">
+                        {detail.feedbackSamples?.length ? (
+                          detail.feedbackSamples.map((entry) => (
+                            <div key={entry.id} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
+                              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-purple-200/70">
+                                <span>{entry.author}</span>
+                                <span>{formatDate(entry.submitted_at)}</span>
+                              </div>
+                              <div className="mt-2 flex items-center gap-2 text-xs text-amber-200">
+                                <Sparkles className="h-4 w-4" /> Rating: {entry.rating}/5
+                              </div>
+                              <p className="mt-2 text-sm text-purple-100/80">{entry.comment}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <p>No feedback captured yet. Invite drummers to weigh in and log their notes here.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <form
+                      onSubmit={handleFeedbackSubmit}
+                      className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5"
+                    >
+                      <p className="text-sm font-semibold text-white">Add Your Perspective</p>
+                      <p className="mt-1 text-xs text-purple-100/70">
+                        Focus on human feel: timing looseness, fill phrasing, cymbal articulation, and kit balance.
+                      </p>
+                      <label className="mt-4 block text-xs font-semibold text-purple-100">
+                        Rating (1 = needs overhaul, 5 = stage ready)
+                        <input
+                          type="range"
+                          min={1}
+                          max={5}
+                          step={1}
+                          value={feedbackForm.rating}
+                          onChange={(event) => setFeedbackForm((prev) => ({ ...prev, rating: Number(event.target.value) }))}
+                          className="mt-2 w-full accent-amber-400"
+                        />
+                        <span className="mt-1 block font-mono text-amber-200">{feedbackForm.rating}/5</span>
+                      </label>
+                      <label className="mt-4 block text-xs font-semibold text-purple-100">
+                        Comment
+                        <textarea
+                          value={feedbackForm.comment}
+                          onChange={(event) => setFeedbackForm((prev) => ({ ...prev, comment: event.target.value }))}
+                          rows={6}
+                          placeholder="Describe what grooves, what feels robotic, and suggested tweaks (e.g., raise hat floor, lower fill cap)."
+                          className="mt-2 w-full resize-none rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs text-purple-100"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={feedbackSubmitting}
+                        className="mt-4 inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-purple-900/40 transition hover:shadow-amber-500/30"
+                      >
+                        <Users className="h-4 w-4" /> {feedbackSubmitting ? 'Sending…' : 'Submit Feedback'}
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+};
+
+export default CalibrationLab;

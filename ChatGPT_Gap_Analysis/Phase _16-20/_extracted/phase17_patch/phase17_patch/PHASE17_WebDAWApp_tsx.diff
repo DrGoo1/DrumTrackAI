@@ -1,0 +1,12 @@
+--- a/frontend/src/components/WebDAWApp.tsx
++++ b/frontend/src/components/WebDAWApp.tsx
+@@
++import { attachSentientProfile } from "../api/sentientProfiles";
+@@
+       let payload: DrumGenerationConfig = {
+         ...config,
+         publicDrummerId: selectedDrummer?.id ?? config.publicDrummerId ?? config.drummer,
+         drummerPersona: selectedDrummer ?? config.drummerPersona,
+       };
++
++      payload = await attachSentientProfile(payload);

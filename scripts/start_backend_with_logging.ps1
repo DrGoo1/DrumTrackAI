@@ -13,13 +13,18 @@ if (-not (Test-Path $ProjectRoot)) {
 
 $pythonPath = Join-Path $ProjectRoot ".venv\\Scripts\\python.exe"
 $backendEntry = Join-Path $ProjectRoot "dcsm_backend.py"
+$backendEntryFallback = Join-Path $ProjectRoot "docs\\timing_review\\code_snapshot\\dcsm_backend.py"
 
 if (-not (Test-Path $pythonPath)) {
     throw "Python executable not found at '$pythonPath'. Activate the virtual environment first."
 }
 
 if (-not (Test-Path $backendEntry)) {
-    throw "Backend entry script not found at '$backendEntry'."
+    if (Test-Path $backendEntryFallback) {
+        $backendEntry = $backendEntryFallback
+    } else {
+        throw "Backend entry script not found at '$backendEntry'."
+    }
 }
 
 if ([System.IO.Path]::IsPathRooted($LogDirectory)) {

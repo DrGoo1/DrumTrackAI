@@ -111,8 +111,9 @@ export function V3DrummerPickerModal() {
       try {
         setLoading(true);
         setError(null);
-        const apiBase = resolveApiBaseNormalized() || "http://localhost:8000";
-        const res = await fetch(`${apiBase}/api/drummers`);
+        const apiBase = resolveApiBaseNormalized();
+        const url = apiBase ? `${apiBase}/api/drummers` : `/api/drummers`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`Failed to fetch drummers (${res.status})`);
         const data = await res.json();
         const list = Array.isArray(data?.drummers) ? data.drummers : [];
@@ -154,9 +155,10 @@ export function V3DrummerPickerModal() {
             delete next[profileType];
             return next;
           });
-          const apiBase = resolveApiBaseNormalized() || "http://localhost:8000";
-
-          const url = `${apiBase}/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`;
+          const apiBase = resolveApiBaseNormalized();
+          const url = apiBase
+            ? `${apiBase}/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`
+            : `/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`;
           console.debug("[V3DrummerPickerModal] fetch presets", { profileType, url });
 
           const controller = new AbortController();
@@ -224,8 +226,11 @@ export function V3DrummerPickerModal() {
       // Best-effort: fetch presets for this drummer style and auto-apply a default stack.
       if (profileType && !pickedPresetId) {
         try {
-          const apiBase = resolveApiBaseNormalized() || "http://localhost:8000";
-          const res = await fetch(`${apiBase}/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`);
+          const apiBase = resolveApiBaseNormalized();
+          const url = apiBase
+            ? `${apiBase}/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`
+            : `/api/drummer-presets?profileType=${encodeURIComponent(profileType)}`;
+          const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
             const items = Array.isArray(data?.items) ? (data.items as PresetItem[]) : [];

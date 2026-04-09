@@ -1,0 +1,76 @@
+{
+  "drummer_id": "travis_barker",
+  "generated_at": "2026-04-06T14:37:55.185620",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_travis_barker",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.7918520655625938,
+      "ghostNoteAmount": 0.43016522807765434,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 6,
+    "songs": 3,
+    "hits": 10850,
+    "instrument_counts": {
+      "residual": 1417,
+      "drums": 1227,
+      "bass": 1154,
+      "instrumental": 1130,
+      "original_mix": 1111,
+      "vocals": 922,
+      "hihat": 886,
+      "other": 875,
+      "kick": 758,
+      "snare": 705,
+      "cymbal": 573,
+      "tom": 92
+    },
+    "instrument_shares": {
+      "residual": 0.13059907834101384,
+      "drums": 0.11308755760368663,
+      "bass": 0.1063594470046083,
+      "instrumental": 0.10414746543778802,
+      "original_mix": 0.1023963133640553,
+      "vocals": 0.08497695852534562,
+      "hihat": 0.0816589861751152,
+      "other": 0.08064516129032258,
+      "kick": 0.06986175115207373,
+      "snare": 0.06497695852534562,
+      "cymbal": 0.0528110599078341,
+      "tom": 0.00847926267281106
+    },
+    "fills": 135,
+    "fills_per_min": null,
+    "techniques": 1,
+    "technique_breakdown": {
+      "flam_like": 1
+    },
+    "timing_std_ms": 35.288155220038014,
+    "pocket_tightness": 0.26018491804675775,
+    "humanness": 0.5093913237775533,
+    "velocity_mean": 0.31556685558815795,
+    "velocity_std": 0.19455955825295831
+  }
+}

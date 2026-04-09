@@ -1,0 +1,48 @@
+{
+  "drummer_id": "clyde_stubblefield",
+  "generated_at": "2026-04-01T01:06:40.023688",
+  "persona": {
+    "label": "balanced",
+    "confidence": 0.55,
+    "tags": [
+      "balanced"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_clyde_stubblefield",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.5,
+      "ghostNoteAmount": 0.35,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "balanced",
+        "confidence": 0.55,
+        "tags": [
+          "balanced"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 2,
+    "songs": 3,
+    "hits": 0,
+    "instrument_counts": {},
+    "instrument_shares": {},
+    "fills": 0,
+    "fills_per_min": null,
+    "techniques": 0,
+    "technique_breakdown": {},
+    "timing_std_ms": null,
+    "pocket_tightness": null,
+    "humanness": null,
+    "velocity_mean": null,
+    "velocity_std": null
+  }
+}

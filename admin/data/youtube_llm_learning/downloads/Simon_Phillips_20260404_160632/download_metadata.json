@@ -1,0 +1,34 @@
+{
+  "downloads": [
+    {
+      "url": "https://youtu.be/YrgnYZW-oXg?si=zmq5IgIo7uS8R5jS",
+      "title": "Toto - I will remember",
+      "uploader": "lebkuchenmann666",
+      "duration": 365,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Toto - I will remember.wav",
+      "drummer_name": "Simon Phillips",
+      "style": "fusion",
+      "download_date": "20120202"
+    },
+    {
+      "url": "https://youtu.be/ZZ_8YHFKRpM?si=aG7kiZJylknvJVjt",
+      "title": "Space Boogie",
+      "uploader": "Jeff Beck",
+      "duration": 306,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Space Boogie.wav",
+      "drummer_name": "Simon Phillips",
+      "style": "fusion",
+      "download_date": "20150918"
+    },
+    {
+      "url": "https://youtu.be/V4bD9w61Fs0?si=hdCjJrkxFzXGGZ0j",
+      "title": "Give Blood",
+      "uploader": "Pete Townshend",
+      "duration": 347,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Give Blood.wav",
+      "drummer_name": "Simon Phillips",
+      "style": "fusion",
+      "download_date": "20180729"
+    }
+  ]
+}

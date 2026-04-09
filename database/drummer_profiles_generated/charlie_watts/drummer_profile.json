@@ -1,0 +1,76 @@
+{
+  "drummer_id": "charlie_watts",
+  "generated_at": "2026-04-06T13:43:32.440969",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_charlie_watts",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.7681158767707614,
+      "ghostNoteAmount": 0.4450756886204206,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 5,
+    "songs": 3,
+    "hits": 20826,
+    "instrument_counts": {
+      "residual": 2157,
+      "drums": 2120,
+      "hihat": 2048,
+      "cymbal": 2010,
+      "instrumental": 2002,
+      "original_mix": 1891,
+      "bass": 1848,
+      "snare": 1573,
+      "other": 1390,
+      "kick": 1381,
+      "vocals": 1328,
+      "tom": 1078
+    },
+    "instrument_shares": {
+      "residual": 0.10357245750504178,
+      "drums": 0.10179583213291078,
+      "hihat": 0.09833861519254777,
+      "cymbal": 0.0965139729184673,
+      "instrumental": 0.09612983770287141,
+      "original_mix": 0.09079996158647843,
+      "bass": 0.08873523480265054,
+      "snare": 0.07553058676654183,
+      "other": 0.06674349370978584,
+      "kick": 0.06631134159224047,
+      "vocals": 0.0637664457889177,
+      "tom": 0.05176222030154615
+    },
+    "fills": 519,
+    "fills_per_min": null,
+    "techniques": 6,
+    "technique_breakdown": {
+      "flam_like": 6
+    },
+    "timing_std_ms": 31.073093479017853,
+    "pocket_tightness": 0.28985515403654843,
+    "humanness": 0.5365012520371283,
+    "velocity_mean": 0.31315153415936314,
+    "velocity_std": 0.17027788737791724
+  }
+}

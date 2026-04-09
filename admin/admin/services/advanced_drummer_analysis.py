@@ -109,12 +109,30 @@ class AdvancedDrummerAnalysis:
         try:
             y, sr = librosa.load(audio_file, sr=self.sample_rate)
             
-            # Detect onsets
-            onset_frames = librosa.onset.onset_detect(
-                y=y, sr=sr, units='time', threshold=self.onset_threshold,
-                pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.2,
-                wait=int(self.min_hit_separation * sr / 512)
+            # Detect onsets (handle API differences across librosa versions)
+            onset_kwargs = dict(
+                y=y,
+                sr=sr,
+                units="time",
+                pre_max=3,
+                post_max=3,
+                pre_avg=3,
+                post_avg=5,
+                delta=0.2,
+                wait=int(self.min_hit_separation * sr / 512),
             )
+
+            try:
+                onset_frames = librosa.onset.onset_detect(
+                    threshold=self.onset_threshold, **onset_kwargs
+                )
+            except TypeError:
+                logger.debug(
+                    "librosa.onset.onset_detect does not support 'threshold'; using default"
+                )
+                onset_frames = librosa.onset.onset_detect(**onset_kwargs)
+
+            onset_frames = np.asarray(onset_frames, dtype=float)
             
             # Calculate velocities
             onset_strength = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)

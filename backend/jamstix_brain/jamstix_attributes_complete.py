@@ -365,6 +365,14 @@ def enrich_drum_events_with_jamstix_attrs(
         timing_offset_ms = calculate_timing_offset(
             feel, bar_pos_frac, inst, aspect
         )
+        explicit_offset = ev.get("timing_offset_ms")
+        if explicit_offset is None:
+            explicit_offset = ev.get("humanize_offset_ms")
+        if explicit_offset is not None:
+            try:
+                timing_offset_ms += float(explicit_offset)
+            except (TypeError, ValueError):
+                pass
         
         # Determine hit style
         prev_time = limb_last_hit_time.get(limb_id)

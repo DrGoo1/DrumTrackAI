@@ -1,0 +1,76 @@
+{
+  "drummer_id": "steve_gadd",
+  "generated_at": "2026-04-06T17:20:18.551473",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_steve_gadd",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.8377111352218556,
+      "ghostNoteAmount": 0.35147272746270375,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 8,
+    "songs": 3,
+    "hits": 23050,
+    "instrument_counts": {
+      "instrumental": 3203,
+      "drums": 3048,
+      "original_mix": 3046,
+      "residual": 2646,
+      "hihat": 2209,
+      "cymbal": 2136,
+      "other": 1742,
+      "snare": 1318,
+      "bass": 1177,
+      "vocals": 1104,
+      "kick": 1071,
+      "tom": 350
+    },
+    "instrument_shares": {
+      "instrumental": 0.1389587852494577,
+      "drums": 0.13223427331887203,
+      "original_mix": 0.1321475054229935,
+      "residual": 0.1147939262472885,
+      "hihat": 0.0958351409978308,
+      "cymbal": 0.09266811279826465,
+      "other": 0.07557483731019522,
+      "snare": 0.05718004338394794,
+      "bass": 0.05106290672451193,
+      "vocals": 0.04789587852494577,
+      "kick": 0.04646420824295011,
+      "tom": 0.015184381778741865
+    },
+    "fills": 387,
+    "fills_per_min": null,
+    "techniques": 8,
+    "technique_breakdown": {
+      "flam_like": 8
+    },
+    "timing_std_ms": 39.975163930512515,
+    "pocket_tightness": 0.20286108097268066,
+    "humanness": 0.36631404993218863,
+    "velocity_mean": 0.3214241741928499,
+    "velocity_std": 0.18174254819862798
+  }
+}

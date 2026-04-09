@@ -462,8 +462,13 @@ class DrummersWidget(QWidget):
         self.last_analyzed_song_path = None
 
         # Paths
-        self.data_root = os.path.abspath(os.path.join(os.getcwd(), '..', 'database'))
+        repo_root = Path(__file__).resolve().parents[3]
+        self.data_root = str(repo_root / 'database')
         self.profiles_path = os.path.join(self.data_root, 'drummer_profiles.json')
+        self._profiles_fallback_paths = [
+            str(repo_root / 'admin' / 'data' / 'drummers' / 'profiles.json'),
+            str(repo_root / 'admin' / 'admin' / 'data' / 'drummers' / 'profiles.json'),
+        ]
         self.download_path = os.path.join(self.data_root, 'drummer_songs')
         self.mvsep_output_path = os.path.join(self.data_root, 'processed_stems')
 
@@ -809,31 +814,35 @@ class DrummersWidget(QWidget):
     def load_drummer_profiles(self):
         """Load drummer profiles from JSON file"""
         try:
-            if not os.path.exists(self.profiles_path):
-                # Check if the older profile file exists
-                old_path = "H:\\app\\data\\drummers\\drummer_profiles.json"
-                if os.path.exists(old_path):
-                    # Copy the file to our new location
-                    os.makedirs(os.path.dirname(self.profiles_path), exist_ok=True)
-                    shutil.copy(old_path, self.profiles_path)
-                    logger.info(f"Copied drummer profiles from {old_path} to {self.profiles_path}")
-                else:
-                    # Create an empty profiles file
-                    os.makedirs(os.path.dirname(self.profiles_path), exist_ok=True)
-                    with open(self.profiles_path, 'w') as f:
-                        json.dump({"profiles": []}, f, indent=2)
-                    logger.info(f"Created new empty drummer profiles at {self.profiles_path}")
+            candidate_paths = [self.profiles_path]
+            try:
+                candidate_paths.extend(self._profiles_fallback_paths or [])
+            except Exception:
+                pass
 
-            # Load profiles
-            with open(self.profiles_path, 'r') as f:
-                data = json.load(f)
-                self.drummer_profiles = data.get('profiles', [])
+            chosen_path = None
+            for p in candidate_paths:
+                if p and os.path.exists(p):
+                    chosen_path = p
+                    break
+
+            if chosen_path:
+                with open(chosen_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get('profiles'), list):
+                    self.drummer_profiles = data.get('profiles') or []
+                elif isinstance(data, list):
+                    self.drummer_profiles = data
+                else:
+                    self.drummer_profiles = []
+            else:
+                self.drummer_profiles = []
 
             # Extract all genres for filtering
             all_genres = set()
             for drummer in self.drummer_profiles:
-                for style in drummer.get('styles', []):
-                    all_genres.add(style)
+                for style in (drummer or {}).get('styles', []) or []:
+                    all_genres.add(str(style))
 
             # Populate genre filter
             self.genre_combo.clear()

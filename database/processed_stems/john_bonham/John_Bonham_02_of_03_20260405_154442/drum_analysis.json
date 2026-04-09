@@ -1,0 +1,97 @@
+{
+  "source": "mvsep_batch_processor",
+  "source_file": "F:\\DrumTracKAI_v1.1.17\\database\\drummer_songs\\john_bonham_John_Bonham_02_of_03_20260405_154442.mp3",
+  "output_directory": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442",
+  "created_at": "2026-04-05T19:53:08.145334",
+  "analysis_method": "advanced_drummer_analysis",
+  "profile_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drummer_profile.json",
+  "tempo": 120.0,
+  "tempo_variability_bpm_std": null,
+  "beats": [],
+  "style": "rock",
+  "key": "C",
+  "duration": 0.0,
+  "total_hits": 0,
+  "components_analyzed": [
+    "kick",
+    "snare",
+    "hihat"
+  ],
+  "components": {
+    "kick": {
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_kick.wav",
+      "hit_count": 0,
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    },
+    "snare": {
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_snare.wav",
+      "hit_count": 0,
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    },
+    "hihat": {
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_hh.wav",
+      "hit_count": 0,
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    }
+  },
+  "groove_analysis": {
+    "swing_factor": 0.0,
+    "pocket_tightness": 0.0,
+    "rhythmic_complexity": 0.0,
+    "syncopation_level": 0.0,
+    "micro_timing_variance": 0.0,
+    "humanness_score": 0.5
+  },
+  "personality_traits": {
+    "precision": 1.0,
+    "creativity": 0.0,
+    "groove_feel": 0.0,
+    "humanness": 0.5
+  },
+  "technical_metrics": {
+    "overall_complexity": 0.0,
+    "timing_consistency": 0.0,
+    "pattern_diversity": 0.0
+  },
+  "component_interactions": {
+    "kick": {
+      "kick": 1.0,
+      "snare": 0.0,
+      "hihat": 0.0
+    },
+    "snare": {
+      "kick": 0.0,
+      "snare": 1.0,
+      "hihat": 0.0
+    },
+    "hihat": {
+      "kick": 0.0,
+      "snare": 0.0,
+      "hihat": 1.0
+    }
+  },
+  "signature_patterns": [],
+  "stem_files_used": {
+    "bass": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\bass.wav",
+    "other": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\other.wav",
+    "vocals": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\vocals.wav",
+    "instrumental": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\instrumental.wav",
+    "original_mix": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\john_bonham_John_Bonham_02_of_03_20260405_154442.mp3",
+    "drums": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drums.wav",
+    "overheads": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_ride.wav",
+    "hihat": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_hh.wav",
+    "kick": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_kick.wav",
+    "snare": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_snare.wav",
+    "tom": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_toms.wav",
+    "residual": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\john_bonham\\John_Bonham_02_of_03_20260405_154442\\drumsep_components\\drumsep_residual.wav"
+  }
+}

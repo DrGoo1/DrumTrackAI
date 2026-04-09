@@ -1,0 +1,41 @@
+[
+  {
+    "drummer": "john_bonham",
+    "status": "ok",
+    "track_path": "tests\\output\\dcsm\\john_bonham_track.json",
+    "metrics_path": "tests\\output\\dcsm\\john_bonham_metrics.json",
+    "note_count": 72,
+    "metrics_within_tolerance": 6,
+    "metrics_compared": 10,
+    "completion_status": {
+      "status": "refine",
+      "completion_ratio": 0.6
+    }
+  },
+  {
+    "drummer": "ringo_starr",
+    "status": "ok",
+    "track_path": "tests\\output\\dcsm\\ringo_starr_track.json",
+    "metrics_path": "tests\\output\\dcsm\\ringo_starr_metrics.json",
+    "note_count": 74,
+    "metrics_within_tolerance": 5,
+    "metrics_compared": 10,
+    "completion_status": {
+      "status": "needs_tuning",
+      "completion_ratio": 0.5
+    }
+  },
+  {
+    "drummer": "clyde_stubblefield",
+    "status": "ok",
+    "track_path": "tests\\output\\dcsm\\clyde_stubblefield_track.json",
+    "metrics_path": "tests\\output\\dcsm\\clyde_stubblefield_metrics.json",
+    "note_count": 58,
+    "metrics_within_tolerance": 3,
+    "metrics_compared": 10,
+    "completion_status": {
+      "status": "needs_tuning",
+      "completion_ratio": 0.3
+    }
+  }
+]

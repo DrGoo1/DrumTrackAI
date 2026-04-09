@@ -301,6 +301,7 @@ export function V3ImportAnalysisHeader() {
   const [egmdStyleFallbackActive, setEgmdStyleFallbackActive] = useState(false);
   const [egmdComplexitySummary, setEgmdComplexitySummary] = useState<any | null>(null);
   const [egmdComplexitySummaryLoading, setEgmdComplexitySummaryLoading] = useState(false);
+  const [includeAdminStyles, setIncludeAdminStyles] = useState(false);
   const [playingGrooveId, setPlayingGrooveId] = useState<string | null>(null);
   const grooveAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -319,8 +320,13 @@ export function V3ImportAnalysisHeader() {
     (async () => {
       try {
         const apiBase = useV3Store.getState().env.apiBase || "";
-        const mode = String(grooveSourceMode || "egmd");
-        const res = await fetch(`${apiBase}/api/grooves/style-groups?sources=${encodeURIComponent(mode)}&limit=200`);
+        const mode = String(grooveSourceMode || "egmd").toLowerCase();
+        const adminParam = includeAdminStyles ? "&admin=true" : "";
+        const base = apiBase.replace(/\/$/, "");
+        const url = mode === "egmd"
+          ? `${base}/api/egmd/style-groups?limit=200`
+          : `${base}/api/grooves/style-groups?sources=${encodeURIComponent(mode)}&limit=200${adminParam}`;
+        const res = await fetch(url);
         if (!res.ok) return;
         const json = await res.json();
         const items = Array.isArray((json as any)?.items) ? (json as any).items : [];
@@ -336,7 +342,7 @@ export function V3ImportAnalysisHeader() {
     return () => {
       cancelled = true;
     };
-  }, [grooveSourceMode]);
+  }, [grooveSourceMode, includeAdminStyles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -591,6 +597,25 @@ export function V3ImportAnalysisHeader() {
               const j2 = await r2.json();
               items = Array.isArray(j2?.items) ? j2.items : [];
               setEgmdStyleFallbackActive(true);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        // Final hard fallback: if EGMD search is still empty, query EGMD phrases directly by style_group.
+        if (isEgmd && sg && items.length === 0) {
+          try {
+            const egmdPath = `/api/egmd/phrases?style_group=${encodeURIComponent(sg)}&limit=50`;
+            setGrooveLastRequest(egmdPath);
+            const r3 = await fetch(`${apiBase}${egmdPath}`);
+            if (r3.ok) {
+              const j3 = await r3.json();
+              const phr = Array.isArray(j3?.items) ? j3.items : [];
+              if (phr.length > 0) {
+                items = phr;
+                setEgmdStyleFallbackActive(true);
+              }
             }
           } catch {
             // ignore
@@ -1615,6 +1640,18 @@ export function V3ImportAnalysisHeader() {
           >
             Align
           </button>
+
+          <div className="flex items-center gap-1 px-2 py-1 rounded border border-slate-800 bg-slate-950">
+            <label className="flex items-center gap-1 text-[11px] text-slate-200">
+              <input
+                type="checkbox"
+                checked={includeAdminStyles}
+                onChange={(e) => setIncludeAdminStyles(e.target.checked)}
+                disabled={importState.busyStage !== "idle"}
+              />
+              Admin styles
+            </label>
+          </div>
 
           {workflowMode === "scratch" && (
             <button

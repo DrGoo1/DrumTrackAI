@@ -1,0 +1,76 @@
+{
+  "drummer_id": "ringo_starr",
+  "generated_at": "2026-04-05T22:28:13.916980",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_ringo_starr",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.8253191517928262,
+      "ghostNoteAmount": 0.3706663256125712,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 4,
+    "songs": 6,
+    "hits": 30096,
+    "instrument_counts": {
+      "drums": 3731,
+      "residual": 3612,
+      "hihat": 3283,
+      "instrumental": 3163,
+      "bass": 2924,
+      "cymbal": 2673,
+      "original_mix": 2396,
+      "other": 2294,
+      "snare": 2133,
+      "vocals": 1858,
+      "kick": 1735,
+      "tom": 294
+    },
+    "instrument_shares": {
+      "drums": 0.12396996278575226,
+      "residual": 0.12001594896331738,
+      "hihat": 0.10908426368952685,
+      "instrumental": 0.10509702286018076,
+      "bass": 0.09715576820839979,
+      "cymbal": 0.08881578947368421,
+      "original_mix": 0.07961190855927698,
+      "other": 0.0762227538543328,
+      "snare": 0.0708732057416268,
+      "vocals": 0.061735778841042,
+      "kick": 0.057648856990962255,
+      "tom": 0.009768740031897927
+    },
+    "fills": 582,
+    "fills_per_min": null,
+    "techniques": 14,
+    "technique_breakdown": {
+      "flam_like": 14
+    },
+    "timing_std_ms": 38.25531927310352,
+    "pocket_tightness": 0.21835106025896725,
+    "humanness": 0.40121150111376574,
+    "velocity_mean": 0.2938502109951084,
+    "velocity_std": 0.17028102662461964
+  }
+}

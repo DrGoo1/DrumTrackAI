@@ -1,0 +1,184 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "Editable drummer adjustment presets. Managed via calibration workflow.",
+    "field_help": {
+      "timing_scale": "Multiplier on rollup timing std deviation (micro-timing).",
+      "velocity_std_scale": "Scales velocity standard deviation for target dynamics.",
+      "fill_factor": "Multiplier on normalized fills-per-minute goal before caps.",
+      "fill_fpm_cap": "Upper cap on fills-per-minute after scaling.",
+      "snare_share_scale": "Scales target snare share before redistribution.",
+      "hihat_share_scale": "Scales target hihat share before redistribution.",
+      "kick_share_scale": "Scales target kick share before redistribution.",
+      "donor_priority": "Ordered categories to borrow hits from first during rebalance."
+    }
+  },
+  "drummers": {
+    "john_bonham": {
+      "timing_scale": 1.0,
+      "velocity_std_scale": 1.0,
+      "fill_factor": 1.1,
+      "snare_share_scale": 1.45,
+      "cymbal_share_scale": 0.8,
+      "ride_share_scale": 0.75,
+      "tom_share_scale": 0.7,
+      "kick_share_scale": 0.85,
+      "hihat_share_scale": 0.85,
+      "hihat_share_floor": 0.22,
+      "rebalance_priority": ["snare", "hihat", "ride", "cymbal", "tom"],
+      "excess_reassign": {
+        "ride": "hihat_closed",
+        "cymbal": "snare_ghost",
+        "tom": "snare_center"
+      },
+      "fill_velocity_scale": 0.85,
+      "fill_source_categories": ["hihat", "snare", "ride", "tom", "cymbal"],
+      "fill_category_priority": ["snare", "tom", "cymbal", "ride", "hihat", "kick"],
+      "fill_source_priority": ["snare", "hihat", "ride", "cymbal", "tom"],
+      "max_fills_per_bar_scale": 1.3,
+      "donor_priority": ["ride", "cymbal", "tom", "kick", "hihat"],
+      "overflow_reassign_priority": ["snare", "hihat", "cymbal", "ride"],
+      "max_share_scale": {
+        "kick": 1.05,
+        "tom": 1.4,
+        "ride": 1.25,
+        "cymbal": 1.3,
+        "hihat": 0.95
+      },
+      "fill_fpm_cap": 5.5
+    },
+    "ringo_starr": {
+      "timing_scale": 1.2,
+      "velocity_std_scale": 0.95,
+      "fill_factor": 0.8,
+      "snare_share_scale": 1.5,
+      "cymbal_share_scale": 0.75,
+      "ride_share_scale": 0.8,
+      "tom_share_scale": 0.65,
+      "kick_share_scale": 0.82,
+      "hihat_share_scale": 0.88,
+      "hihat_share_floor": 0.26,
+      "rebalance_priority": [
+        "snare",
+        "hihat",
+        "ride",
+        "cymbal",
+        "tom"
+      ],
+      "excess_reassign": {
+        "ride": "hihat_closed",
+        "cymbal": "snare_ghost",
+        "tom": "snare_center"
+      },
+      "fill_velocity_scale": 0.8,
+      "fill_source_categories": [
+        "hihat",
+        "snare",
+        "ride",
+        "cymbal"
+      ],
+      "fill_category_priority": [
+        "snare",
+        "ride",
+        "cymbal",
+        "tom",
+        "hihat"
+      ],
+      "fill_source_priority": [
+        "snare",
+        "hihat",
+        "ride",
+        "cymbal"
+      ],
+      "max_fills_per_bar_scale": 1.15,
+      "donor_priority": [
+        "cymbal",
+        "ride",
+        "tom",
+        "kick",
+        "percussion"
+      ],
+      "overflow_reassign_priority": [
+        "snare",
+        "ride",
+        "cymbal",
+        "tom",
+        "kick"
+      ],
+      "max_share_scale": {
+        "hihat": 0.95,
+        "kick": 0.95,
+        "ride": 1.05
+      },
+      "fill_fpm_cap": 0.95
+    },
+    "clyde_stubblefield": {
+      "timing_scale": 0.9,
+      "velocity_std_scale": 1.1,
+      "fill_factor": 0.25,
+      "snare_share_scale": 1.9,
+      "cymbal_share_scale": 0.52,
+      "ride_share_scale": 0.58,
+      "tom_share_scale": 0.6,
+      "kick_share_scale": 0.48,
+      "hihat_share_scale": 0.82,
+      "hihat_share_floor": 0.2,
+      "rebalance_priority": [
+        "snare",
+        "hihat",
+        "tom",
+        "cymbal",
+        "ride"
+      ],
+      "excess_reassign": {
+        "kick": "snare_ghost",
+        "ride": "hihat_closed",
+        "cymbal": "snare_center",
+        "tom": "snare_center"
+      },
+      "fill_velocity_scale": 0.85,
+      "fill_source_categories": [
+        "snare",
+        "hihat",
+        "ride",
+        "cymbal"
+      ],
+      "fill_category_priority": [
+        "snare",
+        "cymbal",
+        "ride",
+        "tom",
+        "hihat"
+      ],
+      "fill_source_priority": [
+        "snare",
+        "ride",
+        "cymbal",
+        "hihat"
+      ],
+      "max_fills_per_bar_scale": 1.1,
+      "donor_priority": [
+        "hihat",
+        "cymbal",
+        "ride",
+        "tom",
+        "percussion",
+        "kick"
+      ],
+      "overflow_reassign_priority": [
+        "snare",
+        "ride",
+        "cymbal",
+        "tom"
+      ],
+      "max_share_scale": {
+        "snare": 1.35,
+        "kick": 0.8,
+        "tom": 1.05,
+        "cymbal": 0.9,
+        "hihat": 0.75
+      },
+      "fill_fpm_cap": 1.2
+    }
+  }
+}

@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Callable, Tuple, Any
 
 import aiohttp
 
+logger = logging.getLogger(__name__)
+
 try:
     import aiofiles
 except Exception:

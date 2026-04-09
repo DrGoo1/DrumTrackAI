@@ -69,6 +69,8 @@ export function V3GlobalDefaultsPanel() {
 
   const [drummerOptions, setDrummerOptions] = useState<Array<{ id: string; display_name: string }>>([]);
   const [drummerError, setDrummerError] = useState<string | null>(null);
+  const [styleOptions, setStyleOptions] = useState<string[]>([]);
+  const [styleError, setStyleError] = useState<string | null>(null);
 
   const [availablePresets, setAvailablePresets] = useState<any[]>([]);
   const [presetError, setPresetError] = useState<string | null>(null);
@@ -215,8 +217,31 @@ export function V3GlobalDefaultsPanel() {
     let cancelled = false;
     (async () => {
       try {
+        setStyleError(null);
+        const res = await fetch(`/api/drummer-styles`);
+        if (!res.ok) throw new Error(`Failed to fetch styles (${res.status})`);
+        const data = await res.json();
+        const items = Array.isArray((data as any)?.items) ? (data as any).items : [];
+        const normalized = items.map((s: any) => String(s || "").trim()).filter(Boolean);
+        if (!cancelled) setStyleOptions(normalized);
+      } catch (e: any) {
+        if (!cancelled) {
+          setStyleOptions([]);
+          setStyleError(e?.message || String(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
         setPresetError(null);
-        const profileType = String(gd.styleGroup || "").trim().toLowerCase();
+        const profileType = String(gd.styleGroup || gd.style || "").trim().toLowerCase();
         if (!profileType) {
           if (!cancelled) setAvailablePresets([]);
           return;
@@ -293,12 +318,25 @@ export function V3GlobalDefaultsPanel() {
       <div className="mt-3 grid grid-cols-2 gap-3">
         <div className={affectedBorder(["style"])}>
           <Field label="Style">
-          <input
-            value={gd.style || ""}
-            onChange={(e) => setGlobalDefaults({ style: e.target.value })}
-            className="w-auto bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
-            placeholder="rock"
-          />
+            {styleOptions.length > 0 ? (
+              <select
+                value={gd.style || ""}
+                onChange={(e) => setGlobalDefaults({ style: e.target.value, styleGroup: e.target.value } as any)}
+                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200"
+              >
+                <option value="">Select a style…</option>
+                {styleOptions.map((s) => (
+                  <option key={s} value={s.toLowerCase()}>{s}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={gd.style || ""}
+                onChange={(e) => setGlobalDefaults({ style: e.target.value, styleGroup: e.target.value } as any)}
+                className="w-auto bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
+                placeholder="rock"
+              />
+            )}
           </Field>
         </div>
 

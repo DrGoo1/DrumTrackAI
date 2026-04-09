@@ -1,0 +1,8 @@
+--- a/backend/llm_service/app.py
++++ b/backend/llm_service/app.py
+@@
++from backend.backend.drummerbrain.sentient_profile_registry import build_sentient_profile_response
+@@
++@app.get("/api/sentient-profiles/{drummer_id}")
++def api_get_sentient_profile(drummer_id: str):
++    return build_sentient_profile_response(drummer_id)

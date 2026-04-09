@@ -22,14 +22,13 @@ from typing import Dict, List, Optional, Callable, Tuple, Any
 
 import aiohttp
 
+logger = logging.getLogger(__name__)
+
 try:
     import aiofiles
 except Exception:
     aiofiles = None
 
-logger = logging.getLogger(__name__)
-
-# Try to import optional dependencies
 try:
     import torch
     TORCH_AVAILABLE = True

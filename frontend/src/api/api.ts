@@ -1,5 +1,6 @@
 import type { KitManifestV1, ListKitsResponse } from "../types/kits";
 import type { DrumGenerationConfig, DrumGenerationResponse } from "../types/drumTrack";
+import { attachSentientProfilesWithOverrides } from "./sentientProfileSession";
 
 export type AnalyzeTempoResponse = { bpm: number; tempoCurve?: Array<{time:number,bpm:number}> };
 
@@ -63,10 +64,11 @@ export async function generateMidi64(params: any): Promise<string> {
 }
 
 export async function generateDrums(config: DrumGenerationConfig): Promise<DrumGenerationResponse> {
+  const enriched = await attachSentientProfilesWithOverrides(config as any);
   const res = await fetchWithBases(`/api/generate-drums`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
+    body: JSON.stringify(enriched),
   });
   if (!res.ok) throw new Error("Drum generation failed");
   return res.json();

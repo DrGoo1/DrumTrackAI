@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import WebDAWApp from './components/WebDAWApp';
 import BenchPage from './pages/BenchPage';
 import { WebDAW } from './pages/WebDAW';
@@ -36,8 +36,9 @@ function App() {
         
         <Routes>
           <Route path="/upload" element={<UploadWithWaveform />} />
-          <Route path="/" element={<WebDAWApp />} />
-          <Route path="/v3" element={<WebDAWAppV3 />} />
+          <Route path="/" element={<WebDAWAppV3 />} />
+          <Route path="/v3" element={<Navigate to="/" replace />} />
+          <Route path="/legacy" element={<WebDAWApp />} />
           <Route path="/bench" element={<BenchPage />} />
           <Route path="/webdaw" element={<WebDAW />} />
         </Routes>

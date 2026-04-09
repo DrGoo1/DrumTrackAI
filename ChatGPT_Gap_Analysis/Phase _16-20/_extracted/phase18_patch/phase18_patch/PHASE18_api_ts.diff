@@ -1,0 +1,8 @@
+--- a/frontend/src/api/api.ts
++++ b/frontend/src/api/api.ts
+@@
+-import { attachSentientProfile } from "./sentientProfiles";
++import { attachSentientProfilesWithOverrides } from "./sentientProfileSession";
+@@
+-  const enriched = await attachSentientProfile(config);
++  const enriched = await attachSentientProfilesWithOverrides(config);

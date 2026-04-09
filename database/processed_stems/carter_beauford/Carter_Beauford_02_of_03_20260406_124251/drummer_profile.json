@@ -1,0 +1,70 @@
+{
+  "tempo": 123.046875,
+  "style": "rock",
+  "key": "C",
+  "duration": 0.0,
+  "components": {
+    "kick": {
+      "name": "kick",
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\carter_beauford\\Carter_Beauford_02_of_03_20260406_124251\\drumsep_components\\drumsep_kick.wav",
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    },
+    "snare": {
+      "name": "snare",
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\carter_beauford\\Carter_Beauford_02_of_03_20260406_124251\\drumsep_components\\drumsep_snare.wav",
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    },
+    "hihat": {
+      "name": "hihat",
+      "audio_file": "F:\\DrumTracKAI_v1.1.17\\database\\processed_stems\\carter_beauford\\Carter_Beauford_02_of_03_20260406_124251\\drumsep_components\\drumsep_hh.wav",
+      "hits": [],
+      "velocities": [],
+      "timing_deviations": [],
+      "spectral_features": {}
+    }
+  },
+  "groove": {
+    "swing_factor": 0.0,
+    "pocket_tightness": 0.0,
+    "rhythmic_complexity": 0.0,
+    "syncopation_level": 0.0,
+    "micro_timing_variance": 0.0,
+    "humanness_score": 0.5
+  },
+  "signature_patterns": [],
+  "interaction_matrix": {
+    "kick": {
+      "kick": 1.0,
+      "snare": 0.0,
+      "hihat": 0.0
+    },
+    "snare": {
+      "kick": 0.0,
+      "snare": 1.0,
+      "hihat": 0.0
+    },
+    "hihat": {
+      "kick": 0.0,
+      "snare": 0.0,
+      "hihat": 1.0
+    }
+  },
+  "personality_traits": {
+    "precision": 1.0,
+    "creativity": 0.0,
+    "groove_feel": 0.0,
+    "humanness": 0.5
+  },
+  "technical_metrics": {
+    "overall_complexity": 0.0,
+    "timing_consistency": 0.0,
+    "pattern_diversity": 0.0
+  },
+  "analysis_timestamp": "2026-04-06T12:51:42.684818"
+}

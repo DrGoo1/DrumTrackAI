@@ -1,0 +1,77 @@
+{
+  "drummer_id": "simon_phillips",
+  "generated_at": "2026-04-06T17:41:03.647810",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_simon_phillips",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 0.7846852868093757,
+      "ghostNoteAmount": 0.4271028515582075,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 9,
+    "songs": 3,
+    "hits": 32533,
+    "instrument_counts": {
+      "residual": 4116,
+      "hihat": 4002,
+      "instrumental": 3919,
+      "drums": 3794,
+      "original_mix": 3689,
+      "kick": 3269,
+      "other": 3066,
+      "bass": 2061,
+      "snare": 1806,
+      "cymbal": 1002,
+      "tom": 979,
+      "vocals": 830
+    },
+    "instrument_shares": {
+      "residual": 0.12651768973042757,
+      "hihat": 0.12301355546675684,
+      "instrumental": 0.12046229981864569,
+      "drums": 0.11662004733655058,
+      "original_mix": 0.1133925552515907,
+      "kick": 0.10048258691175115,
+      "other": 0.09424276888082869,
+      "bass": 0.06335105892478407,
+      "snare": 0.055512863861310054,
+      "cymbal": 0.03079949589647435,
+      "tom": 0.03009252143976885,
+      "vocals": 0.025512556481111486
+    },
+    "fills": 764,
+    "fills_per_min": null,
+    "techniques": 10,
+    "technique_breakdown": {
+      "flam_like": 9,
+      "roll_like": 1
+    },
+    "timing_std_ms": 32.82382403693922,
+    "pocket_tightness": 0.26914339148828037,
+    "humanness": 0.5038233664694681,
+    "velocity_mean": 0.3119635152088939,
+    "velocity_std": 0.1772567138296938
+  }
+}

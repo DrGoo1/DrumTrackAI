@@ -40,6 +40,16 @@ import StylometerFlower, { type StylometerValues } from "./StylometerFlower";
 import { GROOVE_WEIGHT_PRESETS } from "../types/grooveWeight";
 import { NoteInspector } from "./drums/NoteInspector";
 import { Tooltip } from "./Tooltip";
+import {
+  attachSentientProfilesWithOverrides,
+  getSentientProfileSessionState,
+  preloadSentientProfile,
+  subscribeSentientProfileSession,
+  type SentientProfileEntry,
+} from "../api/sentientProfileSession";
+import { sentientProfileBadge } from "../utils/sentientUi";
+import SentientDebugPanel from "./SentientDebugPanel";
+import { buildSentientDebugState } from "../utils/sentientDebugState";
 
 function HoverTip({ text, children }: { text: string; children: React.ReactNode }) {
   return (
@@ -1312,9 +1322,31 @@ export default function WebDAWApp() {
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState({ enabled: false, start: 0, end: 4 });
   const [selectedDrummer, setSelectedDrummer] = useState<Drummer | null>(null);
+  const [sentientState, setSentientState] = useState<SentientProfileEntry | null>(null);
   const [gridResolution, setGridResolution] = useState<GridResolution>("16th");
   const [gridPixelsPerBeat, setGridPixelsPerBeat] = useState(80);
   const [scrollPercent, setScrollPercent] = useState(0);
+
+  const sentientBadge = useMemo(() => sentientProfileBadge(sentientState), [sentientState]);
+
+  useEffect(() => {
+    const id = selectedDrummer?.id;
+    if (!id) return;
+    void preloadSentientProfile(id);
+  }, [selectedDrummer?.id]);
+
+  useEffect(() => {
+    const id = selectedDrummer?.id ?? "";
+    if (!id) {
+      setSentientState(null);
+      return;
+    }
+    setSentientState(getSentientProfileSessionState(id));
+    const unsub = subscribeSentientProfileSession((entry) => {
+      if (entry.drummerId === id) setSentientState(entry);
+    });
+    return unsub;
+  }, [selectedDrummer?.id]);
 
   const [tempoFlattenToleranceBpm, setTempoFlattenToleranceBpm] = useState<number>(() => {
     const raw = window.localStorage.getItem("dtk.drumGen.tempoFlattenToleranceBpm");
@@ -1698,6 +1730,11 @@ export default function WebDAWApp() {
   const [grooveMode, setGrooveMode] = useState<string>("enhanced");
   const [styleGroup, setStyleGroup] = useState<string>("rock");
   const [lastEgmdPhraseInfo, setLastEgmdPhraseInfo] = useState<any | null>(null);
+
+  const sentientDebugState = useMemo(
+    () => buildSentientDebugState(sentientState?.profile, lastEgmdPhraseInfo),
+    [sentientState?.profile, lastEgmdPhraseInfo],
+  );
 
   const [sectionGrooveOverrides, setSectionGrooveOverrides] = useState<Record<string, SectionGrooveOverrides>>({});
 
@@ -3709,9 +3746,15 @@ export default function WebDAWApp() {
     }
     let appliedHighRes = false;
     try {
+      const normalizedDrummerId = (value: any): string => String(value || "").trim();
+
       let payload: DrumGenerationConfig = {
         ...config,
-        publicDrummerId: selectedDrummer?.id ?? config.publicDrummerId ?? config.drummer,
+        publicDrummerId:
+          normalizedDrummerId(selectedDrummer?.id) ||
+          normalizedDrummerId(config.publicDrummerId) ||
+          normalizedDrummerId(config.drummer) ||
+          undefined,
         drummerPersona: selectedDrummer ?? config.drummerPersona,
       };
       if (config.sectionId) {
@@ -3757,6 +3800,8 @@ export default function WebDAWApp() {
               }
             : undefined,
       };
+
+      payload = (await attachSentientProfilesWithOverrides(payload as any)) as any;
       console.log('🥁 Generating drums:', payload);
       console.log('[DrumGenPayload] style/drummer', {
         sectionId: payload.sectionId,
@@ -3938,10 +3983,9 @@ export default function WebDAWApp() {
 
   async function handleGenerateDrums(config: DrumGenerationConfig) {
     try {
-      if (!selectedDrummer) {
-        openDrummerPersonaModal();
-        return;
-      }
+      const normalizedConfigDrummer = String((config as any)?.publicDrummerId || config.drummer || "").trim();
+      const resolvedDrummerId = String(selectedDrummer?.id || normalizedConfigDrummer || "").trim();
+      const resolvedStyle = String(selectedDrummer?.style || config.style || "rock").trim();
 
       if (config.sectionId && config.sectionId !== "full-song") {
         const selection = sectionGrooveSelections[config.sectionId];
@@ -3969,7 +4013,7 @@ export default function WebDAWApp() {
         if (!stylometerSectionBaselineRef.current[config.sectionId]) {
           stylometerSectionBaselineRef.current[config.sectionId] = {
             style: (config.style || "").toString(),
-            drummerStyle: (selectedDrummer?.style || "").toString(),
+            drummerStyle: resolvedDrummerId ? (selectedDrummer?.style || "").toString() : "",
           };
         }
       }
@@ -3977,10 +4021,15 @@ export default function WebDAWApp() {
       if (!stylometerSongBaselineRef.current) {
         stylometerSongBaselineRef.current = {
           style: (drumOptions?.style || config.style || "rock").toString(),
-          drummerStyle: (selectedDrummer?.style || "").toString(),
+          drummerStyle: resolvedDrummerId ? (selectedDrummer?.style || "").toString() : "",
         };
       }
-      await executeDrumGeneration(config);
+      await executeDrumGeneration({
+        ...config,
+        style: resolvedStyle || config.style,
+        drummer: resolvedDrummerId,
+        publicDrummerId: resolvedDrummerId || undefined,
+      });
     } catch {
       // Error already handled inside executeDrumGeneration
     }
@@ -4036,7 +4085,7 @@ export default function WebDAWApp() {
         }
       : undefined;
 
-    const drummerId = selectedDrummer?.id || 'jeff_porcaro';
+    const drummerId = String(selectedDrummer?.id || '').trim();
     const resolvedStyle = selectedDrummer?.style || drumOptions.style || 'rock';
 
     return {
@@ -5463,6 +5512,23 @@ export default function WebDAWApp() {
                       }}
                       selectedDrummer={selectedDrummer}
                     />
+                    <div
+                      className={
+                        "mt-2 text-xs " +
+                        (sentientBadge.tone === "good"
+                          ? "text-emerald-300"
+                          : sentientBadge.tone === "warn"
+                            ? "text-amber-300"
+                            : sentientBadge.tone === "bad"
+                              ? "text-rose-300"
+                              : "text-slate-400")
+                      }
+                    >
+                      {sentientBadge.label}
+                    </div>
+                    <div className="mt-3">
+                      <SentientDebugPanel profile={sentientState?.profile} selection={sentientDebugState} />
+                    </div>
                   </div>
 
                   <button

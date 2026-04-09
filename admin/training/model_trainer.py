@@ -3,6 +3,8 @@ Model Trainer for Drum Humanization AI
 Autonomous training system that learns humanization from real drummers
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -55,41 +57,44 @@ class TrainingMetrics:
             self.timestamp = datetime.now().isoformat()
 
 
-class DrumHumanizationModel(nn.Module):
-    """
-    Neural network that learns humanization parameters
-    
-    Architecture:
-    - Input: Pattern context (tempo, style, complexity)
-    - Hidden layers: Learn relationships between context and humanization
-    - Output: Humanization parameters (timing variance, velocity variance, etc.)
-    """
-    
-    def __init__(self, input_size: int = 3, hidden_size: int = 64, output_size: int = 9):
-        super().__init__()
+if TORCH_AVAILABLE:
+    class DrumHumanizationModel(nn.Module):
+        """
+        Neural network that learns humanization parameters
         
-        # Encoder network
-        self.encoder = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size * 2),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-        )
+        Architecture:
+        - Input: Pattern context (tempo, style, complexity)
+        - Hidden layers: Learn relationships between context and humanization
+        - Output: Humanization parameters (timing variance, velocity variance, etc.)
+        """
         
-        # Humanization parameter predictor
-        self.predictor = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, output_size),
-            nn.Sigmoid()  # Output between 0 and 1
-        )
-    
-    def forward(self, x):
-        encoded = self.encoder(x)
-        humanization_params = self.predictor(encoded)
-        return humanization_params
+        def __init__(self, input_size: int = 3, hidden_size: int = 64, output_size: int = 9):
+            super().__init__()
+            
+            # Encoder network
+            self.encoder = nn.Sequential(
+                nn.Linear(input_size, hidden_size),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_size, hidden_size * 2),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+            )
+            
+            # Humanization parameter predictor
+            self.predictor = nn.Sequential(
+                nn.Linear(hidden_size * 2, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, output_size),
+                nn.Sigmoid()  # Output between 0 and 1
+            )
+        
+        def forward(self, x):
+            encoded = self.encoder(x)
+            humanization_params = self.predictor(encoded)
+            return humanization_params
+else:
+    DrumHumanizationModel = None
 
 
 class AutonomousTrainer:

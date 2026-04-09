@@ -44,6 +44,13 @@ class YouTubeLearningWidget(QWidget):
         self.pipeline = None
         self.current_thread = None
         self._setup_ui()
+        
+        try:
+            self.pipeline_started.connect(self._on_pipeline_started)
+            self.pipeline_progress.connect(self._on_pipeline_progress)
+            self.pipeline_completed.connect(self._on_pipeline_completed)
+        except Exception:
+            pass
         logger.info("YouTube Learning Widget initialized")
     
     def _setup_ui(self):
@@ -322,9 +329,7 @@ class YouTubeLearningWidget(QWidget):
             self.pipeline = YouTubeLLMLearningPipeline()
             
             # Run complete pipeline
-            self._log("📥 Step 1/4: Sourcing from YouTube...")
-            self.status_label.setText("Sourcing from YouTube...")
-            self.progress_bar.setValue(10)
+            self.pipeline_progress.emit("📥 Step 1/4: Sourcing from YouTube...")
 
             session = self.pipeline.run_complete_pipeline(
                 drummer_name=drummer,
@@ -337,7 +342,7 @@ class YouTubeLearningWidget(QWidget):
                 urls=list(urls) if urls else None,
             )
             
-            self.progress_bar.setValue(100)
+            logger.info("Worker: pipeline finished; preparing results")
             
             # Success results
             results = {
@@ -349,39 +354,15 @@ class YouTubeLearningWidget(QWidget):
                 'training_started': bool(session.get('training_started')),
                 'drummerbrain_ingest': session.get('drummerbrain_ingest')
             }
-            
-            self._log("\n" + "="*50)
-            self._log("✅ PIPELINE COMPLETE!")
-            self._log(f"   Drummer: {drummer}")
-            self._log(f"   Files: {results['files_sourced']}")
-            self._log(f"   Dataset: {Path(str(results['dataset_file'])).name if results.get('dataset_file') else ''}")
-            self._log("="*50)
-            
-            # Update results list
-            self.results_list.addItem(f"✅ {drummer} - {results['files_sourced']} files")
-            self.results_list.addItem(
-                f"   Dataset: {Path(str(results['dataset_file'])).name if results.get('dataset_file') else ''}"
-            )
-            if results.get('drummerbrain_ingest'):
-                ingest = results.get('drummerbrain_ingest') or {}
-                ok = ingest.get('ok')
-                dsid = ingest.get('dataset_id')
-                self.results_list.addItem(f"   DrummerBrain ingest: {'OK' if ok else 'FAILED'} ({dsid})")
-            
-            self.status_label.setText("Pipeline completed successfully!")
+            logger.info("Worker: pipeline complete; emitting results to UI thread")
             self.pipeline_completed.emit(True, results)
             
         except Exception as e:
             logger.error(f"Pipeline failed: {e}", exc_info=True)
-            self._log(f"\n❌ Pipeline failed: {e}")
-            self.status_label.setText("Pipeline failed!")
-            self.results_list.addItem(f"❌ {drummer} - FAILED: {e}")
-            self.pipeline_completed.emit(False, {'error': str(e)})
+            self.pipeline_completed.emit(False, {'error': str(e), 'drummer': drummer})
         
         finally:
-            # Re-enable start button
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
+            pass
     
     def _on_stop_pipeline(self):
         """Stop the pipeline."""
@@ -452,6 +433,50 @@ class YouTubeLearningWidget(QWidget):
         scrollbar = self.log_output.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
         logger.info(message)
+
+    def _on_pipeline_started(self, drummer_name: str):
+        self.status_label.setText(f"Starting pipeline for {drummer_name}...")
+        self.progress_bar.setValue(0)
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+
+    def _on_pipeline_progress(self, message: str):
+        self._log(message)
+        self.status_label.setText(message)
+
+    def _on_pipeline_completed(self, success: bool, results: dict):
+        try:
+            if success:
+                self.progress_bar.setValue(100)
+                drummer = results.get('drummer', '')
+                files = results.get('files_sourced', 0)
+                dataset = results.get('dataset_file') or ''
+                dataset_name = Path(str(dataset)).name if dataset else ''
+                self._log("\n" + "="*50)
+                self._log("✅ PIPELINE COMPLETE!")
+                self._log(f"   Drummer: {drummer}")
+                self._log(f"   Files: {files}")
+                self._log(f"   Dataset: {dataset_name}")
+                self._log("="*50)
+                self.results_list.addItem(f"✅ {drummer} - {files} files")
+                if dataset_name:
+                    self.results_list.addItem(f"   Dataset: {dataset_name}")
+                ingest = results.get('drummerbrain_ingest') or None
+                if isinstance(ingest, dict):
+                    ok = ingest.get('ok')
+                    dsid = ingest.get('dataset_id')
+                    self.results_list.addItem(f"   DrummerBrain ingest: {'OK' if ok else 'FAILED'} ({dsid})")
+                self.status_label.setText("Pipeline completed successfully!")
+            else:
+                drummer = (results or {}).get('drummer', '')
+                err = (results or {}).get('error', 'Unknown error')
+                self._log(f"\n❌ Pipeline failed: {err}")
+                self.status_label.setText("Pipeline failed!")
+                if drummer:
+                    self.results_list.addItem(f"❌ {drummer} - FAILED: {err}")
+        finally:
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
 
 
 if __name__ == "__main__":

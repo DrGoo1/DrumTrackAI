@@ -8,11 +8,11 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 import traceback
 
-from admin.services.mvsep_service import MVSepService
 from PySide6.QtCore import QObject, Signal, QThread, QTimer, QMutex, QMutexLocker, Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                               QProgressBar, QListWidget, QLabel, QMessageBox,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PySide6.QtGui import QFont
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from admin.utils.thread_safe_ui_updater import ThreadSafeUIUpdater
 
 logger = logging.getLogger(__name__)
@@ -367,7 +367,8 @@ class BatchProcessingThread(QThread):
         NO FALLBACKS - explicit error handling only.
         """
         try:
-            # Import MVSep service
+            from admin.services.mvsep_service import MVSepService
+
             # Create service instance
             mvsep_service = MVSepService(self.api_key)
 
@@ -403,6 +404,34 @@ class BatchProcessingThread(QThread):
                     )
                 )
 
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                except Exception:
+                    pass
+
+                analysis_written = False
+                try:
+                    self._generate_drum_analysis(
+                        input_file=file_path,
+                        output_dir=output_dir,
+                        result_files=result_files,
+                        metadata=metadata or {},
+                    )
+                    analysis_written = True
+                except Exception as analysis_error:
+                    logger.error(f"Failed to generate drum analysis for {file_path}: {analysis_error}")
+                    traceback.print_exc()
+
+                if not analysis_written:
+                    try:
+                        self._write_stub_analysis(
+                            input_file=file_path,
+                            output_dir=output_dir,
+                            result_files=result_files,
+                        )
+                    except Exception as stub_error:
+                        logger.error(f"Failed to write stub drum analysis for {file_path}: {stub_error}")
+
                 return {
                     'success': True,
                     'result_files': result_files,
@@ -429,6 +458,198 @@ class BatchProcessingThread(QThread):
                 'error': error_msg,
                 'metadata': metadata
             }
+
+    def _generate_drum_analysis(
+        self,
+        *,
+        input_file: str,
+        output_dir: str,
+        result_files: Dict[str, str],
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        from datetime import datetime as _dt
+
+        try:
+            import numpy as np  # type: ignore
+            import librosa  # type: ignore
+        except Exception as exc:
+            raise RuntimeError(f"Missing audio deps: {exc}") from exc
+
+        try:
+            from admin.services.advanced_drummer_analysis import AdvancedDrummerAnalysis
+        except Exception as exc:
+            raise RuntimeError(f"Advanced analysis unavailable: {exc}") from exc
+
+        component_map = self._build_component_map(result_files)
+        if not component_map:
+            raise RuntimeError("No drum stems available for analysis")
+
+        ref = component_map.get("drums") or next(iter(component_map.values()))
+        if not ref or not os.path.exists(ref):
+            raise RuntimeError("Reference stem missing on disk")
+
+        tempo, beat_times = self._estimate_tempo(ref)
+        if tempo <= 0:
+            tempo = 120.0
+
+        style = metadata.get("style") or metadata.get("default_style") or metadata.get("styles") or "rock"
+        if isinstance(style, (list, tuple)) and style:
+            style = str(style[0])
+        style = str(style or "rock")
+
+        analyzer = AdvancedDrummerAnalysis(sample_rate=22050)
+        profile = analyzer.analyze_drummer_performance(
+            stem_files=component_map,
+            tempo=float(tempo),
+            style=style,
+            key=str(metadata.get("key", "C")),
+            beats_sec=beat_times,
+        )
+
+        profile_path = os.path.join(output_dir, "drummer_profile.json")
+        try:
+            analyzer.save_profile(profile, profile_path)
+        except Exception as exc:
+            logger.warning(f"Failed to save drummer profile: {exc}")
+
+        total_hits = sum(len(comp.hits) for comp in profile.components.values())
+        groove = profile.groove
+
+        tempo_std = None
+        if beat_times and len(beat_times) > 2:
+            intervals = np.diff(np.array(beat_times, dtype=float))
+            safe = intervals[intervals > 1e-3] if intervals.size else intervals
+            if safe.size:
+                tempo_std = float(np.std(60.0 / safe))
+
+        components_serialized = {
+            name: {
+                "audio_file": comp.audio_file,
+                "hit_count": len(comp.hits),
+                "hits": list(comp.hits),
+                "velocities": list(comp.velocities),
+                "timing_deviations": list(comp.timing_deviations),
+                "spectral_features": comp.spectral_features,
+            }
+            for name, comp in profile.components.items()
+        }
+
+        drum_results = {
+            "source": "mvsep_batch_processor",
+            "source_file": str(input_file),
+            "output_directory": str(output_dir),
+            "created_at": _dt.utcnow().isoformat(),
+            "analysis_method": "advanced_drummer_analysis",
+            "profile_file": profile_path,
+            "tempo": float(profile.tempo or tempo),
+            "tempo_variability_bpm_std": tempo_std,
+            "beats": list(beat_times or []),
+            "style": profile.style or style,
+            "key": profile.key,
+            "duration": float(profile.duration or 0.0),
+            "total_hits": int(total_hits),
+            "components_analyzed": list(profile.components.keys()),
+            "components": components_serialized,
+            "groove_analysis": {
+                "swing_factor": groove.swing_factor,
+                "pocket_tightness": groove.pocket_tightness,
+                "rhythmic_complexity": groove.rhythmic_complexity,
+                "syncopation_level": groove.syncopation_level,
+                "micro_timing_variance": groove.micro_timing_variance,
+                "humanness_score": groove.humanness_score,
+            },
+            "personality_traits": profile.personality_traits,
+            "technical_metrics": profile.technical_metrics,
+            "component_interactions": profile.interaction_matrix,
+            "signature_patterns": profile.signature_patterns,
+            "stem_files_used": component_map,
+        }
+
+        output_path = os.path.join(output_dir, "drum_analysis.json")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(drum_results, f, indent=2)
+
+        return drum_results
+
+    def _build_component_map(self, result_files: Dict[str, str]) -> Dict[str, str]:
+        """Normalize MVSep output file names into canonical drum components."""
+        component_aliases = {
+            "kick": ["kick", "bd", "bass_drum", "kickdrum", "kik"],
+            "snare": ["snare", "sd", "sn"],
+            "hihat": ["hihat", "hi_hat", "hh", "hat"],
+            "tom": ["tom", "toms", "rack_tom", "floor_tom"],
+            "overheads": ["overhead", "overheads", "cymbal", "cymbals", "ride", "crash"],
+            "percussion": ["perc", "percussion", "cowbell", "shaker"]
+        }
+
+        normalized: Dict[str, str] = {}
+        for name, path in result_files.items():
+            if not path or not os.path.exists(path):
+                continue
+
+            key = name.lower()
+            if key in {"drum_stem", "drums", "drum"}:
+                normalized.setdefault("drums", path)
+                continue
+
+            matched = False
+            for canonical, aliases in component_aliases.items():
+                if any(alias in key for alias in aliases):
+                    normalized.setdefault(canonical, path)
+                    matched = True
+                    break
+
+            if not matched and key not in normalized:
+                normalized[key] = path
+
+        return normalized
+
+    def _estimate_tempo(self, audio_path: str) -> Tuple[float, List[float]]:
+        """Estimate tempo (BPM) and beat times from an audio stem."""
+        try:
+            import librosa  # type: ignore
+            y, sr = librosa.load(audio_path, sr=22050, mono=True)
+            if y.size == 0:
+                return 0.0, []
+            tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+            beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+            return float(tempo), beat_times
+        except Exception as exc:
+            logger.warning(f"Tempo estimation failed for {audio_path}: {exc}")
+            return 0.0, []
+
+    def _write_stub_analysis(
+        self,
+        *,
+        input_file: str,
+        output_dir: str,
+        result_files: Dict[str, str],
+    ) -> None:
+        """Persist minimal drum_analysis.json so downstream ingestion can continue."""
+        from datetime import datetime as _dt
+
+        tempo, beat_times = 0.0, []
+        drums_path = result_files.get("drums") or result_files.get("drum_stem")
+        if drums_path and os.path.exists(drums_path):
+            tempo, beat_times = self._estimate_tempo(drums_path)
+
+        payload = {
+            "source": "mvsep_batch_processor",
+            "source_file": str(input_file),
+            "output_directory": str(output_dir),
+            "created_at": _dt.utcnow().isoformat(),
+            "analysis_method": "stub",
+            "tempo": tempo,
+            "beats": beat_times,
+            "stem_files_used": {k: v for k, v in result_files.items() if os.path.exists(v)},
+            "components": {},
+            "total_hits": 0,
+            "notes": "Advanced analysis unavailable; stub generated.",
+        }
+
+        output_path = os.path.join(output_dir, "drum_analysis.json")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
 
 
 # Export this function for external modules to access the singleton

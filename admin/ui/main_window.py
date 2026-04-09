@@ -475,6 +475,7 @@ class MainWindow(QMainWindow):
                 ("mvsep", "MVSepWidget", "AUDIO MVSep Processing", "admin.ui.mvsep_widget"),
                 ("batch_processing", "BatchProcessorWidget", " Batch Processing", "admin.ui.batch_processor_widget"),
                 ("youtube_learning", "YouTubeLearningWidget", " YouTube Learning", "admin.ui.youtube_learning_widget"),
+                ("youtube_collector", "YouTubeCollectorWidget", " YouTube Collector", "admin.ui.youtube_collector_widget"),
                 ("comprehensive_training", "WorkingComprehensiveTrainingWidget", "TARGET Comprehensive Training", "admin.ui.working_comprehensive_training_widget"),
                 ("analysis_tracking", "SimpleMonitor", "🔄 Real-Time Monitor", "admin.widgets.simple_monitor")
             ]
@@ -697,9 +698,11 @@ class MainWindow(QMainWindow):
             "drum_beats": self._create_drum_beats_tab,
             "audio_visualization": self._create_audio_visualization_tab,
             "batch_processing": self._create_batch_processing_tab,
+            "youtube_collector": self._create_youtube_collector_tab,
             "training": self._create_training_tab,
             "database": self._create_database_tab,
-            "real_time_monitor": self._create_real_time_monitor_tab
+            "real_time_monitor": self._create_real_time_monitor_tab,
+            "assimilation": self._create_assimilation_tab
         }
 
         successful_tabs = 0
@@ -840,6 +843,24 @@ class MainWindow(QMainWindow):
             self._add_tab("batch_processing", "Batch Processing", placeholder)
             return False
 
+    def _create_youtube_collector_tab(self):
+        """Create the YouTube Collector tab"""
+        try:
+            from admin.ui.youtube_collector_widget import YouTubeCollectorWidget
+            widget = YouTubeCollectorWidget(parent=self)
+
+            # Inject service container
+            widget.container = self.service_container
+
+            self._add_tab("youtube_collector", "YouTube Collector", widget)
+            logger.info("Successfully created YouTube Collector tab")
+            return True
+        except ImportError as e:
+            logger.warning(f"YouTubeCollectorWidget not available: {e}")
+            placeholder = self._create_placeholder("YouTube Collector not available")
+            self._add_tab("youtube_collector", "YouTube Collector", placeholder)
+            return False
+
     def _create_training_tab(self):
         """Create the Comprehensive Training tab"""
         try:
@@ -904,6 +925,24 @@ class MainWindow(QMainWindow):
             logger.error(f"Error creating Real-Time Monitor tab: {e}")
             placeholder = self._create_placeholder(f"Real-Time Monitor error: {str(e)}")
             self._add_tab("real_time_monitor", "Real-Time Monitor", placeholder)
+            return False
+
+    def _create_assimilation_tab(self):
+        """Create the Assimilation Dashboard tab"""
+        try:
+            from admin.ui.assimilation_dashboard_widget import AssimilationDashboardWidget
+            widget = AssimilationDashboardWidget(parent=self)
+
+            # Inject service container
+            widget.container = self.service_container
+
+            self._add_tab("assimilation", "Assimilation", widget)
+            logger.info("Successfully created Assimilation tab")
+            return True
+        except ImportError as e:
+            logger.warning(f"AssimilationDashboardWidget not available: {e}")
+            placeholder = self._create_placeholder("Assimilation dashboard not available")
+            self._add_tab("assimilation", "Assimilation", placeholder)
             return False
 
     def _create_placeholder(self, message):

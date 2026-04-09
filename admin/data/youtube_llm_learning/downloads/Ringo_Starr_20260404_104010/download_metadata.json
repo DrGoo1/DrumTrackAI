@@ -1,0 +1,34 @@
+{
+  "downloads": [
+    {
+      "url": "https://youtu.be/FkY9BEuLJk4?si=DJ7Qnr1kKQFZyH-Y",
+      "title": "Rain (Mono)",
+      "uploader": "The Beatles",
+      "duration": 179,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Rain (Mono).wav",
+      "drummer_name": "Ringo Starr",
+      "style": "rock",
+      "download_date": "20221027"
+    },
+    {
+      "url": "https://youtu.be/rblYSKz_VnI?si=F1brbaXRgBx37L0b",
+      "title": "The Beatles - The Beatles - Hello, Goodbye (Remastered 2015)",
+      "uploader": "The Beatles",
+      "duration": 208,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\The Beatles - The Beatles - Hello, Goodbye (Remastered 2015).wav",
+      "drummer_name": "Ringo Starr",
+      "style": "rock",
+      "download_date": "20151022"
+    },
+    {
+      "url": "https://youtu.be/UHsN9d4FTVI?si=W0kkzHLQal_KQgTH",
+      "title": "Ticket To Ride (Remastered 2015)",
+      "uploader": "The Beatles",
+      "duration": 190,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Ticket To Ride (Remastered 2015).wav",
+      "drummer_name": "Ringo Starr",
+      "style": "rock",
+      "download_date": "20180617"
+    }
+  ]
+}

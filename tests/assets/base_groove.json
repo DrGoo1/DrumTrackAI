@@ -1,0 +1,32 @@
+{
+  "description": "Two-bar neutral rock groove used as the seed for drummer-persona application tests.",
+  "tempo_bpm": 110,
+  "time_signature": "4/4",
+  "ppqn": 960,
+  "pattern_events": [
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.0,  "time_sec":0.0,  "instrument_id":"kick","velocity":110},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.0,  "time_sec":0.0,  "instrument_id":"hihat_closed","velocity":78},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.125,"time_sec":0.273,"instrument_id":"hihat_closed","velocity":72},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.25,"time_sec":0.545,"instrument_id":"snare_center","velocity":105},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.25,"time_sec":0.545,"instrument_id":"hihat_closed","velocity":76},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.375,"time_sec":0.818,"instrument_id":"hihat_closed","velocity":70},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.5,"time_sec":1.091,"instrument_id":"kick","velocity":108},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.5,"time_sec":1.091,"instrument_id":"hihat_closed","velocity":74},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.625,"time_sec":1.364,"instrument_id":"hihat_closed","velocity":70},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.75,"time_sec":1.636,"instrument_id":"snare_center","velocity":102},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.75,"time_sec":1.636,"instrument_id":"hihat_closed","velocity":76},
+    {"barIndex":0,"barStartTime":0.0,"barEndTime":2.182,"bar_pos_frac":0.875,"time_sec":1.909,"instrument_id":"hihat_closed","velocity":72},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.0,"time_sec":2.182,"instrument_id":"kick","velocity":110},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.0,"time_sec":2.182,"instrument_id":"hihat_closed","velocity":78},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.125,"time_sec":2.455,"instrument_id":"hihat_closed","velocity":72},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.25,"time_sec":2.727,"instrument_id":"snare_center","velocity":105},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.25,"time_sec":2.727,"instrument_id":"hihat_closed","velocity":76},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.375,"time_sec":3.0,"instrument_id":"hihat_closed","velocity":70},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.5,"time_sec":3.273,"instrument_id":"kick","velocity":108},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.5,"time_sec":3.273,"instrument_id":"hihat_closed","velocity":74},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.625,"time_sec":3.545,"instrument_id":"hihat_closed","velocity":70},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.75,"time_sec":3.818,"instrument_id":"snare_center","velocity":102},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.75,"time_sec":3.818,"instrument_id":"hihat_closed","velocity":76},
+    {"barIndex":1,"barStartTime":2.182,"barEndTime":4.364,"bar_pos_frac":0.875,"time_sec":4.091,"instrument_id":"hihat_closed","velocity":72}
+  ]
+}

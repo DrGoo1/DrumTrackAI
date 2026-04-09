@@ -1,0 +1,48 @@
+{
+  "drummer_id": "john_bonham",
+  "generated_at": "2026-04-05T20:13:06.754475",
+  "persona": {
+    "label": "loose",
+    "confidence": 0.55,
+    "tags": [
+      "loose"
+    ]
+  },
+  "preset": {
+    "preset_id": "phase6_john_bonham",
+    "profile_type": "drummer",
+    "tier": "generated",
+    "deltas": {
+      "humanizeAmount": 1.0,
+      "ghostNoteAmount": 0.42500000000000004,
+      "swingAmount": 0.15,
+      "fillDensity": 0.35
+    },
+    "policies": {
+      "source": "phase6",
+      "persona": {
+        "label": "loose",
+        "confidence": 0.55,
+        "tags": [
+          "loose"
+        ]
+      }
+    }
+  },
+  "rollup": {
+    "drummer_id": 3,
+    "songs": 19,
+    "hits": 0,
+    "instrument_counts": {},
+    "instrument_shares": {},
+    "fills": 0,
+    "fills_per_min": null,
+    "techniques": 0,
+    "technique_breakdown": {},
+    "timing_std_ms": 0.0,
+    "pocket_tightness": 0.0,
+    "humanness": 0.5,
+    "velocity_mean": null,
+    "velocity_std": null
+  }
+}

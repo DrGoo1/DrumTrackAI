@@ -540,6 +540,66 @@
       "youtube_urls": []
     },
     {
+      "id": "clyde_stubblefield",
+      "name": "Clyde Stubblefield",
+      "band": "James Brown",
+      "bands": [
+        "James Brown"
+      ],
+      "styles": [
+        "Funk",
+        "Soul",
+        "R&B"
+      ],
+      "alias": "The Funky Drummer",
+      "uniqueness_value": 0.94,
+      "notable_songs": [
+        "Funky Drummer",
+        "Cold Sweat",
+        "Mother Popcorn",
+        "Give It Up or Turnit a Loose",
+        "I Got the Feelin'"
+      ],
+      "techniques": [
+        "Pocket playing",
+        "Syncopation",
+        "Ghost notes",
+        "Tight hi-hat articulation",
+        "Minimalist funk grooves"
+      ],
+      "youtube_urls": []
+    },
+    {
+      "id": "buddy_rich",
+      "name": "Buddy Rich",
+      "band": "Buddy Rich Big Band",
+      "bands": [
+        "Buddy Rich Big Band"
+      ],
+      "styles": [
+        "Jazz",
+        "Big Band",
+        "Swing"
+      ],
+      "alias": "The World's Greatest Drummer",
+      "uniqueness_value": 0.97,
+      "notable_songs": [
+        "West Side Story Medley",
+        "Channel One Suite",
+        "Love for Sale",
+        "Time Check",
+        "Big Swing Face"
+      ],
+      "techniques": [
+        "High-speed single strokes",
+        "Explosive big band fills",
+        "Brush technique",
+        "Dynamic control",
+        "Soloing virtuosity"
+      ],
+      "youtube_urls": []
+    },
+    {
       "id": "tony_williams",
       "name": "Tony Williams",
       "band": "Miles Davis Quintet",

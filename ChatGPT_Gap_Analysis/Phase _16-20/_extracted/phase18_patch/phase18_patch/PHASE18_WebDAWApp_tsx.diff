@@ -1,0 +1,31 @@
+--- a/frontend/src/components/WebDAWApp.tsx
++++ b/frontend/src/components/WebDAWApp.tsx
+@@
+-import { attachSentientProfile } from "../api/sentientProfiles";
++import {
++  attachSentientProfilesWithOverrides,
++  getSentientProfileSessionState,
++  preloadSentientProfile,
++  subscribeSentientProfileSession,
++} from "../api/sentientProfileSession";
++import { sentientProfileBadge } from "../utils/sentientUi";
+@@
++useEffect(() => {
++  const id = selectedDrummer?.id;
++  if (!id) return;
++  void preloadSentientProfile(id);
++}, [selectedDrummer?.id]);
++
++useEffect(() => {
++  const id = selectedDrummer?.id ?? "";
++  setSentientState(getSentientProfileSessionState(id));
++  const unsub = subscribeSentientProfileSession((entry) => {
++    if (entry.drummerId === id) setSentientState(entry);
++  });
++  return unsub;
++}, [selectedDrummer?.id]);
+@@
+-  payload = await attachSentientProfile(payload);
++  payload = await attachSentientProfilesWithOverrides(payload);
+@@
++const badge = sentientProfileBadge(sentientState);

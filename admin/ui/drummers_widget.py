@@ -216,8 +216,13 @@ class DrummersWidget(QWidget):
         self.last_analyzed_song_path = None
 
         # Paths
-        self.data_root = os.path.abspath(os.path.join(os.getcwd(), '..', 'database'))
+        repo_root = Path(__file__).resolve().parents[2]
+        self.data_root = str(repo_root / 'database')
         self.profiles_path = os.path.join(self.data_root, 'drummer_profiles.json')
+        self._profiles_fallback_paths = [
+            str(repo_root / 'admin' / 'data' / 'drummers' / 'profiles.json'),
+            str(repo_root / 'admin' / 'admin' / 'data' / 'drummers' / 'profiles.json'),
+        ]
         self.download_path = os.path.join(self.data_root, 'drummer_songs')
         self.mvsep_output_path = os.path.join(self.data_root, 'processed_stems')
 
@@ -561,6 +566,7 @@ class DrummersWidget(QWidget):
         self.main_splitter.setSizes([200, 400, 300])
 
         # Add splitter to main layout
+        main_layout.addWidget(self.main_splitter)
 
     def connect_signals(self):
         """Connect all UI signals"""
@@ -594,8 +600,20 @@ class DrummersWidget(QWidget):
         try:
             self.drummer_profiles = []
 
-            if os.path.exists(self.profiles_path):
-                with open(self.profiles_path, 'r', encoding='utf-8', errors='ignore') as f:
+            candidate_paths = [self.profiles_path]
+            try:
+                candidate_paths.extend(self._profiles_fallback_paths or [])
+            except Exception:
+                pass
+
+            chosen_path = None
+            for p in candidate_paths:
+                if p and os.path.exists(p):
+                    chosen_path = p
+                    break
+
+            if chosen_path:
+                with open(chosen_path, 'r', encoding='utf-8', errors='ignore') as f:
                     data = json.load(f)
                 if isinstance(data, dict) and isinstance(data.get('profiles'), list):
                     self.drummer_profiles = data.get('profiles') or []
@@ -603,6 +621,8 @@ class DrummersWidget(QWidget):
                     self.drummer_profiles = data
                 else:
                     self.drummer_profiles = []
+            else:
+                self.drummer_profiles = []
 
             all_genres = set()
             try:
@@ -1204,11 +1224,14 @@ class DrummersWidget(QWidget):
                 batch_processor.file_processing_started.connect(self._on_file_processing_started)
             if hasattr(batch_processor, "file_processing_failed"):
                 batch_processor.file_processing_failed.connect(self._on_file_processing_failed)
+            if hasattr(batch_processor, "progress_updated"):
+                batch_processor.progress_updated.connect(self._on_batch_progress_updated)
 
             logger.info("Connected to batch processor signals for drum analysis workflow")
 
         except Exception as e:
             logger.error(f"Error connecting batch processor signals: {e}")
+            logger.error(traceback.format_exc())
 
 
     def _song_title_from_batch(self, file_path: str, metadata: Dict[str, Any] = None) -> str:
@@ -1244,7 +1267,48 @@ class DrummersWidget(QWidget):
             pass
 
 
+    def _on_batch_progress_updated(self, batch_id, progress, message):
+        try:
+            msg = str(message or "")
+            file_name = ""
+            if ":" in msg:
+                file_name = msg.split(":", 1)[0].strip()
+            file_path = file_name
+
+            song = self._song_title_from_batch(file_path, None)
+            if not song:
+                return
+
+            p = None
+            try:
+                p = float(progress) if progress is not None else None
+            except Exception:
+                p = None
+
+            pct = None
+            if p is not None:
+                if 0.0 <= p <= 1.0:
+                    pct = int(p * 100)
+                else:
+                    pct = int(p)
+                if pct < 0:
+                    pct = 0
+                if pct > 100:
+                    pct = 100
+
+            details = ""
+            try:
+                details = msg[:240]
+            except Exception:
+                details = ""
+
+            self._ai_set_state(song, "MVSEP_RUNNING", progress=pct, details=details)
+        except Exception:
+            pass
+
+
     def _on_batch_processing_completed(self, batch_id, summary):
+        """Handle batch processing completion"""
         try:
             logger.info(f"Batch processing completed: {batch_id}")
         except Exception:

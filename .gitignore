@@ -89,3 +89,5 @@ secrets.yaml
 !frontend/
 !infrastructure/
 !_ARCHIVE_FRONTENDS/
+
+admin/drumtrackai.db*

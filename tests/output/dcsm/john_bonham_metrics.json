@@ -1,0 +1,162 @@
+{
+  "drummer": "john_bonham",
+  "performance_spec": {
+    "feel": "pocket",
+    "swing": 0.29885852275224406,
+    "intensity": 0.2,
+    "hatOpenness": 0.18935645737941417,
+    "ghostNoteAmount": 0.5131227199272037,
+    "fillStyle": "mixed",
+    "fillDensity": 0.9,
+    "accentPattern": "2_and_4"
+  },
+  "metrics": {
+    "note_count": 72,
+    "velocity_mean": 0.2795275590551181,
+    "velocity_std": 0.15663047156209675,
+    "velocity_mean_raw": 35.5,
+    "velocity_std_raw": 19.89206988838629,
+    "micro_timing_std": 29.266356909549554,
+    "ghost_ratio": 0.7222222222222222,
+    "fill_ratio": 0.09722222222222222,
+    "fills_per_minute": 24.060494958753438,
+    "instrument_counts": {
+      "kick": 17,
+      "hihat_closed": 23,
+      "snare_center": 8,
+      "snare_ghost": 7,
+      "crash_1": 3,
+      "splash": 3,
+      "crash_2": 3,
+      "tom_low": 1,
+      "snare_rim": 2,
+      "ride_bow": 5
+    },
+    "instrument_shares": {
+      "kick": 0.2361111111111111,
+      "hihat_closed": 0.3194444444444444,
+      "snare_center": 0.1111111111111111,
+      "snare_ghost": 0.09722222222222222,
+      "crash_1": 0.041666666666666664,
+      "splash": 0.041666666666666664,
+      "crash_2": 0.041666666666666664,
+      "tom_low": 0.013888888888888888,
+      "snare_rim": 0.027777777777777776,
+      "ride_bow": 0.06944444444444445
+    },
+    "instrument_category_shares": {
+      "kick": 0.2361111111111111,
+      "hihat": 0.3194444444444444,
+      "snare": 0.2361111111111111,
+      "cymbal": 0.125,
+      "tom": 0.013888888888888888,
+      "ride": 0.06944444444444445
+    }
+  },
+  "comparison": {
+    "comparisons": [
+      {
+        "metric": "velocity_mean",
+        "actual": 0.2795275590551181,
+        "expected": 0.29039466134165426,
+        "pct_diff": -0.03742183908040518,
+        "within_tolerance": true
+      },
+      {
+        "metric": "velocity_std",
+        "actual": 0.15663047156209675,
+        "expected": 0.16024135053913552,
+        "pct_diff": -0.022534002396322087,
+        "within_tolerance": true
+      },
+      {
+        "metric": "micro_timing_std",
+        "actual": 29.266356909549554,
+        "expected": 35.863022730269286,
+        "pct_diff": -0.18394059726460205,
+        "within_tolerance": false
+      },
+      {
+        "metric": "fills_per_minute",
+        "actual": 24.060494958753438,
+        "expected": 5.114050211510962,
+        "pct_diff": 3.7047826993557593,
+        "within_tolerance": false
+      },
+      {
+        "metric": "instrument_category_share:hihat",
+        "actual": 0.3194444444444444,
+        "expected": 0.2895690033660179,
+        "pct_diff": 0.10317209622282573,
+        "within_tolerance": false
+      },
+      {
+        "metric": "instrument_category_share:snare",
+        "actual": 0.2361111111111111,
+        "expected": 0.2798368213083565,
+        "pct_diff": -0.15625431275558757,
+        "within_tolerance": false
+      },
+      {
+        "metric": "instrument_category_share:kick",
+        "actual": 0.2361111111111111,
+        "expected": 0.23044416800819553,
+        "pct_diff": 0.02459139301244557,
+        "within_tolerance": true
+      },
+      {
+        "metric": "instrument_category_share:cymbal",
+        "actual": 0.125,
+        "expected": 0.12196326650080493,
+        "pct_diff": 0.024898755062246813,
+        "within_tolerance": true
+      },
+      {
+        "metric": "instrument_category_share:ride",
+        "actual": 0.06944444444444445,
+        "expected": 0.0639543392360603,
+        "pct_diff": 0.08584413933384191,
+        "within_tolerance": true
+      },
+      {
+        "metric": "instrument_category_share:tom",
+        "actual": 0.013888888888888888,
+        "expected": 0.014232401580564906,
+        "pct_diff": -0.024135961153956068,
+        "within_tolerance": true
+      }
+    ],
+    "within_tolerance_count": 6,
+    "total_compared": 10,
+    "tolerance": 0.1
+  },
+  "rollup_snapshot": {
+    "velocity_mean": 0.29039466134165426,
+    "velocity_std": 0.16024135053913552,
+    "timing_std_ms": 35.863022730269286,
+    "ghost_ratio": null,
+    "fill_ratio": null,
+    "fills_per_min": 306.84301269065776,
+    "instrument_shares": {
+      "drums": 0.13274164209998118,
+      "residual": 0.11174810261556796,
+      "hihat": 0.09928495264379351,
+      "snare": 0.09594806498149658,
+      "instrumental": 0.08931819607351188,
+      "bass": 0.08690334316000753,
+      "other": 0.08246252273725146,
+      "kick": 0.07901273286081666,
+      "original_mix": 0.07271529825001569,
+      "drum_stem": 0.044326663739572225,
+      "vocals": 0.03691275167785235,
+      "cymbal": 0.035031048108887915,
+      "ride": 0.021928118923665557,
+      "crash": 0.006786677538731732,
+      "tom": 0.00487988458884777
+    }
+  },
+  "completion_status": {
+    "status": "refine",
+    "completion_ratio": 0.6
+  }
+}

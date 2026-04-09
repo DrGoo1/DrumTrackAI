@@ -1,0 +1,50 @@
+--- a/backend/llm_service/app.py
++++ b/backend/llm_service/app.py
+@@ -9,6 +9,11 @@
+ import numpy as np
+ from fastapi import FastAPI, HTTPException, Request
+ from pydantic import BaseModel, Field, ConfigDict
++
++try:
++    from backend.drummerbrain.performance_spec_sentient import build_sentient_instrument_profile
++except Exception:  # pragma: no cover - keep llm_service bootable if backend package is absent
++    build_sentient_instrument_profile = None
+ 
+ try:
+     import torch
+@@ -891,6 +896,35 @@
+             _profile_local("hihat_closed", 0.8, -10, int(8 + energy_intensity * 12), 0.6, int(humanize_amount * 6)),
+             _profile_local("ride_bow", 0.7, -5, int(10 + energy_intensity * 15), 0.5, int(humanize_amount * 7)),
+         ]
++
++        sentient_timing = drummer_profile.get("instrument_timing_profiles") or drummer_profile.get("timing_profiles")
++        sentient_dynamics = drummer_profile.get("instrument_dynamic_profiles") or drummer_profile.get("dynamic_profiles")
++        sentient_transitions = drummer_profile.get("transition_model")
++        if build_sentient_instrument_profile and (sentient_timing or sentient_dynamics or sentient_transitions):
++            sentient_profiles = []
++            sentient_ids = ["kick", "snare_center", "hihat_closed", "ride_bow"]
++            for inst_id in sentient_ids:
++                try:
++                    sentient_profiles.append(
++                        build_sentient_instrument_profile(
++                            instrument_id=inst_id,
++                            section_label=label,
++                            local_base_velocity=local_base_velocity,
++                            humanize_amount=humanize_amount,
++                            swing_amount=swing_amount,
++                            laid_back=laid_back,
++                            global_var_ms=var_ms,
++                            ghost_density=ghost_density,
++                            drummer_profile=drummer_profile,
++                            energy_intensity=energy_intensity,
++                            variation=variation,
++                        )
++                    )
++                except Exception:
++                    sentient_profiles = []
++                    break
++            if sentient_profiles:
++                profiles = sentient_profiles
+ 
+         phrases.append({"phraseId": f"{section_id}_local_service_{idx}", "barStart": bar_start, "barEnd": bar_end, "profiles": profiles})
+ 

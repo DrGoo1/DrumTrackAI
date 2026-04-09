@@ -2,13 +2,103 @@ import json
 import logging
 import os
 import time
+import sqlite3
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ConfigDict
+
+from backend.calibration_api import router as calibration_router
+
+try:
+    from backend.drummerbrain.performance_spec_sentient import build_sentient_instrument_profile
+except Exception:  # pragma: no cover - keep llm_service bootable if backend package is absent
+    build_sentient_instrument_profile = None
+
+try:
+    from backend.drummerbrain.song_roadmap_sentient import build_song_roadmap_section_overrides
+except Exception:  # pragma: no cover - keep llm_service bootable if backend package is absent
+    build_song_roadmap_section_overrides = None
+
+try:
+    from backend.drummerbrain.phrase_selection_sentient import (
+        choose_phrase_shape_from_family,
+        select_phrase_families,
+    )
+except Exception:  # pragma: no cover - optional additive patch
+    choose_phrase_shape_from_family = None
+    select_phrase_families = None
+
+try:
+    from backend.drummerbrain.phrase_retrieval_sentient import retrieve_phrase_assets
+except Exception:  # pragma: no cover - optional additive patch
+    retrieve_phrase_assets = None
+
+try:
+    from backend.drummerbrain.phrase_event_loader_sentient import build_phrase_event_pattern
+except Exception:  # pragma: no cover - optional additive patch
+    build_phrase_event_pattern = None
+
+try:
+    from backend.drummerbrain.performance_to_dcsm_sentient import build_dcsm_payload_from_sentient_spec
+except Exception:  # pragma: no cover - optional additive patch
+    build_dcsm_payload_from_sentient_spec = None
+
+try:
+    from backend.drummerbrain.render_take_sentient import build_sentient_take_bundle
+except Exception:  # pragma: no cover - optional additive patch
+    build_sentient_take_bundle = None
+
+try:
+    # Optional helper to render plugin MIDI from note events
+    from backend.render_to_plugin_midi import render_articulated_notes_to_midi
+except Exception:  # pragma: no cover - keep service bootable without plugin helper
+    render_articulated_notes_to_midi = None
+
+try:
+    from backend.drummerbrain.sentient_request_routing import (
+        has_sentient_profile,
+        normalize_generate_drums_payload,
+    )
+except Exception:  # pragma: no cover - optional additive patch
+    has_sentient_profile = None
+    normalize_generate_drums_payload = None
+
+try:
+    from backend.drummerbrain.sentient_profile_registry import build_sentient_profile_response
+except Exception:  # pragma: no cover - optional additive patch
+    build_sentient_profile_response = None
+
+try:
+    from backend.drummerbrain.section_sentient_overrides import (
+        build_section_profile_map,
+        derive_orchestration_bias,
+        derive_time_feel,
+        derive_transition_bias,
+        has_sentient_identity,
+        resolve_section_profile,
+    )
+except Exception:  # pragma: no cover - optional additive patch
+    build_section_profile_map = None
+    derive_orchestration_bias = None
+    derive_time_feel = None
+    derive_transition_bias = None
+    has_sentient_identity = None
+    resolve_section_profile = None
+
+try:
+    from backend.drummerbrain.section_asset_scoring_sentient import derive_section_asset_scoring
+except Exception:  # pragma: no cover - optional additive patch
+    derive_section_asset_scoring = None
+
+try:
+    from backend.groove_catalog import GrooveCatalog
+except Exception:  # pragma: no cover - optional additive patch
+    GrooveCatalog = None
 
 try:
     import torch
@@ -34,10 +124,536 @@ except Exception:
     ONNX_EXPORT_AVAILABLE = False
 
 # ------------------------------------------------------------
+# Minimal helpers for UI compatibility (drummers/grooves)
+# ------------------------------------------------------------
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _candidate_profile_roots() -> List[Path]:
+    roots: List[Path] = []
+    env = str(os.getenv("SENTIENT_PROFILE_ROOTS", "").strip())
+    if env:
+        for raw in env.split(os.pathsep):
+            try:
+                p = Path(raw).expanduser().resolve()
+                if p.exists():
+                    roots.append(p)
+            except Exception:
+                continue
+    base = _repo_root()
+    for rel in (
+        Path("database/drummer_profiles_generated"),
+        Path("backend/database/drummer_profiles_generated"),
+        Path("admin/database/drummer_profiles_generated"),
+    ):
+        try:
+            p = (base / rel).resolve()
+            if p.exists():
+                roots.append(p)
+        except Exception:
+            continue
+    # de-dup
+    seen: Set[str] = set()
+    out: List[Path] = []
+    for r in roots:
+        s = str(r)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(r)
+    return out
+
+
+def _scan_profile_slugs(max_items: int = 512) -> List[str]:
+    slugs: List[str] = []
+    seen: Set[str] = set()
+    for root in _candidate_profile_roots():
+        try:
+            for child in root.iterdir():
+                if len(slugs) >= max_items:
+                    break
+                try:
+                    if child.is_dir():
+                        if (child / "drummer_profile.json").exists():
+                            slug = child.name.strip()
+                            if slug and slug not in seen:
+                                seen.add(slug)
+                                slugs.append(slug)
+                    elif child.is_file() and child.suffix.lower() == ".json":
+                        slug = child.stem.strip()
+                        if slug and slug not in seen:
+                            seen.add(slug)
+                            slugs.append(slug)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return slugs
+
+
+def _title_from_slug(slug: str) -> str:
+    s = str(slug or "").replace("_", " ").replace("-", " ")
+    return " ".join(w for w in s.split() if w).title() or str(slug)
+
+
+def _resolve_admin_db_path_for_listing() -> Optional[Path]:
+    env = str(os.getenv("DRUMTRACKAI_DB_PATH", "").strip())
+    if env:
+        p = Path(env)
+        if p.exists():
+            return p
+    cand = _repo_root() / "admin" / "drumtrackai.db"
+    return cand if cand.exists() else None
+
+
+def _split_env_paths(raw: str) -> List[str]:
+    parts: List[str] = []
+    for chunk in str(raw or "").replace(";", os.pathsep).replace(",", os.pathsep).split(os.pathsep):
+        c = chunk.strip()
+        if c:
+            parts.append(c)
+    return parts
+
+
+def _groove_manifest_candidates() -> List[Path]:
+    out: List[Path] = []
+    for env_name in ("DTK_GROOVE_MANIFEST_PATHS", "DTK_GROOVE_MANIFEST_PATH", "GROOVE_CATALOG_MANIFESTS", "GROOVE_CATALOG_MANIFEST"):
+        for part in _split_env_paths(os.getenv(env_name, "")):
+            try:
+                p = Path(part)
+                if p.exists():
+                    out.append(p)
+            except Exception:
+                continue
+    if not out:
+        base = _repo_root()
+        for rel in (
+            Path("admin/training/egmd_phrase_manifest.jsonl"),
+            Path("llm_training_project/training_datasets/egmd_phrase_select_train.jsonl"),
+        ):
+            try:
+                p = (base / rel).resolve()
+                if p.exists():
+                    out.append(p)
+            except Exception:
+                continue
+    return out
+
+
+@lru_cache(maxsize=1)
+def _get_groove_catalog() -> Optional[Any]:
+    if GrooveCatalog is None:
+        return None
+    paths = _groove_manifest_candidates()
+    if not paths:
+        return None
+    try:
+        if len(paths) == 1:
+            return GrooveCatalog(paths[0])
+        return GrooveCatalog(paths)
+    except Exception:
+        return None
+
+
+def _egmd_training_manifest_path() -> Optional[Path]:
+    # Prefer explicit env overrides first
+    for env_name in ("DTK_EGMD_TRAINING_JSONL", "EGMD_TRAINING_JSONL"):
+        raw = str(os.getenv(env_name, "").strip())
+        if raw:
+            try:
+                p = Path(raw).expanduser().resolve()
+                if p.exists():
+                    return p
+            except Exception:
+                continue
+    # Fallback to repository path
+    p = _repo_root() / "llm_training_project" / "training_datasets" / "egmd_phrase_select_train.jsonl"
+    try:
+        return p if p.exists() else None
+    except Exception:
+        return None
+
+
+def _iter_training_jsonl(path: Path):
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                try:
+                    obj = json.loads((line or "").strip())
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    yield obj
+    except Exception:
+        return
+
+
+def _egmd_style_groups_from_training(limit: int = 200) -> List[str]:
+    p = _egmd_training_manifest_path()
+    if not p:
+        return []
+    seen: Set[str] = set()
+    out: List[str] = []
+    for obj in _iter_training_jsonl(p):
+        try:
+            if str(obj.get("task") or "").strip() != "select_phrase":
+                continue
+            inp = obj.get("input") or {}
+            sg = str(inp.get("style_group") or "").strip().lower()
+            if not sg:
+                # Try derive from output.midi_path filename
+                outp = obj.get("output") or {}
+                mp = str(outp.get("midi_path") or "").strip().lower()
+                if mp:
+                    base = os.path.basename(mp)
+                    # pattern: <num>_<style>_<bpm>_(beat|groove|fill)_...
+                    try:
+                        parts = base.split("_")
+                        if len(parts) >= 2:
+                            sg = parts[1]
+                    except Exception:
+                        sg = ""
+            if sg and sg not in seen:
+                seen.add(sg)
+                out.append(sg)
+                if len(out) >= max(1, int(limit)):
+                    break
+        except Exception:
+            continue
+    return out
+
+
+def _egmd_phrases_from_training(style_group: Optional[str], limit: int = 50) -> List[Dict[str, Any]]:
+    p = _egmd_training_manifest_path()
+    if not p:
+        return []
+    want_sg = str(style_group or "").strip().lower()
+    out: List[Dict[str, Any]] = []
+    for obj in _iter_training_jsonl(p):
+        try:
+            if str(obj.get("task") or "").strip() != "select_phrase":
+                continue
+            inp = obj.get("input") or {}
+            sg = str(inp.get("style_group") or "").strip().lower()
+            if want_sg and sg != want_sg:
+                continue
+            outp = obj.get("output") or {}
+            pid = outp.get("phrase_id")
+            mp = outp.get("midi_path")
+            ap = outp.get("audio_path")
+            items = {
+                "phrase_id": int(pid) if pid is not None else None,
+                "midi_path": mp,
+                "audio_path": ap,
+                "style_group": sg or None,
+                "title": None,
+                "source": "egmd",
+                "bars": None,
+                "tempo_bpm": (outp.get("measured") or {}).get("tempo"),
+            }
+            out.append(items)
+            if len(out) >= max(1, int(limit)):
+                break
+        except Exception:
+            continue
+    return out
+
+
+def _list_db_drummers() -> List[Dict[str, Any]]:
+    p = _resolve_admin_db_path_for_listing()
+    if not p:
+        return []
+    try:
+        conn = sqlite3.connect(str(p))
+        cur = conn.cursor()
+        drummers: Dict[str, Dict[str, Any]] = {}
+        try:
+            cur.execute("SELECT drummer_id, display_name FROM drummers")
+            for r in cur.fetchall() or []:
+                slug = str(r[0] or "").strip()
+                name = str(r[1] or _title_from_slug(slug)).strip()
+                if not slug:
+                    continue
+                drummers[slug] = {"id": slug, "display_name": name, "genre_tags": [], "style": None}
+        except Exception:
+            pass
+        # Populate genre/style tags with best-effort schema support
+        try:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {str(r[0]) for r in cur.fetchall() or []}
+        except Exception:
+            tables = set()
+
+        try:
+            if "drummer_category_assignments" in tables and "categories" in tables:
+                cur.execute(
+                    """
+                    SELECT a.drummer_id, c.label
+                    FROM drummer_category_assignments a
+                    LEFT JOIN categories c ON c.category_id = a.category_id
+                    ORDER BY a.drummer_id
+                    """
+                )
+                rows = cur.fetchall() or []
+                for r in rows:
+                    did = str(r[0] or "").strip()
+                    lab = str(r[1] or "").strip()
+                    if not did or did not in drummers:
+                        continue
+                    if lab:
+                        tags = drummers[did].setdefault("genre_tags", [])
+                        if lab not in tags:
+                            tags.append(lab)
+                        if not drummers[did].get("style"):
+                            drummers[did]["style"] = lab.lower().replace(" ", "_")
+            if "drummer_genres" in tables:
+                cur.execute(
+                    """
+                    SELECT drummer_id, genre
+                    FROM drummer_genres
+                    ORDER BY drummer_id
+                    """
+                )
+                rows = cur.fetchall() or []
+                for r in rows:
+                    did = str(r[0] or "").strip()
+                    lab = str(r[1] or "").strip()
+                    if not did or did not in drummers:
+                        continue
+                    if lab:
+                        tags = drummers[did].setdefault("genre_tags", [])
+                        if lab not in tags:
+                            tags.append(lab)
+                        if not drummers[did].get("style"):
+                            drummers[did]["style"] = lab.lower().replace(" ", "_")
+            if "drummer_profiles" in tables:
+                # Augment styles and category from drummer_profiles
+                try:
+                    cur.execute(
+                        """
+                        SELECT drummer_id, styles, category
+                        FROM drummer_profiles
+                        ORDER BY drummer_id
+                        """
+                    )
+                    rows = cur.fetchall() or []
+                except Exception:
+                    rows = []
+                for r in rows:
+                    did = str(r[0] or "").strip()
+                    if not did or did not in drummers:
+                        continue
+                    styles_raw = str(r[1] or "").strip()
+                    category_raw = str(r[2] or "").strip()
+                    labels: List[str] = []
+                    if styles_raw:
+                        parsed = None
+                        try:
+                            parsed = json.loads(styles_raw)
+                        except Exception:
+                            parsed = None
+                        if isinstance(parsed, list):
+                            labels = [str(x or "").strip() for x in parsed if str(x or "").strip()]
+                        elif isinstance(parsed, str) and parsed.strip():
+                            tmp = styles_raw.replace("|", ",").replace(";", ",")
+                            labels = [s.strip() for s in tmp.split(",") if s.strip()]
+                    if labels:
+                        tags = drummers[did].setdefault("genre_tags", [])
+                        for lab in labels:
+                            if lab and lab not in tags:
+                                tags.append(lab)
+                            if not drummers[did].get("style") and lab:
+                                norm = "_".join([w for w in lab.lower().replace("/", " ").replace(",", " ").replace("-", " ").split() if w])
+                                drummers[did]["style"] = norm or lab.lower()
+                            if not drummers[did].get("profileType") and lab:
+                                drummers[did]["profileType"] = lab
+                    if category_raw:
+                        tags = drummers[did].setdefault("genre_tags", [])
+                        if category_raw not in tags:
+                            tags.append(category_raw)
+                        if not drummers[did].get("style"):
+                            normc = "_".join([w for w in category_raw.lower().replace("/", " ").replace(",", " ").replace("-", " ").split() if w])
+                            drummers[did]["style"] = normc or category_raw.lower()
+                        if not drummers[did].get("profileType"):
+                            drummers[did]["profileType"] = category_raw
+        except Exception:
+            pass
+
+        try:
+            conn.close()
+        except Exception:
+            pass
+        # Post-process fallbacks
+        try:
+            for did, drow in drummers.items():
+                style = drow.get("style")
+                tags = drow.get("genre_tags") or []
+                ptype = drow.get("profileType")
+                # Prefer first tag if style is missing
+                if not style and tags:
+                    lab = str(tags[0] or "").strip()
+                    if lab:
+                        norm = "_".join([w for w in lab.lower().replace("/", " ").replace(",", " ").replace("-", " ").split() if w])
+                        drow["style"] = norm or lab.lower()
+                # Use profileType when style still missing
+                if not drow.get("style") and ptype:
+                    lab = str(ptype or "").strip()
+                    if lab:
+                        norm = "_".join([w for w in lab.lower().replace("/", " ").replace(",", " ").replace("-", " ").split() if w])
+                        drow["style"] = norm or lab.lower()
+                # Final default
+                if not drow.get("style"):
+                    drow["style"] = "rock"
+        except Exception:
+            pass
+        return list(drummers.values())
+    except Exception:
+        return []
+
+
+def _list_styles(include_admin: bool = False) -> List[str]:
+    p = _resolve_admin_db_path_for_listing()
+    out: List[str] = []
+    if not p:
+        return out
+    try:
+        conn = sqlite3.connect(str(p))
+        cur = conn.cursor()
+        tables: Set[str] = set()
+        try:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {str(r[0]) for r in cur.fetchall() or []}
+        except Exception:
+            tables = set()
+        # Allow env override for admin styles when flag not passed
+        try:
+            if not include_admin:
+                inc = str(os.getenv("INCLUDE_ADMIN_STYLES", "")).strip().lower()
+                include_admin = inc not in {"", "0", "false", "no"}
+        except Exception:
+            include_admin = include_admin
+
+        # Preferred: categories table with human-readable labels
+        if "categories" in tables:
+            try:
+                cur.execute("SELECT label FROM categories WHERE TRIM(label) <> '' ORDER BY lower(label)")
+                for r in cur.fetchall() or []:
+                    lab = str(r[0] or "").strip()
+                    if lab:
+                        out.append(lab)
+            except Exception:
+                pass
+
+        # Add display names from drummer_category_mappings when present
+        if "drummer_category_mappings" in tables:
+            admin_flag_exists = False
+            try:
+                cur.execute("PRAGMA table_info(drummer_category_mappings)")
+                cols = [str(c[1]).strip().lower() for c in cur.fetchall() or []]
+                admin_flag_exists = "is_admin_only" in cols
+            except Exception:
+                admin_flag_exists = False
+            try:
+                if admin_flag_exists and not include_admin:
+                    cur.execute("SELECT DISTINCT display_name FROM drummer_category_mappings WHERE TRIM(display_name) <> '' AND COALESCE(is_admin_only,0)=0 ORDER BY lower(display_name)")
+                else:
+                    cur.execute("SELECT DISTINCT display_name FROM drummer_category_mappings WHERE TRIM(display_name) <> '' ORDER BY lower(display_name)")
+                for r in cur.fetchall() or []:
+                    lab = str(r[0] or "").strip()
+                    if lab:
+                        out.append(lab)
+            except Exception:
+                pass
+            # Fallback to category_id tokens if display_name is not populated
+            try:
+                if admin_flag_exists and not include_admin:
+                    cur.execute("SELECT DISTINCT category_id FROM drummer_category_mappings WHERE TRIM(category_id) <> '' AND COALESCE(is_admin_only,0)=0 ORDER BY lower(category_id)")
+                else:
+                    cur.execute("SELECT DISTINCT category_id FROM drummer_category_mappings WHERE TRIM(category_id) <> '' ORDER BY lower(category_id)")
+                for r in cur.fetchall() or []:
+                    lab = str(r[0] or "").strip()
+                    if lab:
+                        out.append(lab)
+            except Exception:
+                pass
+
+        # Augment with drummer_profiles (styles list and category)
+        if "drummer_profiles" in tables:
+            try:
+                cur.execute("SELECT styles, category FROM drummer_profiles")
+                rows = cur.fetchall() or []
+            except Exception:
+                rows = []
+            for sraw, cat in rows:
+                styles_raw = str(sraw or "").strip()
+                if styles_raw:
+                    parsed = None
+                    try:
+                        parsed = json.loads(styles_raw)
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, list):
+                        for x in parsed:
+                            lab = str(x or "").strip()
+                            if lab:
+                                out.append(lab)
+                    else:
+                        tmp = styles_raw.replace("|", ",").replace(";", ",")
+                        for tok in [t.strip() for t in tmp.split(",") if t.strip()]:
+                            out.append(tok)
+                cat_s = str(cat or "").strip()
+                if cat_s:
+                    out.append(cat_s)
+
+        # Add genres when table is present
+        if "drummer_genres" in tables:
+            try:
+                cur.execute("SELECT DISTINCT genre FROM drummer_genres WHERE TRIM(genre) <> '' ORDER BY lower(genre)")
+                for r in cur.fetchall() or []:
+                    lab = str(r[0] or "").strip()
+                    if lab:
+                        out.append(lab)
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+    except Exception:
+        return []
+    # De-duplicate while preserving order (case-insensitive)
+    # Provide a minimal default set when DB yields no styles
+    if not out:
+        out = [
+            "Rock",
+            "Funk",
+            "Jazz",
+            "Pop",
+            "Blues",
+            "Shuffle",
+            "Latin",
+            "Metal",
+        ]
+    seen: Set[str] = set()
+    ordered: List[str] = []
+    for s in out:
+        k = str(s or "").strip()
+        if not k:
+            continue
+        low = k.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        ordered.append(k)
+    return ordered
+
+# ------------------------------------------------------------
 # Version & configuration
 # ------------------------------------------------------------
 
-API_VERSION = "1.1.0"
+API_VERSION = "1.2.0"
 
 # INFERENCE_BACKEND: "auto" | "torch" | "onnx"
 INFERENCE_BACKEND = str(os.getenv("INFERENCE_BACKEND", "auto")).strip().lower()
@@ -114,6 +730,75 @@ _STYLE_TO_INT = {
 def _style_to_int(style: Optional[str]) -> int:
     return int(_STYLE_TO_INT.get(str(style or "rock").strip().lower(), 0))
 
+def _legacy_notes_to_plugin_notes_for_midi(legacy_notes: List[Dict[str, Any]], *, ppq: int, tempo_bpm: float) -> List[Dict[str, Any]]:
+    try:
+        ticks_per_second = (float(ppq) * float(tempo_bpm)) / 60.0
+    except Exception:
+        ticks_per_second = float(ppq) * 2.0
+    out: List[Dict[str, Any]] = []
+    for note in legacy_notes or []:
+        if not isinstance(note, dict):
+            continue
+        try:
+            t_sec = float(note.get("time", 0.0) or 0.0)
+        except Exception:
+            t_sec = 0.0
+        try:
+            length_sec = float(note.get("length") or note.get("duration") or 0.10)
+        except Exception:
+            length_sec = 0.10
+        t0 = int(round(max(0.0, t_sec) * ticks_per_second))
+        t1 = max(t0 + 1, int(round((max(0.0, t_sec) + max(0.01, length_sec)) * ticks_per_second)))
+        pitch = int(note.get("note") or 38)
+        vel = int(note.get("velocity") or 96)
+        drum = str(note.get("drum") or "")
+        out.append({
+            "t0": t0,
+            "t1": t1,
+            "pitch": pitch,
+            "vel": vel,
+            "chan": 9,
+            "articulationId": drum or None,
+        })
+    return out
+
+def _ensure_midi_base64_on_payload(payload: Dict[str, Any], cfg: Dict[str, Any]) -> None:
+    try:
+        midi_b64 = None
+        # Prefer plugin_render output when available
+        if isinstance(payload.get("plugin_render"), dict):
+            pr = payload["plugin_render"]
+            midi_b64 = pr.get("midi_base64") or pr.get("midi_smf_base64") or pr.get("midi_b64")
+        # Fallback: synthesize minimal SMF from legacy midi_notes
+        if not midi_b64 and callable(render_articulated_notes_to_midi):
+            tempos = cfg.get("tempos") or []
+            if isinstance(tempos, list) and tempos:
+                try:
+                    tempo_bpm = float(sum(float(t or 0.0) for t in tempos) / max(len(tempos), 1))
+                except Exception:
+                    tempo_bpm = 120.0
+            else:
+                try:
+                    tempo_bpm = float(cfg.get("tempo") or 120.0)
+                except Exception:
+                    tempo_bpm = 120.0
+            ppq = int((payload.get("drum_track") or {}).get("resolution_ppq") or 960)
+            notes = _legacy_notes_to_plugin_notes_for_midi(payload.get("midi_notes") or [], ppq=ppq, tempo_bpm=tempo_bpm)
+            out = render_articulated_notes_to_midi({
+                "plugin": str(cfg.get("pluginTarget") or cfg.get("plugin") or "jamstix"),
+                "advancedArticulations": bool(cfg.get("advancedArticulations", False)),
+                "ppq": ppq,
+                "tempo_bpm": tempo_bpm,
+                "notes": notes,
+            }) if notes else None
+            if isinstance(out, dict):
+                midi_b64 = out.get("midi_base64") or out.get("midi_smf_base64") or out.get("midi_b64")
+        if midi_b64:
+            payload["midi_base64"] = midi_b64
+    except Exception:
+        # Non-fatal: leave payload as-is
+        pass
+
 # ------------------------------------------------------------
 # Pydantic schemas
 # ------------------------------------------------------------
@@ -149,17 +834,23 @@ class PerformanceSpecResponse(BaseModel):
     spec: Dict[str, Any]
     metadata: Dict[str, Any]
 
-
 class SongRoadmapRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     cfg: Dict[str, Any] = Field(default_factory=dict)
     songmap_summary: Dict[str, Any] = Field(default_factory=dict)
     drummer_profile: Dict[str, Any] = Field(default_factory=dict)
 
-
 class SongRoadmapResponse(BaseModel):
     ok: bool
     roadmap: Dict[str, Any]
+    metadata: Dict[str, Any]
+
+class SentientTakeRenderResponse(BaseModel):
+    ok: bool
+    spec: Dict[str, Any]
+    drum_track: Optional[Dict[str, Any]] = None
+    midi_notes: List[Dict[str, Any]] = Field(default_factory=list)
+    plugin_render: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any]
 
 # ------------------------------------------------------------
@@ -382,6 +1073,7 @@ def _cached_infer(tempo_bpm: float, style_int: int, complexity: float) -> Dict[s
 # ------------------------------------------------------------
 
 app = FastAPI(title="DrumTracKAI Humanization Service", version=API_VERSION)
+app.include_router(calibration_router)
 
 TORCH_MODEL = None
 TORCH_DEVICE = "cpu"
@@ -627,6 +1319,13 @@ def healthz():
         "model_error": MODEL_LOAD_ERROR,
     }
 
+
+@app.get("/api/sentient-profiles/{drummer_id}")
+def api_get_sentient_profile(drummer_id: str):
+    if callable(build_sentient_profile_response):
+        return build_sentient_profile_response(drummer_id)
+    return {"ok": True, "drummer_id": drummer_id, "profile": None, "found": False}
+
 @app.post("/v1/humanization_params", response_model=HumanizationResponse)
 def humanization_params(req: HumanizationRequest):
     try:
@@ -653,6 +1352,22 @@ def performance_spec(req: PerformanceSpecRequest):
     cfg = req.cfg or {}
     songmap_summary = req.songmap_summary or {}
     drummer_profile = req.drummer_profile or {}
+
+    if (not isinstance(drummer_profile, dict) or not drummer_profile) and callable(build_sentient_profile_response):
+        drummer_id = None
+        try:
+            drummer_id = (cfg or {}).get("drummer")
+        except Exception:
+            drummer_id = None
+        drummer_id = str(drummer_id or "").strip()
+        if drummer_id:
+            try:
+                resp = build_sentient_profile_response(drummer_id)
+                prof = (resp or {}).get("profile")
+                if isinstance(prof, dict) and prof:
+                    drummer_profile = prof
+            except Exception:
+                pass
 
     groove_controls = cfg.get("grooveControls")
     if not isinstance(groove_controls, dict):
@@ -691,6 +1406,38 @@ def performance_spec(req: PerformanceSpecRequest):
     ghost_amount_cfg = float(cfg.get("ghostNoteAmount", 0.2))
     intensity = float(cfg.get("intensity", 0.6))
     variation = float(cfg.get("variation", 0.5))
+
+    try:
+        p3242 = drummer_profile.get("phase32_42_features") if isinstance(drummer_profile, dict) else None
+        p3742 = (p3242 or {}).get("phase37_42") if isinstance(p3242, dict) else None
+        if isinstance(p3742, dict):
+            personality = p3742.get("drummer_personality_profile")
+            micro = p3742.get("microtiming_profile")
+
+            if isinstance(personality, dict):
+                try:
+                    aggressiveness = float(personality.get("aggressiveness", 0.5))
+                    restraint = float(personality.get("restraint", 0.5))
+                    chaos = float(personality.get("chaos", 0.3))
+                    ghost_style = float(personality.get("ghostStyle", 0.3))
+                    intensity = max(0.0, min(1.0, intensity * (0.85 + 0.35 * aggressiveness)))
+                    variation = max(0.0, min(1.0, variation * (0.85 + 0.35 * chaos)))
+                    ghost_amount_cfg = max(0.0, min(1.0, ghost_amount_cfg * (0.75 + 0.65 * ghost_style)))
+                    humanize_amount = max(0.0, min(1.0, humanize_amount * (0.85 + 0.25 * (1.0 - restraint))))
+                except Exception:
+                    pass
+
+            if isinstance(micro, dict):
+                g = micro.get("global")
+                if isinstance(g, dict) and g.get("std_ms") is not None:
+                    try:
+                        std_ms = float(g.get("std_ms"))
+                        loosen = max(0.0, min(1.0, std_ms / 18.0))
+                        humanize_amount = max(0.0, min(1.0, humanize_amount * (0.80 + 0.60 * loosen)))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
     try:
         gc_swing = float(groove_controls.get("swing", 0.0) or 0.0)
@@ -841,6 +1588,13 @@ def performance_spec(req: PerformanceSpecRequest):
     if not isinstance(sections, list) or not sections:
         sections = [{"label": section_id, "startBar": start_measure, "endBar": end_measure, "energy": 0.5}]
 
+    section_profile_map = {}
+    if callable(build_section_profile_map):
+        try:
+            section_profile_map = build_section_profile_map(sections, drummer_profile)
+        except Exception:
+            section_profile_map = {}
+
     phrases = []
     for idx, sec in enumerate(sections):
         if not isinstance(sec, dict):
@@ -868,12 +1622,59 @@ def performance_spec(req: PerformanceSpecRequest):
             energy = 0.5
         energy = max(0.0, min(1.0, energy))
 
+        section_profile = None
+        if callable(resolve_section_profile):
+            try:
+                section_profile = section_profile_map.get(f"{idx}:{str(label).strip().lower()}") or resolve_section_profile(sec, drummer_profile)
+            except Exception:
+                section_profile = None
+        if not isinstance(section_profile, dict):
+            section_profile = drummer_profile
+
+        local_feel = global_feel
+        if callable(derive_time_feel):
+            try:
+                local_feel = derive_time_feel(section_profile, global_feel)
+            except Exception:
+                local_feel = global_feel
+
+        local_transition_bias = {}
+        if callable(derive_transition_bias):
+            try:
+                local_transition_bias = derive_transition_bias(section_profile)
+            except Exception:
+                local_transition_bias = {}
+
+        local_orchestration_bias = {}
+        if callable(derive_orchestration_bias):
+            try:
+                local_orchestration_bias = derive_orchestration_bias(section_profile)
+            except Exception:
+                local_orchestration_bias = {}
+
+        retrieval_hints = None
+        if callable(derive_section_asset_scoring):
+            try:
+                retrieval_hints = derive_section_asset_scoring(
+                    section_profile,
+                    section_type=str(label),
+                    local_time_feel=str(local_feel),
+                    timekeeper=str(local_orchestration_bias.get("preferred_timekeeper") or "hats"),
+                    energy=float(energy),
+                    fill_aggression=float((local_transition_bias or {}).get("fill_probability_bias", 0.0)),
+                    ghost_target=float(ghost_density),
+                    syncopation_target=float(variation),
+                )
+            except Exception:
+                retrieval_hints = None
+
+        section_humanize_amount = max(0.0, min(1.0, humanize_amount * (0.75 + 0.5 * float((local_transition_bias or {}).get("humanize_bias", 0.5)))))
         energy_intensity = max(0.0, min(1.0, intensity * (0.75 + 0.5 * (energy - 0.5))))
         energy_vel = int(60 + energy_intensity * 50)
         energy_vel = max(1, min(127, energy_vel))
 
         local_base_velocity = energy_vel
-        local_random = int(max(0.0, min(1.0, humanize_amount)) * 10)
+        local_random = int(max(0.0, min(1.0, section_humanize_amount)) * 10)
         if "chorus" in str(label).lower() or "drop" in str(label).lower():
             local_random = min(20, int(local_random * 1.15))
         if "intro" in str(label).lower():
@@ -892,9 +1693,154 @@ def performance_spec(req: PerformanceSpecRequest):
             _profile_local("ride_bow", 0.7, -5, int(10 + energy_intensity * 15), 0.5, int(humanize_amount * 7)),
         ]
 
-        phrases.append({"phraseId": f"{section_id}_local_service_{idx}", "barStart": bar_start, "barEnd": bar_end, "profiles": profiles})
+        section_phrase_selection = sec.get("phraseSelection") if isinstance(sec, dict) else None
+        if not isinstance(section_phrase_selection, dict) and callable(select_phrase_families):
+            try:
+                sec_orch = sec.get("orchestration") if isinstance(sec.get("orchestration"), dict) else {}
+                sec_fill = (
+                    (sec.get("transitions") or {}).get("fillOut")
+                    if isinstance(sec.get("transitions"), dict)
+                    else {}
+                )
+                sec_timing = sec.get("timing") if isinstance(sec.get("timing"), dict) else {}
+                section_phrase_selection = select_phrase_families(
+                    section_type=str(sec.get("sectionType") or label or "section"),
+                    energy=float(energy),
+                    variation=float(variation),
+                    timekeeper=str(sec_orch.get("timekeeper") or "hats"),
+                    fill_family=str(sec_fill.get("family") or "auto"),
+                    fill_enabled=bool((sec_fill.get("enabled") is True) if isinstance(sec_fill, dict) else True),
+                    time_feel=str(sec_timing.get("timeFeel") or preferred_feel or "straight"),
+                    drummer_profile=drummer_profile,
+                )
+            except Exception:
+                section_phrase_selection = None
+        if not isinstance(section_phrase_selection, dict):
+            section_phrase_selection = {}
+
+        groove_family = str(section_phrase_selection.get("grooveFamily") or "")
+        fill_family = str(section_phrase_selection.get("fillFamily") or "")
+        selected_shape = (
+            choose_phrase_shape_from_family(groove_family, fill_family, "swell" if variation > 0.6 else "flat")
+            if callable(choose_phrase_shape_from_family)
+            else ("swell" if variation > 0.6 else "flat")
+        )
+
+        sentient_timing = drummer_profile.get("instrument_timing_profiles") or drummer_profile.get("timing_profiles")
+        sentient_dynamics = drummer_profile.get("instrument_dynamic_profiles") or drummer_profile.get("dynamic_profiles")
+        sentient_transitions = drummer_profile.get("transition_model")
+        if build_sentient_instrument_profile and (sentient_timing or sentient_dynamics or sentient_transitions):
+            sentient_profiles = []
+            sentient_ids = ["kick", "snare_center", "hihat_closed", "ride_bow"]
+            for inst_id in sentient_ids:
+                try:
+                    sentient_profiles.append(
+                        build_sentient_instrument_profile(
+                            instrument_id=inst_id,
+                            section_label=label,
+                            local_base_velocity=local_base_velocity,
+                            humanize_amount=humanize_amount,
+                            swing_amount=swing_amount,
+                            laid_back=laid_back,
+                            global_var_ms=var_ms,
+                            ghost_density=ghost_density,
+                            drummer_profile=drummer_profile,
+                            energy_intensity=energy_intensity,
+                            variation=variation,
+                        )
+                    )
+                except Exception:
+                    sentient_profiles = []
+                    break
+            if sentient_profiles:
+                profiles = sentient_profiles
+
+        # Apply phrase-family-selected shape override to all instrument profiles.
+        try:
+            for p in profiles:
+                if isinstance(p, dict) and isinstance(p.get("velocityProfile"), dict):
+                    p["velocityProfile"]["phraseShape"] = selected_shape
+        except Exception:
+            pass
+
+        section_phrase_assets = sec.get("phraseAssets") if isinstance(sec, dict) else None
+        if not isinstance(section_phrase_assets, dict) and callable(retrieve_phrase_assets):
+            try:
+                sec_orch = sec.get("orchestration") if isinstance(sec.get("orchestration"), dict) else {}
+                section_phrase_assets = retrieve_phrase_assets(
+                    phrase_selection=section_phrase_selection,
+                    section_type=str(sec.get("sectionType") or label or "section"),
+                    style_group=str(cfg.get("style") or songmap_summary.get("styleGroup") or "rock"),
+                    timekeeper=str(sec_orch.get("timekeeper") or "hats"),
+                    bars=int(bar_end - bar_start + 1),
+                    energy=float(energy),
+                    groove_catalog=None,
+                )
+            except Exception:
+                section_phrase_assets = None
+
+        phrase_assets = section_phrase_assets if isinstance(section_phrase_assets, dict) else {}
+        phrase_selection = section_phrase_selection if isinstance(section_phrase_selection, dict) else {}
+        phrase_event_pattern = None
+        if callable(build_phrase_event_pattern):
+            try:
+                phrase_event_pattern = build_phrase_event_pattern(
+                    phrase_assets=phrase_assets,
+                    phrase_selection=phrase_selection,
+                    bars=max(1, bar_end - bar_start + 1),
+                )
+            except Exception:
+                phrase_event_pattern = None
+
+        phrase_meta = {
+            "sectionSentientOverride": bool(callable(has_sentient_identity) and has_sentient_identity(section_profile)) if isinstance(section_profile, dict) else False,
+            "sectionTimeFeel": str(local_feel),
+            "sectionHumanizeAmount": float(section_humanize_amount),
+        }
+        if isinstance(local_transition_bias, dict):
+            phrase_meta["transitionBias"] = local_transition_bias
+        if isinstance(local_orchestration_bias, dict):
+            phrase_meta["orchestrationBias"] = local_orchestration_bias
+        if isinstance(retrieval_hints, dict):
+            phrase_meta["retrievalHints"] = retrieval_hints
+
+        phrase_payload = {
+            "phraseId": f"{section_id}_local_service_{idx}",
+            "barStart": bar_start,
+            "barEnd": bar_end,
+            "profiles": profiles,
+            "sectionMeta": phrase_meta,
+        }
+        if phrase_selection:
+            phrase_payload["phraseSelection"] = phrase_selection
+        if phrase_assets:
+            phrase_payload["phraseAssets"] = phrase_assets
+        if isinstance(phrase_event_pattern, dict):
+            phrase_payload["phraseEventPattern"] = phrase_event_pattern
+        if isinstance(retrieval_hints, dict):
+            phrase_payload["retrievalHints"] = retrieval_hints
+
+        phrases.append(phrase_payload)
 
     spec = {"styleId": style, "globalFeel": global_feel, "quantizationBase": "16th", "phrases": phrases}
+
+    if callable(build_dcsm_payload_from_sentient_spec):
+        try:
+            has_patterns = any(
+                isinstance(p, dict)
+                and isinstance(p.get("phraseEventPattern"), dict)
+                and isinstance((p.get("phraseEventPattern") or {}).get("events"), list)
+                for p in phrases
+            )
+            if has_patterns:
+                spec["dcsmRenderPayload"] = build_dcsm_payload_from_sentient_spec(
+                    spec=spec,
+                    cfg=req.cfg or {},
+                    style_id=str(style or spec.get("styleId") or "rock"),
+                    resolution_ppq=int(cfg.get("resolutionPpq") or 960),
+                )
+        except Exception:
+            pass
 
     return PerformanceSpecResponse(
         ok=True,
@@ -978,6 +1924,31 @@ def song_roadmap(req: SongRoadmapRequest):
         "repetitionFills": bool(variation >= 0.7),
     }
 
+    if build_song_roadmap_section_overrides and isinstance(drummer_profile, dict):
+        try:
+            global_override = build_song_roadmap_section_overrides(
+                section_type="global",
+                energy=max(0.0, min(1.0, intensity)),
+                variation=max(0.0, min(1.0, variation)),
+                swing_amount=max(0.0, min(1.0, swing_amount)),
+                time_feel=time_feel,
+                drummer_profile=drummer_profile,
+                current_timekeeper="hats",
+                current_fill_enabled=True,
+            )
+            gp = global_override.get("fillPolicy") if isinstance(global_override, dict) else None
+            if isinstance(gp, dict):
+                global_fill_policy.update(gp)
+        except Exception:
+            pass
+
+    section_profile_map = {}
+    if callable(build_section_profile_map):
+        try:
+            section_profile_map = build_section_profile_map(song_sections, drummer_profile)
+        except Exception:
+            section_profile_map = {}
+
     roadmap_sections: List[Dict[str, Any]] = []
     for idx, sec in enumerate(song_sections):
         if not isinstance(sec, dict):
@@ -999,43 +1970,146 @@ def song_roadmap(req: SongRoadmapRequest):
         if st in {"outro", "ending"}:
             fill_out_enabled = True
 
-        roadmap_sections.append(
-            {
-                "sectionIndex": idx,
-                "sectionType": st,
-                "bars": bars,
-                "energy": energy,
-                "orchestration": {
-                    "timekeeper": timekeeper,
-                    "hatOpenBias": max(0.0, min(1.0, 0.15 + energy * 0.35 + swing_amount * 0.15)),
-                    "rideBellProbability": 0.1 if timekeeper in {"ride", "mixed"} else 0.02,
-                    "crashDownbeatProbability": 0.65 if st in {"chorus", "bridge", "outro"} else 0.35,
+        section_profile = None
+        if callable(resolve_section_profile):
+            try:
+                section_profile = section_profile_map.get(f"{idx}:{st}") or resolve_section_profile(sec, drummer_profile)
+            except Exception:
+                section_profile = None
+        if not isinstance(section_profile, dict):
+            section_profile = drummer_profile
+
+        local_time_feel = time_feel
+        if callable(derive_time_feel):
+            try:
+                local_time_feel = derive_time_feel(section_profile, time_feel)
+            except Exception:
+                local_time_feel = time_feel
+
+        local_transition_bias = {}
+        if callable(derive_transition_bias):
+            try:
+                local_transition_bias = derive_transition_bias(section_profile)
+            except Exception:
+                local_transition_bias = {}
+
+        local_orchestration_bias = {}
+        if callable(derive_orchestration_bias):
+            try:
+                local_orchestration_bias = derive_orchestration_bias(section_profile)
+            except Exception:
+                local_orchestration_bias = {}
+
+        retrieval_hints = None
+        if callable(derive_section_asset_scoring):
+            try:
+                local_fill_aggression = max(0.0, min(1.0, 0.35 + energy * 0.55 + 0.25 * float((local_transition_bias or {}).get("fill_probability_bias", 0.0))))
+                local_ghost_target = max(0.0, min(1.0, ghost_amount * 0.8))
+                local_syncopation = max(0.0, min(1.0, 0.25 + variation * 0.5))
+                retrieval_hints = derive_section_asset_scoring(
+                    section_profile,
+                    section_type=str(st),
+                    local_time_feel=str(local_time_feel),
+                    timekeeper=str(local_orchestration_bias.get("preferred_timekeeper") or "hats"),
+                    energy=float(energy),
+                    fill_aggression=float(local_fill_aggression),
+                    ghost_target=float(local_ghost_target),
+                    syncopation_target=float(local_syncopation),
+                )
+            except Exception:
+                retrieval_hints = None
+
+        section_payload = {
+            "sectionIndex": idx,
+            "sectionType": st,
+            "bars": bars,
+            "energy": energy,
+            "orchestration": {
+                "timekeeper": timekeeper,
+                "hatOpenBias": max(0.0, min(1.0, 0.15 + energy * 0.35 + swing_amount * 0.15)),
+                "rideBellProbability": 0.1 if timekeeper in {"ride", "mixed"} else 0.02,
+                "crashDownbeatProbability": 0.65 if st in {"chorus", "bridge", "outro"} else 0.35,
+            },
+            "grooveIntent": {
+                "kickDensityTarget": max(0.0, min(1.0, 0.35 + energy * 0.45)),
+                "snareGhostTarget": max(0.0, min(1.0, ghost_amount * 0.8)),
+                "cymbalDensityTarget": max(0.0, min(1.0, 0.45 + energy * 0.4)),
+                "syncopation": max(0.0, min(1.0, 0.25 + variation * 0.5)),
+            },
+            "transitions": {
+                "fillOut": {
+                    "enabled": bool(fill_out_enabled),
+                    "length": global_fill_policy["defaultLength"],
+                    "family": "auto",
+                    "aggression": max(0.0, min(1.0, 0.35 + energy * 0.55)),
                 },
-                "grooveIntent": {
-                    "kickDensityTarget": max(0.0, min(1.0, 0.35 + energy * 0.45)),
-                    "snareGhostTarget": max(0.0, min(1.0, ghost_amount * 0.8)),
-                    "cymbalDensityTarget": max(0.0, min(1.0, 0.45 + energy * 0.4)),
-                    "syncopation": max(0.0, min(1.0, 0.25 + variation * 0.5)),
+                "pickupIntoNext": {
+                    "enabled": bool(energy >= 0.72 and variation >= 0.55),
+                    "type": "snare_pickup",
                 },
-                "transitions": {
-                    "fillOut": {
-                        "enabled": bool(fill_out_enabled),
-                        "length": global_fill_policy["defaultLength"],
-                        "family": "auto",
-                        "aggression": max(0.0, min(1.0, 0.35 + energy * 0.55)),
-                    },
-                    "pickupIntoNext": {
-                        "enabled": bool(energy >= 0.72 and variation >= 0.55),
-                        "type": "snare_pickup",
-                    },
-                },
-                "timing": {
-                    "timeFeel": time_feel,
-                    "shuffleMode": "swing_8th" if time_feel in {"swing", "shuffle"} else "straight",
-                    "humanizeAmount": max(0.0, min(1.0, humanize_amount)),
-                },
-            }
-        )
+            },
+            "timing": {
+                "timeFeel": local_time_feel,
+                "shuffleMode": "swing_8th" if local_time_feel in {"swing", "shuffle"} else "straight",
+                "humanizeAmount": max(0.0, min(1.0, humanize_amount)),
+            },
+        }
+        if isinstance(retrieval_hints, dict):
+            section_payload["retrievalHints"] = retrieval_hints
+
+        if build_song_roadmap_section_overrides and isinstance(drummer_profile, dict):
+            try:
+                sentient = build_song_roadmap_section_overrides(
+                    section_type=st,
+                    energy=energy,
+                    variation=variation,
+                    swing_amount=swing_amount,
+                    time_feel=time_feel,
+                    drummer_profile=drummer_profile,
+                    current_timekeeper=timekeeper,
+                    current_fill_enabled=fill_out_enabled,
+                )
+                if isinstance(sentient, dict):
+                    for top_key in ("orchestration", "grooveIntent", "transitions", "timing"):
+                        if isinstance(sentient.get(top_key), dict):
+                            section_payload.setdefault(top_key, {}).update(sentient[top_key])
+                    if isinstance(sentient.get("globalHints"), dict):
+                        section_payload["globalHints"] = sentient["globalHints"]
+            except Exception:
+                pass
+
+        if callable(select_phrase_families):
+            try:
+                sec_fill = section_payload.get("transitions", {}).get("fillOut", {}) if isinstance(section_payload.get("transitions"), dict) else {}
+                sec_timing = section_payload.get("timing") if isinstance(section_payload.get("timing"), dict) else {}
+                section_payload["phraseSelection"] = select_phrase_families(
+                    section_type=st,
+                    energy=float(energy),
+                    variation=float(variation),
+                    timekeeper=str(section_payload.get("orchestration", {}).get("timekeeper") or "hats"),
+                    fill_family=str((sec_fill or {}).get("family") or "auto"),
+                    fill_enabled=bool((sec_fill or {}).get("enabled", True)),
+                    time_feel=str((sec_timing or {}).get("timeFeel") or time_feel),
+                    drummer_profile=drummer_profile,
+                )
+            except Exception:
+                pass
+
+        if callable(retrieve_phrase_assets) and isinstance(section_payload.get("phraseSelection"), dict):
+            try:
+                section_payload["phraseAssets"] = retrieve_phrase_assets(
+                    phrase_selection=section_payload.get("phraseSelection") or {},
+                    section_type=st,
+                    style_group=style_group,
+                    timekeeper=str(section_payload.get("orchestration", {}).get("timekeeper") or "hats"),
+                    bars=int(bars),
+                    energy=float(energy),
+                    groove_catalog=None,
+                )
+            except Exception:
+                pass
+
+        roadmap_sections.append(section_payload)
 
     roadmap = {
         "version": API_VERSION,
@@ -1058,6 +2132,667 @@ def song_roadmap(req: SongRoadmapRequest):
             "backend": ACTIVE_BACKEND,
             "sections": len(roadmap_sections),
         },
+    )
+
+
+@app.post("/api/generate-drums")
+@app.post("/v1/generate-drums")
+async def generate_drums_default_route(request: Request):
+    raw = await request.json()
+    normalized = None
+    if callable(normalize_generate_drums_payload):
+        normalized = normalize_generate_drums_payload(raw or {})
+    if not isinstance(normalized, dict):
+        normalized = {
+            "cfg": dict(raw or {}),
+            "songmap_summary": {},
+            "drummer_profile": {},
+        }
+
+    req = PerformanceSpecRequest(**normalized)
+    sentient_requested = False
+    if callable(has_sentient_profile):
+        try:
+            sentient_requested = bool(has_sentient_profile(raw or {}) or has_sentient_profile(normalized))
+        except Exception:
+            sentient_requested = False
+
+    if sentient_requested:
+        routed = render_sentient_take(req)
+        if isinstance(routed, dict):
+            payload = dict(routed)
+        else:
+            payload = routed.model_dump() if hasattr(routed, "model_dump") else routed.dict()
+        metadata = dict(payload.get("metadata") or {})
+        metadata.update({
+            "default_route": "/api/generate-drums",
+            "preferred_endpoint": "/v1/render_sentient_take",
+            "sentient_routed": True,
+        })
+        payload["metadata"] = metadata
+        # Ensure MIDI base64 for frontend importer
+        try:
+            _ensure_midi_base64_on_payload(payload, req.cfg or {})
+        except Exception:
+            pass
+        return payload
+
+    perf_resp = performance_spec(req)
+    payload = {
+        "ok": bool(perf_resp.ok),
+        "spec": dict(perf_resp.spec or {}),
+        "metadata": dict(perf_resp.metadata or {}),
+    }
+
+    bundle = None
+    if callable(build_sentient_take_bundle):
+        try:
+            bundle = build_sentient_take_bundle(spec=payload["spec"], cfg=req.cfg or {})
+        except Exception as exc:  # pragma: no cover
+            bundle = {
+                "available": False,
+                "source": "error",
+                "reason": str(exc),
+                "drum_track": None,
+                "midi_notes": [],
+                "plugin_render": None,
+            }
+
+    if isinstance(bundle, dict):
+        if isinstance(bundle.get("drum_track"), dict):
+            payload["drum_track"] = bundle.get("drum_track")
+        if isinstance(bundle.get("midi_notes"), list):
+            payload["midi_notes"] = bundle.get("midi_notes")
+        if isinstance(bundle.get("plugin_render"), dict):
+            payload["plugin_render"] = bundle.get("plugin_render")
+
+    payload["metadata"].update({
+        "default_route": "/api/generate-drums",
+        "preferred_endpoint": "/v1/performance_spec",
+        "sentient_routed": False,
+    })
+    # Ensure MIDI base64 is available in response
+    try:
+        _ensure_midi_base64_on_payload(payload, req.cfg or {})
+    except Exception:
+        pass
+    return payload
+
+
+# ------------------------------------------------------------
+# UI compatibility routes
+# ------------------------------------------------------------
+
+@app.get("/api/drummers")
+def api_list_drummers():
+    by_id: Dict[str, Dict[str, Any]] = {}
+    out: List[Dict[str, Any]] = []
+
+    # Prefer metadata from admin DB when available
+    for row in _list_db_drummers():
+        sid = str((row or {}).get("id") or "").strip()
+        if not sid:
+            continue
+        d = {
+            "id": sid,
+            "display_name": str(row.get("display_name") or _title_from_slug(sid)),
+            "style": row.get("style"),
+            "genre_tags": list(row.get("genre_tags") or []),
+            "icon": "🥁",
+        }
+        # Include profileType when available for frontend normalization
+        if row.get("profileType"):
+            d["profileType"] = row.get("profileType")
+        by_id[sid] = d
+        out.append(d)
+
+    # Add any packaged profiles that aren't in the DB list
+    for slug in _scan_profile_slugs():
+        sid = str(slug or "").strip()
+        if not sid or sid in by_id:
+            continue
+        out.append({
+            "id": sid,
+            "display_name": _title_from_slug(sid),
+            "style": None,
+            "genre_tags": [],
+            "icon": "🥁",
+        })
+
+    # Ensure a deterministic order
+    out.sort(key=lambda d: str(d.get("display_name") or d.get("id") or "").lower())
+
+    return {"ok": True, "drummers": out, "count": len(out)}
+
+
+@app.get("/api/drummer-presets")
+def api_list_drummer_presets(profileType: Optional[str] = None):
+    # Presets are optional; return an empty list to satisfy the UI without erroring.
+    return {"ok": True, "items": []}
+
+
+@app.get("/api/styles")
+def api_list_styles():
+    items = _list_styles()
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+@app.get("/api/drummer-styles")
+def api_list_drummer_styles(admin: Optional[bool] = None):
+    items = _list_styles(include_admin=bool(admin) if admin is not None else False)
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+@app.get("/api/grooves/style-groups")
+def api_grooves_style_groups(sources: Optional[str] = None, limit: int = 200, admin: Optional[bool] = None):
+    want = {s.strip().lower() for s in str(sources or "").split(",") if s.strip()}
+    if not want:
+        want = {"dtk_standard"}  # default legacy bucket
+
+    items: List[str] = []
+    seen: Set[str] = set()
+
+    # DTK/Admin DB categories
+    if "dtk_standard" in want or "dtk" in want or "db" in want:
+        for s in _list_styles(include_admin=bool(admin) if admin is not None else False):
+            k = str(s or "").strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                items.append(k)
+
+    # EGMD style groups from groove catalog
+    if "egmd" in want:
+        cat = _get_groove_catalog()
+        try:
+            groups = cat.list_style_groups(sources=["egmd"], limit=max(1, int(limit or 200))) if cat is not None else []
+        except Exception:
+            groups = []
+        if not groups:
+            # Fallback to training JSONL if catalog unavailable or empty
+            try:
+                groups = _egmd_style_groups_from_training(limit=max(1, int(limit or 200)))
+            except Exception:
+                groups = []
+        for g in groups or []:
+            k = str(g or "").strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                items.append(k)
+
+    if isinstance(limit, int) and limit > 0:
+        items = items[:limit]
+    return {"ok": True, "items": items}
+
+
+@app.get("/api/admin/drummer-categories")
+def api_admin_drummer_categories(adminOnly: Optional[bool] = None):
+    p = _resolve_admin_db_path_for_listing()
+    items: List[Dict[str, Any]] = []
+    if not p:
+        return {"ok": True, "items": items}
+    try:
+        conn = sqlite3.connect(str(p))
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {str(r[0]) for r in cur.fetchall() or []}
+
+        if "drummer_category_mappings" not in tables:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return {"ok": True, "items": []}
+
+        # Determine if admin flag exists on mappings
+        admin_flag_exists = False
+        try:
+            cur.execute("PRAGMA table_info(drummer_category_mappings)")
+            cols = [str(c[1]).strip().lower() for c in (cur.fetchall() or [])]
+            admin_flag_exists = "is_admin_only" in cols
+        except Exception:
+            admin_flag_exists = False
+
+        # Load mappings
+        try:
+            if admin_flag_exists:
+                cur.execute(
+                    """
+                    SELECT category_id, COALESCE(display_name, ''), COALESCE(is_admin_only,0)
+                    FROM drummer_category_mappings
+                    ORDER BY lower(COALESCE(display_name, category_id))
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT category_id, COALESCE(display_name, ''), 0 as is_admin_only
+                    FROM drummer_category_mappings
+                    ORDER BY lower(COALESCE(display_name, category_id))
+                    """
+                )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+
+        by_cat: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            cid = str(r[0] or "").strip()
+            dname = str(r[1] or "").strip()
+            is_admin = bool(int(r[2] or 0)) if admin_flag_exists else False
+            if not cid:
+                continue
+            by_cat[cid] = {
+                "category_id": cid,
+                "display_name": dname or cid,
+                "is_admin_only": is_admin,
+                "drummers": [],
+            }
+
+        # Load assignments (optional)
+        if "drummer_category_assignments" in tables:
+            try:
+                cur.execute("SELECT drummer_id, category_id FROM drummer_category_assignments")
+                for a in cur.fetchall() or []:
+                    did = str(a[0] or "").strip()
+                    cid = str(a[1] or "").strip()
+                    if did and cid and cid in by_cat:
+                        arr = by_cat[cid].setdefault("drummers", [])
+                        if did not in arr:
+                            arr.append(did)
+            except Exception:
+                pass
+
+        # Optionally filter only admin-only items
+        only_flag = bool(adminOnly) if adminOnly is not None else False
+        out_items = []
+        for obj in by_cat.values():
+            if only_flag and not bool(obj.get("is_admin_only")):
+                continue
+            out_items.append(obj)
+
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"ok": True, "items": out_items, "count": len(out_items)}
+    except Exception:
+        return {"ok": True, "items": []}
+
+
+@app.get("/api/grooves/search")
+def api_grooves_search(
+    request: Request,
+):
+    # Groove search via GrooveCatalog with optional complexity sorting and EGMD fallback.
+    try:
+        qp = request.query_params
+        q = str(qp.get("q") or "").strip()
+        tags_raw = str(qp.get("tags") or "").strip()
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+        sources_raw = str(qp.get("sources") or "").strip().lower()
+        sources = [s.strip().lower() for s in sources_raw.split(",") if s.strip()] if sources_raw else []
+        style_group = str(qp.get("style_group") or "").strip().lower() or None
+        sort = str(qp.get("sort") or "").strip().lower()
+        try:
+            limit = max(1, int(qp.get("limit") or 24))
+        except Exception:
+            limit = 24
+
+        cat = _get_groove_catalog()
+        items: List[Dict[str, Any]] = []
+        if cat is not None:
+            cards = cat.search(
+                query=q or None,
+                tags=tags or None,
+                sources=sources or None,
+                style_group=style_group,
+                limit=max(limit * 3, 50),
+            )
+            if sort in {"complexity_asc", "complexity_desc"}:
+                rev = sort.endswith("_desc")
+                def _key(c):
+                    v = getattr(c, "complexity_score", None)
+                    return (v is None, float(v) if v is not None else 0.0)
+                cards = sorted(cards, key=_key, reverse=rev)
+            for c in cards[:limit]:
+                d = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+                items.append(d)
+        if (not items) and ("egmd" in sources or not sources):
+            items = _egmd_phrases_from_training(style_group, limit=limit)
+        return {"ok": True, "items": items}
+    except Exception:
+        return {"ok": True, "items": []}
+
+
+@app.get("/api/grooves/{groove_id}")
+def api_grooves_get(groove_id: str):
+    gid = str(groove_id or "").strip()
+    if not gid:
+        raise HTTPException(status_code=400, detail="groove_id required")
+    # No catalog configured in this build; acknowledge route yet not found.
+    raise HTTPException(status_code=404, detail="groove not found")
+
+
+@app.get("/api/grooves/{groove_id}/audition")
+def api_grooves_audition(groove_id: str):
+    # Provide a valid shape so UI doesn't error. No audition items by default.
+    return {"ok": True, "items": []}
+
+
+@app.get("/api/grooves/{groove_id}/audio")
+def api_grooves_audio(groove_id: str):
+    # No audio available by default; return 404 to indicate absence.
+    raise HTTPException(status_code=404, detail="audio not available for groove")
+
+
+# Legacy groove endpoints (compatibility with older frontends)
+@app.post("/api/groove/analyze")
+def api_groove_analyze(payload: Dict[str, Any]):
+    return {"ok": True, "items": []}
+
+
+@app.get("/api/groove/goals")
+def api_groove_goals():
+    return {"ok": True, "items": []}
+
+
+@app.post("/api/groove/apply-patch")
+def api_groove_apply_patch(payload: Dict[str, Any]):
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
+# Health and status
+# ------------------------------------------------------------
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "version": API_VERSION}
+
+
+@app.get("/api/llm/status")
+def api_llm_status():
+    return {
+        "ok": True,
+        "version": API_VERSION,
+        "backend": ACTIVE_BACKEND,
+        "torch_available": TORCH_AVAILABLE,
+        "onnx_available": ONNX_AVAILABLE,
+        "cache_enabled": CACHE_ENABLED,
+    }
+
+
+# ------------------------------------------------------------
+# Plugin MIDI rendering (stub)
+# ------------------------------------------------------------
+
+@app.post("/api/render-plugin-midi")
+def api_render_plugin_midi(payload: Dict[str, Any]):
+    plugin = str((payload or {}).get("plugin") or "jamstix")
+    # Minimal shaped response; actual MIDI rendering is optional in this build.
+    return {
+        "plugin": plugin,
+        "midi_base64": "",
+        "ticks_per_beat": 480,
+    }
+
+
+# ------------------------------------------------------------
+# File upload suite (basic local handling)
+# ------------------------------------------------------------
+
+def _uploads_dir() -> Path:
+    p = _repo_root() / "uploads"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
+
+
+@app.post("/files/upload-url")
+def files_upload_url(key: str):
+    # Return a dummy URL; client will fall back to direct POST on failure.
+    return {"url": "http://127.0.0.1:1/presigned"}
+
+
+@app.post("/files/upload")
+async def files_upload(file: UploadFile = File(...), key: Optional[str] = Form(None)):
+    filename = str(getattr(file, "filename", "upload.bin") or "upload.bin")
+    safe_name = filename.replace("\\", "/").split("/")[-1]
+    rel_key = str(key or f"uploads/{safe_name}")
+    if not rel_key.lower().startswith("uploads/"):
+        rel_key = f"uploads/{rel_key}"
+    out_path = _repo_root() / rel_key
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    data = await file.read()
+    with open(out_path, "wb") as f:
+        f.write(data)
+    return {"ok": True, "key": rel_key, "httpUrl": f"/{rel_key}"}
+
+
+@app.get("/files/waveform")
+def files_waveform(key: str, max_points: Optional[int] = None):
+    # Minimal stub without DSP; client tolerates empty peaks.
+    return {"sr": 0, "peaks": []}
+
+
+@app.get("/files/download-url")
+def files_download_url(key: str):
+    rel = str(key or "").lstrip("/")
+    if not rel.lower().startswith("uploads/"):
+        rel = f"uploads/{rel}"
+    return {"url": f"/{rel}"}
+
+
+# Legacy upload endpoints used by some flows
+@app.post("/api/upload")
+async def api_upload(file: UploadFile = File(...)):
+    # Delegate to /files/upload for consistency
+    res = await files_upload(file=file)
+    return {"success": bool(res.get("ok")), "file_id": res.get("key"), "message": "Uploaded", "key": res.get("key")}
+
+
+@app.post("/api/upload/init")
+def api_upload_init():
+    # Client will proceed to /api/upload or /files/upload after init.
+    return {"ok": True}
+
+
+@app.post("/api/upload/complete")
+def api_upload_complete():
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
+# EGMD compatibility (phrase/style listings)
+# ------------------------------------------------------------
+
+@app.get("/api/egmd/phrases")
+def api_egmd_phrases(style_group: Optional[str] = None, meter: Optional[str] = None, tempo_bpm: Optional[str] = None, limit: int = 50):
+    cat = _get_groove_catalog()
+    sg = str(style_group or "").strip().lower()
+    try:
+        items: List[Dict[str, Any]] = []
+        cards = []
+        if cat is not None:
+            try:
+                cards = cat.search(
+                    query=None,
+                    tags=None,
+                    sources=["egmd"],
+                    style_group=sg or None,
+                    limit=max(1, int(limit or 50)),
+                )
+            except Exception:
+                cards = []
+        for c in cards or []:
+            d = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+            pid = d.get("phrase_id")
+            if pid is None:
+                # Prefer explicit EGMD phrase id fields if present
+                pid = d.get("egmd_phrase_id") or d.get("phraseId")
+            try:
+                pid_int = int(pid) if pid is not None and str(pid).strip() != "" else None
+            except Exception:
+                pid_int = None
+            items.append(
+                {
+                    "phrase_id": pid_int,
+                    "midi_path": d.get("midi_path"),
+                    "audio_path": d.get("audio_path"),
+                    "style_group": d.get("style_group"),
+                    "title": d.get("title"),
+                    "source": d.get("source"),
+                    "bars": d.get("bars"),
+                    "tempo_bpm": d.get("tempo_bpm"),
+                }
+            )
+        # Fallback to training JSONL when catalog missing/empty
+        if not items:
+            items = _egmd_phrases_from_training(sg or None, limit=max(1, int(limit or 50)))
+        return {"ok": True, "items": items}
+    except Exception:
+        return {"ok": True, "items": []}
+
+
+@app.get("/api/egmd/style-groups")
+def api_egmd_style_groups(limit: int = 200):
+    cat = _get_groove_catalog()
+    try:
+        groups: List[str] = []
+        if cat is not None:
+            try:
+                groups = cat.list_style_groups(sources=["egmd"], limit=max(1, int(limit or 200)))
+            except Exception:
+                groups = []
+        if not groups:
+            groups = _egmd_style_groups_from_training(limit=max(1, int(limit or 200)))
+        return {"ok": True, "items": groups}
+    except Exception:
+        return {"ok": True, "items": []}
+
+
+# Additional groove summary stub
+@app.get("/api/grooves/complexity-summary")
+def api_grooves_complexity_summary(sources: Optional[str] = None, style_group: Optional[str] = None):
+    return {"ok": True, "items": []}
+
+
+# ------------------------------------------------------------
+# Kits API (used by kit selector panes)
+# ------------------------------------------------------------
+
+@app.get("/api/kits")
+def api_list_kits():
+    return {"ok": True, "items": []}
+
+
+@app.get("/api/kits/{kit_id}/manifest")
+def api_get_kit_manifest(kit_id: str):
+    kid = str(kit_id or "").strip()
+    if not kid:
+        raise HTTPException(status_code=400, detail="kit_id required")
+    # Minimal manifest structure
+    return {
+        "ok": True,
+        "kit_id": kid,
+        "version": "1.0",
+        "instruments": [],
+        "map": {},
+    }
+
+
+# ------------------------------------------------------------
+# Audio analysis and MIDI generation compatibility
+# ------------------------------------------------------------
+
+@app.get("/analyze/tempo")
+def api_analyze_tempo(key: str, start: Optional[float] = None, end: Optional[float] = None):
+    # Return a neutral tempo if unknown
+    return {"bpm": 120.0, "tempoCurve": []}
+
+
+@app.post("/analyze/tempo_sections")
+def api_analyze_tempo_sections(payload: Dict[str, Any]):
+    # Return empty per-section results
+    secs = (payload or {}).get("sections") or []
+    results = [
+        {"start": float(s.get("start", 0.0)), "end": float(s.get("end", 0.0)), "tempo": None, "candidates": [], "confidence": 0.0}
+        for s in secs
+        if isinstance(s, dict)
+    ]
+    return {"results": results}
+
+
+@app.post("/align/sections")
+async def api_align_sections(key: str, request: Request):
+    # Echo back sections with no modification
+    try:
+        sections = await request.json()
+        if not isinstance(sections, list):
+            sections = []
+    except Exception:
+        sections = []
+    return {"tempo": None, "sections": sections or []}
+
+
+@app.post("/generate/midi64")
+def api_generate_midi64(payload: Dict[str, Any]):
+    # Return an empty base64 MIDI placeholder
+    return {"base64": ""}
+
+
+@app.post("/generate/midi_sections")
+def api_generate_midi_sections(payload: Dict[str, Any]):
+    return {"filename": "drums.mid", "base64": ""}
+# ------------------------------------------------------------
+# /v1/render_sentient_take endpoint
+# ------------------------------------------------------------
+
+@app.post("/v1/render_sentient_take", response_model=SentientTakeRenderResponse)
+def render_sentient_take(req: PerformanceSpecRequest):
+    perf_resp = performance_spec(req)
+    spec = dict(perf_resp.spec or {})
+    bundle = None
+    if callable(build_sentient_take_bundle):
+        try:
+            bundle = build_sentient_take_bundle(spec=spec, cfg=req.cfg or {})
+        except Exception as exc:  # pragma: no cover - additive resilience
+            bundle = {
+                "available": False,
+                "source": "error",
+                "reason": str(exc),
+                "drum_track": None,
+                "midi_notes": [],
+                "plugin_render": None,
+            }
+    if not isinstance(bundle, dict):
+        bundle = {
+            "available": False,
+            "source": "helper_unavailable",
+            "reason": "render_take_sentient_missing",
+            "drum_track": None,
+            "midi_notes": [],
+            "plugin_render": None,
+        }
+
+    metadata = dict(perf_resp.metadata or {})
+    metadata.update(
+        {
+            "rendered_take_available": bool(bundle.get("available")),
+            "render_source": bundle.get("source"),
+            "plugin_target": (req.cfg or {}).get("pluginTarget") or (req.cfg or {}).get("plugin") or None,
+        }
+    )
+
+    return SentientTakeRenderResponse(
+        ok=True,
+        spec=spec,
+        drum_track=bundle.get("drum_track"),
+        midi_notes=bundle.get("midi_notes") or [],
+        plugin_render=bundle.get("plugin_render"),
+        metadata=metadata,
     )
 
 # ------------------------------------------------------------

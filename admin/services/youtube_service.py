@@ -276,6 +276,31 @@ class YouTubeDownloadThread(QObject):
                 cookies_file = str(os.environ.get('DTK_YTDLP_COOKIES_FILE', '') or '').strip()
                 if cookies_file:
                     ydl_opts['cookiefile'] = cookies_file
+
+                deno_dir = str(os.environ.get('DTK_YTDLP_DENO_DIR', '') or '').strip()
+                if deno_dir and os.path.isdir(deno_dir):
+                    try:
+                        current_path = os.environ.get('PATH', '')
+                        if deno_dir not in current_path.split(os.pathsep):
+                            os.environ['PATH'] = deno_dir + os.pathsep + current_path
+                    except Exception:
+                        pass
+
+                js_runtimes = str(os.environ.get('DTK_YTDLP_JS_RUNTIMES', '') or '').strip()
+                if js_runtimes:
+                    # Example values: "deno", "node", "bun", "quickjs"
+                    runtimes = []
+                    for part in js_runtimes.replace(';', ',').split(','):
+                        p = part.strip()
+                        if not p:
+                            continue
+                        runtimes.append(p)
+                    ydl_opts['js_runtimes'] = {rt: {} for rt in runtimes}
+
+                remote_components = str(os.environ.get('DTK_YTDLP_REMOTE_COMPONENTS', '') or '').strip()
+                if remote_components:
+                    # Example values: "ejs:npm" or "ejs:github"
+                    ydl_opts['remote_components'] = remote_components
                 
                 # Download the audio
                 print("Starting yt-dlp download...")
@@ -298,6 +323,12 @@ class YouTubeDownloadThread(QObject):
                     msg = str(first_e)
                     lower_msg = msg.lower()
                     is_cookie_copy_err = ('cookie database' in lower_msg and 'could not copy' in lower_msg)
+                    is_dpapi_cookie_err = (
+                        'failed to decrypt with dpapi' in lower_msg
+                        or ('dpapi' in lower_msg and 'decrypt' in lower_msg)
+                        or ('cookieloaderror' in lower_msg)
+                        or ('failed to load cookies' in lower_msg)
+                    )
                     is_unavailable = (
                         'video unavailable' in lower_msg
                         or 'account associated with this video has been terminated' in lower_msg
@@ -306,6 +337,20 @@ class YouTubeDownloadThread(QObject):
                         or 'uploader has not made this video available' in lower_msg
                     )
 
+                    if is_dpapi_cookie_err and 'cookiesfrombrowser' in ydl_opts:
+                        try:
+                            self.error_occurred.emit(
+                                "Browser cookies could not be decrypted on this machine (DPAPI). "
+                                "Please use DTK_YTDLP_COOKIES_FILE (cookies.txt export) instead of DTK_YTDLP_COOKIES_FROM_BROWSER. "
+                                "Retrying once without browser cookies..."
+                            )
+                        except Exception:
+                            pass
+                        print("DPAPI cookie decrypt failed; retrying without cookies-from-browser...")
+                        retry_opts = dict(ydl_opts)
+                        retry_opts.pop('cookiesfrombrowser', None)
+                        with yt_dlp.YoutubeDL(retry_opts) as ydl:
+                            info = ydl.extract_info(url, download=True)
                     if is_cookie_copy_err:
                         # Browser cookie DBs can be locked; retry with Edge, then try without browser cookies.
                         try:
