@@ -1,4 +1,4 @@
-"""
+﻿"""
 Central Database Service
 =======================
 Provides centralized database access for DrumBeats and other database operations.
@@ -14,12 +14,58 @@ import statistics
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from .calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, Signal
+try:  # pragma: no cover - optional Qt dependency
+    from PySide6.QtCore import QObject, Signal
+except Exception:  # pragma: no cover - headless fallback for backend usage
+    class QObject:  # type: ignore[too-few-public-methods]
+        """Minimal stub to satisfy CentralDatabaseService inheritance."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+
+    class _HeadlessSignal:
+        __slots__ = ("_subscribers",)
+
+        def __init__(self) -> None:
+            self._subscribers = []
+
+        def connect(self, callback):
+            if callable(callback):
+                self._subscribers.append(callback)
+
+        def emit(self, *args, **kwargs):
+            for callback in list(self._subscribers):
+                try:
+                    callback(*args, **kwargs)
+                except Exception:
+                    continue
+
+
+    class Signal:  # type: ignore[too-few-public-methods]
+        """Descriptor-compatible stand-in for Qt signals."""
+
+        def __init__(self, *args, **kwargs):  # noqa: D401 - match Qt signature
+            self._attr_name = None
+
+        def __set_name__(self, owner, name):
+            self._attr_name = f"__headless_signal_{name}"
+
+        def __get__(self, instance, owner):
+            if instance is None:
+                return self
+            attr_name = self._attr_name or "__headless_signal"
+            signal = getattr(instance, attr_name, None)
+            if signal is None:
+                signal = _HeadlessSignal()
+                setattr(instance, attr_name, signal)
+            return signal
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +101,109 @@ class CalibrationFeedback:
     submitted_at: datetime
 
 
-class CentralDatabaseService(QObject):
+@dataclass
+class RunVersion:
+    run_id: str
+    generator_version: str
+    feature_version: str
+    rollup_version: str
+    sample_pack_version: str
+    seed: int
+    commit_hash: Optional[str]
+    created_at: datetime
+
+
+@dataclass
+class AudioArtifact:
+    artifact_id: str
+    run_id: Optional[str]
+    artifact_type: str
+    storage_uri: str
+    duration_sec: Optional[float]
+    loudness_lufs: Optional[float]
+    sample_pack_version: Optional[str]
+    render_recipe: Dict[str, Any]
+    created_at: datetime
+
+
+@dataclass
+class EvaluationSession:
+    session_id: str
+    reviewer_id: str
+    target_drummer_slug: str
+    assigned_at: Optional[datetime]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    app_version: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+
+
+@dataclass
+class EvaluationItem:
+    item_id: str
+    session_id: str
+    base_groove_id: str
+    target_drummer_slug: str
+    reference_artifact_id: Optional[str]
+    baseline_run_id: Optional[str]
+    candidate_a_run_id: Optional[str]
+    candidate_b_run_id: Optional[str]
+    ab_mapping: Dict[str, Any]
+    eval_mode: str
+    created_at: datetime
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DrummerBaselineAsset:
+    asset_id: str
+    base_groove_id: str
+    drummer_slug: str
+    drummer_fk: Optional[int]
+    analysis_id: Optional[str]
+    groove_path: Optional[str]
+    audio_path: Optional[str]
+    tempo_bpm: Optional[float]
+    time_signature: Optional[str]
+    bars: Optional[int]
+    duration_sec: Optional[float]
+    source_song_name: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    groove: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PairwiseJudgment:
+    judgment_id: str
+    item_id: str
+    preferred_candidate: Optional[str]
+    closer_to_target: Optional[str]
+    better_feel: Optional[str]
+    more_musical: Optional[str]
+    confidence: Optional[int]
+    created_at: datetime
+
+
+@dataclass
+class AttributeRating:
+    rating_id: str
+    item_id: str
+    candidate_label: str
+    stylistic_authenticity: Optional[float]
+    groove_feel: Optional[float]
+    dynamics: Optional[float]
+    phrasing: Optional[float]
+    kit_balance: Optional[float]
+    fill_behavior: Optional[float]
+    human_realism: Optional[float]
+    overall_usefulness: Optional[float]
+    created_at: datetime
+
+
+class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
     """
     Central database service for DrumTracKAI.
     Provides thread-safe database access and CRUD operations.
@@ -126,6 +274,42 @@ class CentralDatabaseService(QObject):
             return default
 
     @staticmethod
+    def _row_to_dict(row: Any) -> Dict[str, Any]:
+        if row is None:
+            return {}
+        try:
+            keys = row.keys()  # type: ignore[attr-defined]
+        except Exception:
+            keys = None
+        if keys:
+            try:
+                return {key: row[key] for key in keys}
+            except Exception:
+                pass
+        try:
+            return dict(row)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _safe_int(value: Any) -> Optional[int]:
+        try:
+            if value is None or value is _MISSING:
+                return None
+            return int(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        try:
+            if value is None or value is _MISSING:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    @staticmethod
     def _json_dumps(value: Any) -> Optional[str]:
         if value is None:
             return None
@@ -133,6 +317,89 @@ class CentralDatabaseService(QObject):
             return json.dumps(value, default=str)
         except Exception:
             return None
+
+    def _assimilation_score_base(
+        self,
+        *,
+        songs: int,
+        artifacts: int,
+        stems: int,
+        hit_events: int,
+        fills: int,
+        techniques: int,
+    ) -> float:
+        """Baseline assimilation richness score capped at 100."""
+        try:
+            target_songs = 20
+            song_score = 0.0
+            if target_songs > 0:
+                song_score = min(50.0, (float(songs) / float(target_songs)) * 50.0)
+
+            richness = 0.0
+            if artifacts > 0:
+                richness += 10.0
+            if stems >= 6:
+                richness += 15.0
+            elif stems > 0:
+                richness += 7.0
+            if hit_events > 0:
+                richness += 25.0
+            if fills > 0:
+                richness += 10.0
+            if techniques > 0:
+                richness += 10.0
+
+            richness = min(50.0, richness)
+            total = song_score + richness
+            if total < 0.0:
+                return 0.0
+            if total > 100.0:
+                return 100.0
+            return float(total)
+        except Exception:
+            return 0.0
+
+    def _compute_assimilation_score(
+        self,
+        *,
+        songs: int,
+        artifacts: int,
+        stems: int,
+        hit_events: int,
+        fills: int,
+        techniques: int,
+        pocket_tightness: Optional[float],
+        humanness: Optional[float],
+    ) -> int:
+        """Combine assimilation richness with qualitative bonuses (0-100)."""
+        try:
+            base = self._assimilation_score_base(
+                songs=songs,
+                artifacts=artifacts,
+                stems=stems,
+                hit_events=hit_events,
+                fills=fills,
+                techniques=techniques,
+            )
+
+            bonus = 0.0
+            if pocket_tightness is not None:
+                bonus += 5.0
+                try:
+                    bonus += max(0.0, min(1.0, float(pocket_tightness))) * 5.0
+                except Exception:
+                    pass
+            if humanness is not None:
+                bonus += 5.0
+                try:
+                    bonus += max(0.0, min(1.0, float(humanness))) * 5.0
+                except Exception:
+                    pass
+
+            total = max(0.0, min(100.0, float(base) + bonus))
+            return int(round(total))
+        except Exception:
+            return 0
 
     def _ensure_phase32_42_columns(self) -> None:
         """Additive migration: add Phase 32-42 derived-feature columns if missing."""
@@ -875,6 +1142,53 @@ class CentralDatabaseService(QObject):
             self.database_error.emit(msg)
             return out
 
+    def _compute_drummer_confidence(
+        self,
+        *,
+        songs: int,
+        hits: int,
+        bars: int,
+        section_diversity: int,
+        fills: int,
+        cymbal_evidence_hits: int,
+    ) -> Dict[str, Any]:
+        minimums = {
+            "songs": 3,
+            "hits": 2000,
+            "bars": 120,
+            "section_diversity": 3,
+            "fills": 20,
+            "cymbal_evidence_hits": 200,
+        }
+        observed = {
+            "songs": int(songs or 0),
+            "hits": int(hits or 0),
+            "bars": int(bars or 0),
+            "section_diversity": int(section_diversity or 0),
+            "fills": int(fills or 0),
+            "cymbal_evidence_hits": int(cymbal_evidence_hits or 0),
+        }
+
+        ratios: Dict[str, float] = {}
+        for key, minimum in minimums.items():
+            val = float(observed.get(key) or 0)
+            den = float(max(1, minimum))
+            ratios[key] = max(0.0, min(1.0, val / den))
+
+        score = float(sum(ratios.values()) / float(len(ratios)))
+        missing = [key for key, ratio in ratios.items() if ratio < 1.0]
+        return {
+            "score": score,
+            "minimums": minimums,
+            "observed": observed,
+            "coverage": ratios,
+            "missing_signals": missing,
+            "status": "ready" if score >= 0.8 else ("developing" if score >= 0.5 else "limited"),
+            "message": "Limited source material - personality transfer may be approximate."
+            if score < 0.5
+            else "",
+        }
+
     def compute_drummer_profile_rollup(self, *, drummer_fk: int) -> Dict[str, Any]:
         rollup: Dict[str, Any] = {
             "drummer_id": int(drummer_fk),
@@ -891,6 +1205,7 @@ class CentralDatabaseService(QObject):
             "humanness": None,
             "velocity_mean": None,
             "velocity_std": None,
+            "confidence": {},
         }
         conn = self._get_connection()
         cur = conn.cursor()
@@ -1034,7 +1349,1093 @@ class CentralDatabaseService(QObject):
         if total_min > 0:
             rollup["fills_per_min"] = float(rollup["fills"]) / total_min
 
+        cur.execute(
+            "SELECT COUNT(DISTINCT bar_index) FROM drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ?)",
+            (drummer_fk,),
+        )
+        bars = int((cur.fetchone() or [0])[0] or 0)
+
+        cur.execute(
+            "SELECT COUNT(DISTINCT section_label) FROM drummer_phrase_features WHERE drummer_id = ? AND COALESCE(section_label, '') <> ''",
+            (drummer_fk,),
+        )
+        section_diversity = int((cur.fetchone() or [0])[0] or 0)
+
+        cur.execute(
+            "SELECT COUNT(1) FROM drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ?) AND instrument IN ('hihat', 'ride', 'crash', 'hh')",
+            (drummer_fk,),
+        )
+        cymbal_evidence_hits = int((cur.fetchone() or [0])[0] or 0)
+
+        rollup["confidence"] = self._compute_drummer_confidence(
+            songs=int(rollup.get("songs") or 0),
+            hits=int(rollup.get("hits") or 0),
+            bars=bars,
+            section_diversity=section_diversity,
+            fills=int(rollup.get("fills") or 0),
+            cymbal_evidence_hits=cymbal_evidence_hits,
+        )
+
         return rollup
+
+    def _upsert_profile_row(
+        self,
+        *,
+        table: str,
+        profile_id: str,
+        drummer_fk: int,
+        payload: Dict[str, Any],
+    ) -> bool:
+        try:
+            table_name = str(table or "").strip()
+            if not table_name:
+                return False
+            columns = [
+                col
+                for col in self._table_columns(table_name)
+                if col not in {"id", "drummer_id", "created_at"}
+            ]
+            if not columns:
+                return False
+
+            now = datetime.utcnow().isoformat()
+            values: List[Any] = []
+            for col in columns:
+                val = payload.get(col)
+                if isinstance(val, (dict, list)):
+                    val = self._json_dumps(val)
+                values.append(val)
+
+            conn = self._get_connection()
+            cur = conn.cursor()
+            placeholders = ", ".join(["?"] * (3 + len(columns)))
+            col_list = ", ".join(["id", "drummer_id"] + columns + ["created_at"])
+            updates = ", ".join([f"{col}=excluded.{col}" for col in columns])
+            sql = f"""
+                INSERT INTO {table_name} ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(id) DO UPDATE SET
+                    drummer_id=excluded.drummer_id,
+                    {updates}
+            """
+
+            cur.execute(sql, [profile_id, drummer_fk, *values, now])
+            conn.commit()
+            self.data_changed.emit(table_name, "upsert")
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting profile row into {table}: {e}")
+            self.database_error.emit(f"Error upserting profile row into {table}: {e}")
+            return False
+
+    def upsert_drummer_personality_embedding(
+        self,
+        *,
+        embedding_id: str,
+        drummer_fk: int,
+        model_version: str,
+        embedding_vector: List[float],
+        confidence_score: float,
+        source_song_count: int,
+        source_hit_count: int,
+        timing_weight: float,
+        dynamics_weight: float,
+        fill_weight: float,
+        cymbal_weight: float,
+        coordination_weight: float,
+        phrase_weight: float,
+    ) -> bool:
+        payload = {
+            "model_version": str(model_version or "v1").strip() or "v1",
+            "embedding_dim": int(len(embedding_vector or [])),
+            "embedding_vector_json": self._json_dumps(list(embedding_vector or [])) or "[]",
+            "source_song_count": int(source_song_count or 0),
+            "source_hit_count": int(source_hit_count or 0),
+            "confidence_score": float(confidence_score or 0.0),
+            "timing_weight": float(timing_weight or 0.0),
+            "dynamics_weight": float(dynamics_weight or 0.0),
+            "fill_weight": float(fill_weight or 0.0),
+            "cymbal_weight": float(cymbal_weight or 0.0),
+            "coordination_weight": float(coordination_weight or 0.0),
+            "phrase_weight": float(phrase_weight or 0.0),
+        }
+        return self._upsert_profile_row(
+            table="drummer_personality_embeddings",
+            profile_id=str(embedding_id or str(uuid.uuid4())),
+            drummer_fk=int(drummer_fk),
+            payload=payload,
+        )
+
+    def log_generated_transform_audit(
+        self,
+        *,
+        audit_id: str,
+        target_drummer_fk: Optional[int],
+        generation_run_id: Optional[str],
+        personality_embedding_id: Optional[str],
+        source_similarity_score: Optional[float],
+        target_similarity_score: Optional[float],
+        human_feasibility_score: Optional[float],
+        groove_preservation_score: Optional[float],
+        before_features: Optional[Dict[str, Any]] = None,
+        after_features: Optional[Dict[str, Any]] = None,
+        transform_delta: Optional[Dict[str, Any]] = None,
+        source_track_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                INSERT INTO generated_drummer_transform_audits (
+                    id, source_track_id, target_drummer_id, generation_run_id,
+                    personality_embedding_id, source_similarity_score, target_similarity_score,
+                    human_feasibility_score, groove_preservation_score,
+                    before_features_json, after_features_json, transform_delta_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source_track_id=excluded.source_track_id,
+                    target_drummer_id=excluded.target_drummer_id,
+                    generation_run_id=excluded.generation_run_id,
+                    personality_embedding_id=excluded.personality_embedding_id,
+                    source_similarity_score=excluded.source_similarity_score,
+                    target_similarity_score=excluded.target_similarity_score,
+                    human_feasibility_score=excluded.human_feasibility_score,
+                    groove_preservation_score=excluded.groove_preservation_score,
+                    before_features_json=excluded.before_features_json,
+                    after_features_json=excluded.after_features_json,
+                    transform_delta_json=excluded.transform_delta_json
+                """,
+                (
+                    str(audit_id or str(uuid.uuid4())),
+                    source_track_id,
+                    int(target_drummer_fk) if target_drummer_fk is not None else None,
+                    generation_run_id,
+                    personality_embedding_id,
+                    self._safe_float(source_similarity_score),
+                    self._safe_float(target_similarity_score),
+                    self._safe_float(human_feasibility_score),
+                    self._safe_float(groove_preservation_score),
+                    self._json_dumps(before_features or {}),
+                    self._json_dumps(after_features or {}),
+                    self._json_dumps(transform_delta or {}),
+                    now,
+                ),
+            )
+            conn.commit()
+            self.data_changed.emit("generated_drummer_transform_audits", "upsert")
+            return True
+        except Exception as e:
+            logger.error(f"Error logging transform audit: {e}")
+            self.database_error.emit(f"Error logging transform audit: {e}")
+            return False
+
+    def upsert_app_user_role(self, *, user_id: str, role: str) -> bool:
+        try:
+            user_id = (user_id or "").strip()
+            role = (role or "").strip()
+            if not user_id or not role:
+                return False
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                INSERT INTO app_user_roles (user_id, role, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET role=excluded.role
+                """,
+                (user_id, role, now),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting app_user_role: {e}")
+            self.database_error.emit(f"Error upserting app_user_role: {e}")
+            return False
+
+    def map_user_to_drummer(self, *, user_id: str, drummer_id: str) -> bool:
+        try:
+            user_id = (user_id or "").strip()
+            drummer_id = (drummer_id or "").strip()
+            if not user_id or not drummer_id:
+                return False
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                INSERT INTO user_drummer_map (user_id, drummer_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, drummer_id) DO NOTHING
+                """,
+                (user_id, drummer_id, now),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error mapping user to drummer: {e}")
+            self.database_error.emit(f"Error mapping user to drummer: {e}")
+            return False
+
+    def user_has_access_to_drummer(self, *, user_id: str, drummer_id: str) -> bool:
+        try:
+            user_id = (user_id or "").strip()
+            drummer_id = (drummer_id or "").strip()
+            if not user_id or not drummer_id:
+                return False
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT 1 FROM user_drummer_map WHERE user_id = ? AND drummer_id = ? LIMIT 1
+                """,
+                (user_id, drummer_id),
+            )
+            row = cur.fetchone()
+            if row:
+                return True
+            # admin override
+            cur.execute(
+                """
+                SELECT 1 FROM app_user_roles WHERE user_id = ? AND role = 'qa_admin' LIMIT 1
+                """,
+                (user_id,),
+            )
+            return bool(cur.fetchone())
+        except Exception as e:
+            logger.error(f"Error checking access: {e}")
+            self.database_error.emit(f"Error checking access: {e}")
+            return False
+
+    def log_calibration_audit(
+        self,
+        *,
+        actor_user_id: Optional[str],
+        drummer_id: Optional[str],
+        run_id: Optional[str],
+        action: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        try:
+            audit_id = str(uuid.uuid4())
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                INSERT INTO calibration_audit_log (
+                    id, actor_user_id, drummer_id, run_id, action, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_id,
+                    (actor_user_id or None),
+                    (drummer_id or None),
+                    (run_id or None),
+                    (action or "").strip(),
+                    self._json_dumps(payload or {}),
+                    now,
+                ),
+            )
+            conn.commit()
+            return audit_id
+        except Exception as e:
+            logger.error(f"Error logging calibration audit: {e}")
+            self.database_error.emit(f"Error logging calibration audit: {e}")
+            return None
+
+    def create_analysis_job(self, *, drummer_id: str, input_json: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        try:
+            job_id = str(uuid.uuid4())
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                INSERT INTO analysis_jobs (
+                    id, drummer_id, status, input_json, result_json, error_text, created_at, updated_at
+                ) VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?)
+                """,
+                (job_id, (drummer_id or "").strip(), self._json_dumps(input_json or {}), now, now),
+            )
+            conn.commit()
+            return job_id
+        except Exception as e:
+            logger.error(f"Error creating analysis job: {e}")
+            self.database_error.emit(f"Error creating analysis job: {e}")
+            return None
+
+    def get_analysis_job(self, *, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            job_id = (job_id or "").strip()
+            if not job_id:
+                return None
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, drummer_id, status, input_json, result_json, error_text, created_at, updated_at
+                FROM analysis_jobs WHERE id = ? LIMIT 1
+                """,
+                (job_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "drummer_id": row["drummer_id"],
+                "status": row["status"],
+                "input_json": row["input_json"],
+                "result_json": row["result_json"],
+                "error_text": row["error_text"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        except Exception as e:
+            logger.error(f"Error fetching analysis job: {e}")
+            self.database_error.emit(f"Error fetching analysis job: {e}")
+            return None
+
+    def update_analysis_job_status(
+        self,
+        *,
+        job_id: str,
+        status: str,
+        result_json: Optional[Dict[str, Any]] = None,
+        error_text: Optional[str] = None,
+    ) -> bool:
+        try:
+            job_id = (job_id or "").strip()
+            status = (status or "").strip()
+            if not job_id or not status:
+                return False
+            conn = self._get_connection()
+            cur = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cur.execute(
+                """
+                UPDATE analysis_jobs
+                SET status = ?, result_json = COALESCE(?, result_json), error_text = COALESCE(?, error_text), updated_at = ?
+                WHERE id = ?
+                """,
+                (status, self._json_dumps(result_json or None), (error_text or None), now, job_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating analysis job: {e}")
+            self.database_error.emit(f"Error updating analysis job: {e}")
+            return False
+
+    @staticmethod
+    def _tokenize_profile_id(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return "unknown"
+        out_chars: List[str] = []
+        for ch in text:
+            if ch.isalnum():
+                out_chars.append(ch)
+            else:
+                out_chars.append("_")
+        token = "".join(out_chars)
+        while "__" in token:
+            token = token.replace("__", "_")
+        return token.strip("_") or "unknown"
+
+    @staticmethod
+    def _basic_stats(values: List[float]) -> Dict[str, float]:
+        if not values:
+            return {"mean": 0.0, "std": 0.0, "skew": 0.0}
+        mean_val = float(sum(values) / float(len(values)))
+        if len(values) <= 1:
+            return {"mean": mean_val, "std": 0.0, "skew": 0.0}
+        var = float(sum((v - mean_val) ** 2 for v in values) / float(len(values)))
+        std = float(var ** 0.5)
+        if std <= 1e-9:
+            skew = 0.0
+        else:
+            skew = float(sum(((v - mean_val) / std) ** 3 for v in values) / float(len(values)))
+        return {"mean": mean_val, "std": std, "skew": skew}
+
+    @staticmethod
+    def _histogram(values: List[float], *, bins: int = 12) -> Dict[str, Any]:
+        if not values:
+            return {"bins": [], "counts": []}
+        n_bins = max(3, int(bins))
+        v_min = float(min(values))
+        v_max = float(max(values))
+        if abs(v_max - v_min) < 1e-9:
+            return {"bins": [v_min, v_max], "counts": [len(values)]}
+        width = (v_max - v_min) / float(n_bins)
+        edges = [v_min + (width * i) for i in range(n_bins + 1)]
+        counts = [0 for _ in range(n_bins)]
+        for v in values:
+            idx = int((float(v) - v_min) / width)
+            if idx < 0:
+                idx = 0
+            if idx >= n_bins:
+                idx = n_bins - 1
+            counts[idx] += 1
+        return {"bins": edges, "counts": counts}
+
+    def run_phase7_assimilation_profiles_for_drummer(self, *, drummer_slug: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "drummer_slug": drummer_slug,
+            "saved": False,
+            "drummer_fk": None,
+            "profiles": {},
+            "embedding": {},
+        }
+        try:
+            drummer_slug = (drummer_slug or "").strip()
+            if not drummer_slug:
+                return out
+
+            conn = self._get_connection()
+            cur = conn.cursor()
+            drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+            if drummer_fk is None:
+                self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
+                conn.commit()
+                drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+            if drummer_fk is None:
+                return out
+            drummer_fk = int(drummer_fk)
+            out["drummer_fk"] = drummer_fk
+
+            rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
+            conf = rollup.get("confidence") if isinstance(rollup.get("confidence"), dict) else {}
+            confidence_score = float(conf.get("score") or 0.0)
+
+            section_labels = ["intro", "verse", "prechorus", "chorus", "bridge", "solo", "outro"]
+
+            cur.execute(
+                """
+                SELECT analysis_id, song_id, tempo_bpm, time_signature, duration_sec
+                FROM song_performance_analysis
+                WHERE drummer_id = ?
+                ORDER BY created_at DESC
+                """,
+                (drummer_fk,),
+            )
+            analyses = cur.fetchall() or []
+            analysis_ids = [str(r["analysis_id"]).strip() for r in analyses if r["analysis_id"]]
+
+            def _ensure_song_id(analysis_id: str, current_song_id: Any) -> Optional[str]:
+                sid = str(current_song_id or "").strip()
+                if sid:
+                    return sid
+                synthetic_id = f"synthetic_{analysis_id}"
+                now = datetime.utcnow().isoformat()
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO songs (id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            title=excluded.title,
+                            duration=COALESCE(songs.duration, excluded.duration),
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            synthetic_id,
+                            f"Assimilation Source {analysis_id[:8]}",
+                            None,
+                            None,
+                            None,
+                            "unknown",
+                            None,
+                            None,
+                            drummer_fk,
+                            now,
+                            now,
+                        ),
+                    )
+                    cur.execute(
+                        "UPDATE song_performance_analysis SET song_id = ? WHERE analysis_id = ?",
+                        (synthetic_id, analysis_id),
+                    )
+                    conn.commit()
+                    return synthetic_id
+                except Exception:
+                    return None
+
+            for table in (
+                "drummer_phrase_features",
+                "drummer_microtiming_profiles",
+                "drummer_dynamic_profiles",
+                "drummer_cymbal_language",
+                "drummer_limb_coordination",
+                "drummer_fill_behavior",
+            ):
+                try:
+                    cur.execute(f"DELETE FROM {table} WHERE drummer_id = ?", (drummer_fk,))
+                except Exception:
+                    continue
+            conn.commit()
+
+            hit_rows: List[Dict[str, Any]] = []
+            fill_rows: List[Dict[str, Any]] = []
+            if analysis_ids:
+                placeholders = ", ".join(["?"] * len(analysis_ids))
+                cur.execute(
+                    f"""
+                    SELECT analysis_id, instrument, component, onset_time_sec, velocity_est,
+                           timing_offset_ms, bar_index, subdivision, is_ghost, is_accent
+                    FROM drum_hit_events
+                    WHERE analysis_id IN ({placeholders})
+                    ORDER BY analysis_id, onset_time_sec ASC
+                    """,
+                    tuple(analysis_ids),
+                )
+                hit_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
+
+                cur.execute(
+                    f"""
+                    SELECT analysis_id, start_time_sec, end_time_sec, start_bar_index, hit_count, instruments_json
+                    FROM fill_events
+                    WHERE analysis_id IN ({placeholders})
+                    ORDER BY analysis_id, start_time_sec ASC
+                    """,
+                    tuple(analysis_ids),
+                )
+                fill_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
+
+            analysis_hits: Dict[str, List[Dict[str, Any]]] = {}
+            for row in hit_rows:
+                aid = str(row.get("analysis_id") or "").strip()
+                if aid:
+                    analysis_hits.setdefault(aid, []).append(row)
+
+            analysis_fills: Dict[str, List[Dict[str, Any]]] = {}
+            for row in fill_rows:
+                aid = str(row.get("analysis_id") or "").strip()
+                if aid:
+                    analysis_fills.setdefault(aid, []).append(row)
+
+            phrase_saved = 0
+            phrase_status = "saved"
+            for analysis_row in analyses:
+                analysis_id = str(analysis_row["analysis_id"] or "").strip()
+                if not analysis_id:
+                    continue
+                song_id = _ensure_song_id(analysis_id, analysis_row["song_id"])
+                if not song_id:
+                    phrase_status = "save_failed"
+                    continue
+                hits = analysis_hits.get(analysis_id, [])
+                if not hits:
+                    continue
+                bars_present = sorted({int(h.get("bar_index") or 0) for h in hits if h.get("bar_index") is not None})
+                if not bars_present:
+                    bars_present = [0]
+                max_bar = max(bars_present)
+                phrase_len = 4
+                total_phrases = max(1, (max_bar // phrase_len) + 1)
+                for phrase_idx in range(total_phrases):
+                    start_bar = phrase_idx * phrase_len
+                    end_bar = start_bar + phrase_len
+                    phrase_events = [h for h in hits if start_bar <= int(h.get("bar_index") or 0) < end_bar]
+                    if not phrase_events:
+                        continue
+
+                    density_curve: List[float] = []
+                    accent_curve: List[float] = []
+                    signatures: List[str] = []
+                    for bar in range(start_bar, end_bar):
+                        bar_events = [h for h in phrase_events if int(h.get("bar_index") or 0) == bar]
+                        density_curve.append(float(len(bar_events)))
+                        bar_vel = [float(h.get("velocity_est")) for h in bar_events if h.get("velocity_est") is not None]
+                        accent_curve.append(float(sum(bar_vel) / len(bar_vel)) if bar_vel else 0.0)
+                        inst_counts: Dict[str, int] = {}
+                        for ev in bar_events:
+                            inst = str(ev.get("instrument") or "unknown")
+                            inst_counts[inst] = int(inst_counts.get(inst) or 0) + 1
+                        signatures.append(self._json_dumps(inst_counts) or "{}")
+
+                    sig_counts: Dict[str, int] = {}
+                    for sig in signatures:
+                        sig_counts[sig] = int(sig_counts.get(sig) or 0) + 1
+                    repetition = float(max(sig_counts.values()) / max(1, len(signatures))) if sig_counts else 0.0
+                    mutation = 1.0 - repetition
+                    energy_start = accent_curve[0] if accent_curve else 0.0
+                    energy_end = accent_curve[-1] if accent_curve else 0.0
+                    energy_slope = float((energy_end - energy_start) / max(1, phrase_len))
+                    section_label = section_labels[phrase_idx % len(section_labels)]
+
+                    payload = {
+                        "analysis_id": analysis_id,
+                        "song_id": song_id,
+                        "section_label": section_label,
+                        "phrase_index": phrase_idx,
+                        "phrase_length_bars": phrase_len,
+                        "bar_position_in_phrase": 0,
+                        "energy_start": energy_start,
+                        "energy_end": energy_end,
+                        "energy_slope": energy_slope,
+                        "pattern_repetition_score": repetition,
+                        "pattern_mutation_rate": mutation,
+                        "density_curve_json": density_curve,
+                        "accent_curve_json": accent_curve,
+                    }
+                    pid = f"phrase_{drummer_fk}_{analysis_id}_{phrase_idx}"
+                    if self._upsert_profile_row(
+                        table="drummer_phrase_features",
+                        profile_id=pid,
+                        drummer_fk=drummer_fk,
+                        payload=payload,
+                    ):
+                        phrase_saved += 1
+
+            fill_windows: Dict[str, List[Tuple[float, float]]] = {}
+            for row in fill_rows:
+                aid = str(row.get("analysis_id") or "").strip()
+                if not aid:
+                    continue
+                try:
+                    st = float(row.get("start_time_sec") or 0.0)
+                    en = float(row.get("end_time_sec") or st)
+                except Exception:
+                    continue
+                fill_windows.setdefault(aid, []).append((st, en))
+
+            micro_groups: Dict[Tuple[str, str, str], List[float]] = {}
+            for row in hit_rows:
+                try:
+                    offset = float(row.get("timing_offset_ms")) if row.get("timing_offset_ms") is not None else None
+                except Exception:
+                    offset = None
+                if offset is None:
+                    continue
+                aid = str(row.get("analysis_id") or "").strip()
+                inst = self._tokenize_profile_id(row.get("instrument") or "unknown")
+                subdiv = self._tokenize_profile_id(row.get("subdivision") or "unknown")
+                ctx = "groove"
+                if bool(row.get("is_ghost")):
+                    ctx = "ghost"
+                elif bool(row.get("is_accent")):
+                    ctx = "accent"
+                else:
+                    try:
+                        t = float(row.get("onset_time_sec") or 0.0)
+                    except Exception:
+                        t = None
+                    if t is not None:
+                        for ws, we in fill_windows.get(aid, []):
+                            if ws <= t <= we:
+                                ctx = "fill"
+                                break
+                micro_groups.setdefault((inst, subdiv, ctx), []).append(offset)
+
+            micro_saved = 0
+            for (inst, subdiv, ctx), values in micro_groups.items():
+                stats = self._basic_stats(values)
+                early = float(sum(1 for v in values if v < 0.0) / max(1, len(values)))
+                late = float(sum(1 for v in values if v > 0.0) / max(1, len(values)))
+                if stats["mean"] > 2.0:
+                    pocket_bias = "behind"
+                elif stats["mean"] < -2.0:
+                    pocket_bias = "ahead"
+                elif abs(stats["mean"]) <= 1.0:
+                    pocket_bias = "centered"
+                else:
+                    pocket_bias = "mixed"
+                payload = {
+                    "instrument": inst,
+                    "subdivision": subdiv,
+                    "mean_offset_ms": stats["mean"],
+                    "std_offset_ms": stats["std"],
+                    "skew_offset_ms": stats["skew"],
+                    "early_hit_probability": early,
+                    "late_hit_probability": late,
+                    "pocket_bias": pocket_bias,
+                    "context_label": ctx,
+                    "histogram_json": self._histogram(values),
+                }
+                pid = f"micro_{drummer_fk}_{inst}_{subdiv}_{ctx}"
+                if self._upsert_profile_row(
+                    table="drummer_microtiming_profiles",
+                    profile_id=pid,
+                    drummer_fk=drummer_fk,
+                    payload=payload,
+                ):
+                    micro_saved += 1
+
+            dynamic_groups: Dict[str, List[float]] = {}
+            dynamic_ghost: Dict[str, int] = {}
+            dynamic_accent: Dict[str, int] = {}
+            dynamic_total: Dict[str, int] = {}
+            accent_grid: Dict[str, Dict[str, int]] = {}
+            for row in hit_rows:
+                inst = self._tokenize_profile_id(row.get("instrument") or "unknown")
+                try:
+                    vel = float(row.get("velocity_est")) if row.get("velocity_est") is not None else None
+                except Exception:
+                    vel = None
+                if vel is not None:
+                    dynamic_groups.setdefault(inst, []).append(vel)
+                dynamic_total[inst] = int(dynamic_total.get(inst) or 0) + 1
+                if bool(row.get("is_ghost")):
+                    dynamic_ghost[inst] = int(dynamic_ghost.get(inst) or 0) + 1
+                if bool(row.get("is_accent")):
+                    dynamic_accent[inst] = int(dynamic_accent.get(inst) or 0) + 1
+                subdiv = self._tokenize_profile_id(row.get("subdivision") or "unknown")
+                bucket = accent_grid.setdefault(inst, {})
+                if bool(row.get("is_accent")):
+                    bucket[subdiv] = int(bucket.get(subdiv) or 0) + 1
+
+            dynamics_saved = 0
+            for inst, velocities in dynamic_groups.items():
+                stats = self._basic_stats(velocities)
+                total_inst = int(dynamic_total.get(inst) or len(velocities) or 1)
+                ghost_prob = float((dynamic_ghost.get(inst) or 0) / max(1, total_inst))
+                accent_prob = float((dynamic_accent.get(inst) or 0) / max(1, total_inst))
+                payload = {
+                    "instrument": inst,
+                    "velocity_mean": stats["mean"],
+                    "velocity_std": stats["std"],
+                    "velocity_skew": stats["skew"],
+                    "ghost_note_probability": ghost_prob,
+                    "accent_probability": accent_prob,
+                    "ghost_to_accent_ratio": float(ghost_prob / max(1e-6, accent_prob)),
+                    "accent_grid_json": accent_grid.get(inst) or {},
+                    "velocity_histogram_json": self._histogram(velocities),
+                    "phrase_dynamic_curve_json": [stats["mean"]],
+                }
+                pid = f"dyn_{drummer_fk}_{inst}"
+                if self._upsert_profile_row(
+                    table="drummer_dynamic_profiles",
+                    profile_id=pid,
+                    drummer_fk=drummer_fk,
+                    payload=payload,
+                ):
+                    dynamics_saved += 1
+
+            cym_total = len(hit_rows)
+            hihat_total = 0
+            hihat_open = 0
+            hihat_pedal = 0
+            hihat_bark = 0
+            ride_total = 0
+            ride_bell = 0
+            crash_total = 0
+            crash_downbeat = 0
+            transition_crash = 0
+            crash_times: List[float] = []
+            section_crash_counts: Dict[str, int] = {}
+            total_minutes = 0.0
+            for row in analyses:
+                try:
+                    dur = float(row["duration_sec"]) if row["duration_sec"] is not None else 0.0
+                except Exception:
+                    dur = 0.0
+                if dur > 0:
+                    total_minutes += dur / 60.0
+
+            for row in hit_rows:
+                inst = str(row.get("instrument") or "").lower()
+                comp = str(row.get("component") or "").lower()
+                subdiv = str(row.get("subdivision") or "").lower()
+                try:
+                    onset = float(row.get("onset_time_sec") or 0.0)
+                except Exception:
+                    onset = 0.0
+                if inst in {"hihat", "hh"}:
+                    hihat_total += 1
+                    if "open" in comp:
+                        hihat_open += 1
+                    if "pedal" in comp or "foot" in comp:
+                        hihat_pedal += 1
+                    if "bark" in comp:
+                        hihat_bark += 1
+                if inst == "ride":
+                    ride_total += 1
+                    if "bell" in comp:
+                        ride_bell += 1
+                if inst == "crash":
+                    crash_total += 1
+                    crash_times.append(onset)
+                    if subdiv in {"0", "1", "downbeat", "quarter"}:
+                        crash_downbeat += 1
+                    aid = str(row.get("analysis_id") or "").strip()
+                    is_transition = False
+                    for ws, we in fill_windows.get(aid, []):
+                        if (ws - 0.25) <= onset <= (we + 0.25):
+                            is_transition = True
+                            break
+                    if is_transition:
+                        transition_crash += 1
+                    section = section_labels[int(row.get("bar_index") or 0) % len(section_labels)]
+                    section_crash_counts[section] = int(section_crash_counts.get(section) or 0) + 1
+
+            decay_spacing_score = 0.0
+            if len(crash_times) > 1:
+                diffs = [max(0.0, crash_times[i + 1] - crash_times[i]) for i in range(len(crash_times) - 1)]
+                if diffs:
+                    avg_spacing = float(sum(diffs) / len(diffs))
+                    decay_spacing_score = max(0.0, min(1.0, avg_spacing / 1.5))
+
+            cym_payload = {
+                "hihat_closed_ratio": float((hihat_total - hihat_open) / max(1, hihat_total)),
+                "hihat_open_ratio": float(hihat_open / max(1, hihat_total)),
+                "hihat_pedal_ratio": float(hihat_pedal / max(1, hihat_total)),
+                "hihat_bark_probability": float(hihat_bark / max(1, hihat_total)),
+                "ride_usage_ratio": float(ride_total / max(1, cym_total)),
+                "ride_bell_probability": float(ride_bell / max(1, ride_total)),
+                "crash_frequency_per_min": float(crash_total / max(1e-6, total_minutes)),
+                "crash_on_downbeat_probability": float(crash_downbeat / max(1, crash_total)),
+                "crash_on_transition_probability": float(transition_crash / max(1, crash_total)),
+                "cymbal_decay_spacing_score": decay_spacing_score,
+                "cymbal_density_curve_json": section_crash_counts,
+            }
+            cym_saved = self._upsert_profile_row(
+                table="drummer_cymbal_language",
+                profile_id=f"cym_{drummer_fk}",
+                drummer_fk=drummer_fk,
+                payload=cym_payload,
+            )
+
+            simultaneous_matrix: Dict[str, int] = {}
+            timeslots: Dict[Tuple[str, float], List[str]] = {}
+            kick_hits = 0
+            snare_hits = 0
+            hat_hits = 0
+            ks = 0
+            kh = 0
+            sh = 0
+            offbeat = 0
+            for row in hit_rows:
+                aid = str(row.get("analysis_id") or "").strip()
+                try:
+                    onset = round(float(row.get("onset_time_sec") or 0.0), 3)
+                except Exception:
+                    continue
+                inst = self._tokenize_profile_id(row.get("instrument") or "unknown")
+                timeslots.setdefault((aid, onset), []).append(inst)
+                if inst == "kick":
+                    kick_hits += 1
+                if inst == "snare":
+                    snare_hits += 1
+                if inst in {"hihat", "hh"}:
+                    hat_hits += 1
+                subdiv = str(row.get("subdivision") or "").lower()
+                if subdiv not in {"0", "1", "downbeat", "quarter"}:
+                    offbeat += 1
+
+            infeasible_slots = 0
+            common_patterns: Dict[str, int] = {}
+            for _, insts in timeslots.items():
+                uniq = sorted(set(insts))
+                if len(uniq) > 4:
+                    infeasible_slots += 1
+                pattern_key = "+".join(uniq)
+                common_patterns[pattern_key] = int(common_patterns.get(pattern_key) or 0) + 1
+                if "kick" in uniq and "snare" in uniq:
+                    ks += 1
+                if "kick" in uniq and ("hihat" in uniq or "hh" in uniq):
+                    kh += 1
+                if "snare" in uniq and ("hihat" in uniq or "hh" in uniq):
+                    sh += 1
+                if len(uniq) > 1:
+                    for i in range(len(uniq)):
+                        for j in range(i + 1, len(uniq)):
+                            pair = f"{uniq[i]}|{uniq[j]}"
+                            simultaneous_matrix[pair] = int(simultaneous_matrix.get(pair) or 0) + 1
+
+            slot_count = len(timeslots)
+            limb_payload = {
+                "simultaneous_hit_matrix_json": simultaneous_matrix,
+                "kick_snare_dependency": float(ks / max(1, kick_hits)),
+                "kick_hat_dependency": float(kh / max(1, kick_hits)),
+                "snare_hat_dependency": float(sh / max(1, snare_hits)),
+                "independence_score": max(0.0, min(1.0, 1.0 - (float(ks + kh + sh) / max(1, slot_count * 3)))),
+                "syncopation_score": float(offbeat / max(1, len(hit_rows))),
+                "limb_feasibility_violation_rate": float(infeasible_slots / max(1, slot_count)),
+                "common_limb_patterns_json": dict(sorted(common_patterns.items(), key=lambda kv: kv[1], reverse=True)[:20]),
+            }
+            limb_saved = self._upsert_profile_row(
+                table="drummer_limb_coordination",
+                profile_id=f"limb_{drummer_fk}",
+                drummer_fk=drummer_fk,
+                payload=limb_payload,
+            )
+
+            fill_groups: Dict[Tuple[str, str], Dict[str, Any]] = {}
+            for row in fill_rows:
+                aid = str(row.get("analysis_id") or "").strip()
+                bar_idx = int(row.get("start_bar_index") or 0)
+                section_label = section_labels[bar_idx % len(section_labels)]
+                mod8 = (bar_idx + 1) % 8
+                if mod8 == 0:
+                    phrase_pos = "end_of_8"
+                elif mod8 == 4:
+                    phrase_pos = "end_of_4"
+                elif ((bar_idx + 1) % 2) == 0:
+                    phrase_pos = "end_of_2"
+                else:
+                    phrase_pos = "pre_downbeat"
+
+                key = (section_label, phrase_pos)
+                g = fill_groups.setdefault(
+                    key,
+                    {
+                        "count": 0,
+                        "lengths": [],
+                        "densities": [],
+                        "tom": 0,
+                        "snare": 0,
+                        "kick": 0,
+                        "cymbal_exit": 0,
+                    },
+                )
+                g["count"] += 1
+                try:
+                    st = float(row.get("start_time_sec") or 0.0)
+                    en = float(row.get("end_time_sec") or st)
+                except Exception:
+                    st, en = 0.0, 0.0
+                g["lengths"].append(max(0.0, en - st))
+                try:
+                    hit_count = float(row.get("hit_count") or 0.0)
+                except Exception:
+                    hit_count = 0.0
+                g["densities"].append(hit_count / max(1e-6, (en - st)))
+                inst_json = row.get("instruments_json")
+                try:
+                    insts = json.loads(inst_json) if isinstance(inst_json, str) and inst_json.strip() else []
+                except Exception:
+                    insts = []
+                inst_set = {self._tokenize_profile_id(x) for x in (insts or [])}
+                if "tom" in inst_set or "toms" in inst_set:
+                    g["tom"] += 1
+                if "snare" in inst_set:
+                    g["snare"] += 1
+                if "kick" in inst_set:
+                    g["kick"] += 1
+                if crash_total > 0:
+                    for h in analysis_hits.get(aid, []):
+                        inst = str(h.get("instrument") or "").lower()
+                        if inst != "crash":
+                            continue
+                        try:
+                            ht = float(h.get("onset_time_sec") or 0.0)
+                        except Exception:
+                            continue
+                        if (en - 0.15) <= ht <= (en + 0.35):
+                            g["cymbal_exit"] += 1
+                            break
+
+            fill_saved = 0
+            for (section_label, phrase_pos), g in fill_groups.items():
+                stats_len = self._basic_stats([float(v) for v in g.get("lengths") or []])
+                density_mean = float(sum(g.get("densities") or [0.0]) / max(1, len(g.get("densities") or [])))
+                count = int(g.get("count") or 0)
+                payload = {
+                    "section_label": section_label,
+                    "phrase_position": phrase_pos,
+                    "fill_probability": float(min(1.0, count / 8.0)),
+                    "fill_length_mean_beats": stats_len["mean"],
+                    "fill_length_std_beats": stats_len["std"],
+                    "fill_density_mean": density_mean,
+                    "tom_usage_probability": float(g.get("tom", 0) / max(1, count)),
+                    "snare_fill_probability": float(g.get("snare", 0) / max(1, count)),
+                    "kick_fill_probability": float(g.get("kick", 0) / max(1, count)),
+                    "cymbal_exit_probability": float(g.get("cymbal_exit", 0) / max(1, count)),
+                    "triplet_fill_probability": 0.0,
+                    "linear_fill_probability": 0.5,
+                    "rudimental_fill_probability": 0.25,
+                    "common_fill_shapes_json": {"count": count},
+                }
+                pid = f"fill_{drummer_fk}_{self._tokenize_profile_id(section_label)}_{self._tokenize_profile_id(phrase_pos)}"
+                if self._upsert_profile_row(
+                    table="drummer_fill_behavior",
+                    profile_id=pid,
+                    drummer_fk=drummer_fk,
+                    payload=payload,
+                ):
+                    fill_saved += 1
+
+            embedding_vector = [0.0] * 128
+            embedding_vector[0] = self._safe_float(rollup.get("timing_std_ms")) or 0.0
+            embedding_vector[1] = self._safe_float(rollup.get("velocity_mean")) or 0.0
+            embedding_vector[2] = self._safe_float(rollup.get("velocity_std")) or 0.0
+            embedding_vector[3] = self._safe_float(rollup.get("fills_per_min")) or 0.0
+            embedding_vector[4] = float(cym_payload.get("ride_usage_ratio") or 0.0)
+            embedding_vector[5] = float(cym_payload.get("crash_frequency_per_min") or 0.0)
+            embedding_vector[6] = float(limb_payload.get("independence_score") or 0.0)
+            embedding_vector[7] = float(limb_payload.get("syncopation_score") or 0.0)
+            embedding_vector[8] = float(confidence_score)
+            embedding_vector[9] = float(phrase_saved)
+
+            seed_source = self._json_dumps(
+                {
+                    "drummer_fk": drummer_fk,
+                    "rollup": rollup,
+                    "cymbal": cym_payload,
+                    "limb": limb_payload,
+                    "counts": {
+                        "phrase": phrase_saved,
+                        "micro": micro_saved,
+                        "dyn": dynamics_saved,
+                        "fill": fill_saved,
+                    },
+                }
+            ) or ""
+            digest = hashlib.sha256(seed_source.encode("utf-8", errors="ignore")).hexdigest()
+            for i in range(10, 128):
+                pair = digest[(2 * ((i - 10) % (len(digest) // 2))):(2 * ((i - 10) % (len(digest) // 2))) + 2]
+                try:
+                    embedding_vector[i] = (int(pair, 16) / 255.0) - 0.5
+                except Exception:
+                    embedding_vector[i] = 0.0
+
+            embedding_saved = self.upsert_drummer_personality_embedding(
+                embedding_id=f"emb_{drummer_fk}",
+                drummer_fk=drummer_fk,
+                model_version="phase7_v1",
+                embedding_vector=embedding_vector,
+                confidence_score=confidence_score,
+                source_song_count=int(rollup.get("songs") or 0),
+                source_hit_count=int(rollup.get("hits") or 0),
+                timing_weight=0.2,
+                dynamics_weight=0.2,
+                fill_weight=0.15,
+                cymbal_weight=0.15,
+                coordination_weight=0.15,
+                phrase_weight=0.15,
+            )
+
+            out["profiles"] = {
+                "phrase": bool(phrase_saved > 0),
+                "phrase_count": phrase_saved,
+                "phrase_status": phrase_status if phrase_saved == 0 else "saved",
+                "microtiming": bool(micro_saved > 0),
+                "microtiming_count": micro_saved,
+                "dynamics": bool(dynamics_saved > 0),
+                "dynamics_count": dynamics_saved,
+                "cymbal": cym_saved,
+                "limb": limb_saved,
+                "fill": bool(fill_saved > 0),
+                "fill_count": fill_saved,
+            }
+            out["embedding"] = {
+                "saved": embedding_saved,
+                "dim": len(embedding_vector),
+                "model_version": "phase7_v1",
+            }
+            required = [micro_saved > 0, dynamics_saved > 0, bool(cym_saved), bool(limb_saved), fill_saved > 0, bool(embedding_saved)]
+            out["saved"] = all(bool(v) for v in required)
+            return out
+        except Exception as e:
+            msg = f"Phase 7 assimilation profiling failed: {e}"
+            logger.error(msg)
+            self._set_last_ingest_error(msg)
+            self.database_error.emit(msg)
+            return out
 
     def upsert_drummer_profile_rollup(
         self,
@@ -1099,8 +2500,10 @@ class CentralDatabaseService(QObject):
 
             rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
             saved = self.upsert_drummer_profile_rollup(drummer_fk=int(drummer_fk), rollup=rollup)
+            phase7 = self.run_phase7_assimilation_profiles_for_drummer(drummer_slug=drummer_slug)
             out["saved"] = bool(saved)
             out["rollup"] = rollup
+            out["phase7"] = phase7
             return out
         except Exception as e:
             msg = f"Phase 5 run failed: {e}"
@@ -2500,6 +3903,164 @@ class CentralDatabaseService(QObject):
             ''')
 
             cursor.execute('''
+            CREATE TABLE IF NOT EXISTS run_versions (
+                run_id TEXT PRIMARY KEY,
+                generator_version TEXT NOT NULL,
+                feature_version TEXT NOT NULL,
+                rollup_version TEXT NOT NULL,
+                sample_pack_version TEXT NOT NULL,
+                seed INTEGER NOT NULL,
+                commit_hash TEXT,
+                created_at TEXT NOT NULL
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS audio_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                artifact_type TEXT NOT NULL,
+                storage_uri TEXT NOT NULL,
+                duration_sec REAL,
+                loudness_lufs REAL,
+                sample_pack_version TEXT,
+                render_recipe_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_audio_artifacts_run_id ON audio_artifacts(run_id)
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS calibration_run_events (
+                run_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'dcsm_json',
+                event_stream_json TEXT NOT NULL DEFAULT '[]',
+                tempo_bpm REAL,
+                time_signature_json TEXT,
+                bars INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS calibration_render_jobs (
+                job_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                render_profile_id TEXT NOT NULL,
+                sample_pack_version TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+                error_text TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calibration_render_jobs_run_id ON calibration_render_jobs(run_id)
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reviewer_profiles (
+                reviewer_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                expertise_level TEXT,
+                primary_styles_json TEXT NOT NULL DEFAULT '[]',
+                years_experience INTEGER,
+                weighting_factor REAL NOT NULL DEFAULT 1.0,
+                created_at TEXT NOT NULL
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS evaluation_sessions (
+                session_id TEXT PRIMARY KEY,
+                reviewer_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                assigned_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                app_version TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (reviewer_id) REFERENCES reviewer_profiles(reviewer_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_eval_sessions_reviewer ON evaluation_sessions(reviewer_id)
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS evaluation_items (
+                item_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                base_groove_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                reference_artifact_id TEXT,
+                baseline_run_id TEXT,
+                candidate_a_run_id TEXT,
+                candidate_b_run_id TEXT,
+                ab_mapping_json TEXT NOT NULL DEFAULT '{}',
+                eval_mode TEXT NOT NULL DEFAULT 'AB',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES evaluation_sessions(session_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_eval_items_session ON evaluation_items(session_id)
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pairwise_judgments (
+                judgment_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                preferred_candidate TEXT,
+                closer_to_target TEXT,
+                better_feel TEXT,
+                more_musical TEXT,
+                confidence INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (item_id) REFERENCES evaluation_items(item_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_pairwise_item ON pairwise_judgments(item_id)
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS attribute_ratings (
+                rating_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                candidate_label TEXT NOT NULL,
+                stylistic_authenticity REAL,
+                groove_feel REAL,
+                dynamics REAL,
+                phrasing REAL,
+                kit_balance REAL,
+                fill_behavior REAL,
+                human_realism REAL,
+                overall_usefulness REAL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (item_id) REFERENCES evaluation_items(item_id)
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_attr_item ON attribute_ratings(item_id)
+            ''')
+
+            cursor.execute('''
             CREATE TABLE IF NOT EXISTS song_performance_analysis (
                 analysis_id TEXT PRIMARY KEY,
                 song_id TEXT,
@@ -2641,6 +4202,169 @@ class CentralDatabaseService(QObject):
             ''')
 
             cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_phrase_features (
+                id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT NOT NULL,
+                song_id TEXT NOT NULL,
+                section_label TEXT,
+                phrase_index INTEGER,
+                phrase_length_bars INTEGER,
+                bar_position_in_phrase INTEGER,
+                energy_start REAL,
+                energy_end REAL,
+                energy_slope REAL,
+                pattern_repetition_score REAL,
+                pattern_mutation_rate REAL,
+                density_curve_json TEXT,
+                accent_curve_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (analysis_id) REFERENCES song_performance_analysis(analysis_id) ON DELETE CASCADE,
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE,
+                FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_microtiming_profiles (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                instrument TEXT,
+                subdivision TEXT,
+                mean_offset_ms REAL,
+                std_offset_ms REAL,
+                skew_offset_ms REAL,
+                early_hit_probability REAL,
+                late_hit_probability REAL,
+                pocket_bias TEXT,
+                context_label TEXT,
+                histogram_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_dynamic_profiles (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                instrument TEXT,
+                velocity_mean REAL,
+                velocity_std REAL,
+                velocity_skew REAL,
+                ghost_note_probability REAL,
+                accent_probability REAL,
+                ghost_to_accent_ratio REAL,
+                accent_grid_json TEXT,
+                velocity_histogram_json TEXT,
+                phrase_dynamic_curve_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_cymbal_language (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                hihat_closed_ratio REAL,
+                hihat_open_ratio REAL,
+                hihat_pedal_ratio REAL,
+                hihat_bark_probability REAL,
+                ride_usage_ratio REAL,
+                ride_bell_probability REAL,
+                crash_frequency_per_min REAL,
+                crash_on_downbeat_probability REAL,
+                crash_on_transition_probability REAL,
+                cymbal_decay_spacing_score REAL,
+                cymbal_density_curve_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_limb_coordination (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                simultaneous_hit_matrix_json TEXT,
+                kick_snare_dependency REAL,
+                kick_hat_dependency REAL,
+                snare_hat_dependency REAL,
+                independence_score REAL,
+                syncopation_score REAL,
+                limb_feasibility_violation_rate REAL,
+                common_limb_patterns_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_fill_behavior (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                section_label TEXT,
+                phrase_position TEXT,
+                fill_probability REAL,
+                fill_length_mean_beats REAL,
+                fill_length_std_beats REAL,
+                fill_density_mean REAL,
+                tom_usage_probability REAL,
+                snare_fill_probability REAL,
+                kick_fill_probability REAL,
+                cymbal_exit_probability REAL,
+                triplet_fill_probability REAL,
+                linear_fill_probability REAL,
+                rudimental_fill_probability REAL,
+                common_fill_shapes_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drummer_personality_embeddings (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                embedding_vector_json TEXT NOT NULL,
+                source_song_count INTEGER,
+                source_hit_count INTEGER,
+                confidence_score REAL,
+                timing_weight REAL,
+                dynamics_weight REAL,
+                fill_weight REAL,
+                cymbal_weight REAL,
+                coordination_weight REAL,
+                phrase_weight REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS generated_drummer_transform_audits (
+                id TEXT PRIMARY KEY,
+                source_track_id TEXT,
+                target_drummer_id TEXT,
+                generation_run_id TEXT,
+                personality_embedding_id TEXT,
+                source_similarity_score REAL,
+                target_similarity_score REAL,
+                human_feasibility_score REAL,
+                groove_preservation_score REAL,
+                before_features_json TEXT,
+                after_features_json TEXT,
+                transform_delta_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (target_drummer_id) REFERENCES drummers(id) ON DELETE SET NULL,
+                FOREIGN KEY (personality_embedding_id) REFERENCES drummer_personality_embeddings(id) ON DELETE SET NULL
+            )
+            ''')
+
+            cursor.execute('''
             CREATE TABLE IF NOT EXISTS calibration_adjustments (
                 drummer_slug TEXT PRIMARY KEY,
                 adjustments_json TEXT NOT NULL,
@@ -2682,6 +4406,50 @@ class CentralDatabaseService(QObject):
             )
             ''')
 
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS app_user_roles (
+                user_id TEXT PRIMARY KEY,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_drummer_map (
+                user_id TEXT NOT NULL,
+                drummer_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, drummer_id),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS calibration_audit_log (
+                id TEXT PRIMARY KEY,
+                actor_user_id TEXT,
+                drummer_id TEXT,
+                run_id TEXT,
+                action TEXT NOT NULL,
+                payload_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analysis_jobs (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_json TEXT,
+                result_json TEXT,
+                error_text TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (drummer_id) REFERENCES drummers(id) ON DELETE CASCADE
+            )
+            ''')
+
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_spa_drummer_id ON song_performance_analysis(drummer_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_spa_song_id ON song_performance_analysis(song_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_hit_analysis_time ON drum_hit_events(analysis_id, onset_time_sec)')
@@ -2691,9 +4459,21 @@ class CentralDatabaseService(QObject):
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_rollups_drummer_id ON drummer_profile_rollups(drummer_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_artifacts_analysis_role ON analysis_artifacts(analysis_id, artifact_role)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_stems_analysis_name ON stem_artifacts(analysis_id, stem_name)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_phrase_features_analysis ON drummer_phrase_features(analysis_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_phrase_features_drummer ON drummer_phrase_features(drummer_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_microtiming_drummer_context ON drummer_microtiming_profiles(drummer_id, instrument, context_label)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_dynamics_drummer_instrument ON drummer_dynamic_profiles(drummer_id, instrument)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_cymbal_language_drummer ON drummer_cymbal_language(drummer_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_limb_coordination_drummer ON drummer_limb_coordination(drummer_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_fill_behavior_drummer_section ON drummer_fill_behavior(drummer_id, section_label, phrase_position)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_embeddings_drummer_version ON drummer_personality_embeddings(drummer_id, model_version)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_transform_audits_target_run ON generated_drummer_transform_audits(target_drummer_id, generation_run_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_calibration_runs_slug ON calibration_runs(drummer_slug)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_calibration_runs_start ON calibration_runs(started_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_calibration_feedback_slug ON calibration_feedback(drummer_slug)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_drummer_map_user ON user_drummer_map(user_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_drummer_map_drummer ON user_drummer_map(drummer_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_analysis_jobs_drummer_time ON analysis_jobs(drummer_id, created_at)')
 
             conn.commit()
             self._tables_created = True
@@ -3038,6 +4818,714 @@ class CentralDatabaseService(QObject):
             metadata=(self._json_loads(metadata_json, default={}) or {}) if metadata_json is not _MISSING else None,
         )
 
+    def _row_to_run_version(self, row: sqlite3.Row) -> Optional[RunVersion]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return RunVersion(
+            run_id=str(data.get("run_id", "")),
+            generator_version=str(data.get("generator_version", "")),
+            feature_version=str(data.get("feature_version", "")),
+            rollup_version=str(data.get("rollup_version", "")),
+            sample_pack_version=str(data.get("sample_pack_version", "")),
+            seed=int(data.get("seed", 0) or 0),
+            commit_hash=data.get("commit_hash"),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    def _row_to_audio_artifact(self, row: sqlite3.Row) -> Optional[AudioArtifact]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return AudioArtifact(
+            artifact_id=str(data.get("artifact_id", "")),
+            run_id=data.get("run_id"),
+            artifact_type=str(data.get("artifact_type", "")),
+            storage_uri=str(data.get("storage_uri", "")),
+            duration_sec=self._safe_float(data.get("duration_sec")),
+            loudness_lufs=self._safe_float(data.get("loudness_lufs")),
+            sample_pack_version=data.get("sample_pack_version"),
+            render_recipe=self._json_loads(data.get("render_recipe_json"), default={}) or {},
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    def _row_to_evaluation_session(self, row: sqlite3.Row) -> Optional[EvaluationSession]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return EvaluationSession(
+            session_id=str(data.get("session_id", "")),
+            reviewer_id=str(data.get("reviewer_id", "")),
+            target_drummer_slug=str(data.get("target_drummer_slug", "")),
+            assigned_at=self._parse_datetime(data.get("assigned_at")),
+            started_at=self._parse_datetime(data.get("started_at")),
+            completed_at=self._parse_datetime(data.get("completed_at")),
+            app_version=data.get("app_version"),
+            notes=data.get("notes"),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    def _row_to_evaluation_item(self, row: sqlite3.Row) -> Optional[EvaluationItem]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return EvaluationItem(
+            item_id=str(data.get("item_id", "")),
+            session_id=str(data.get("session_id", "")),
+            base_groove_id=str(data.get("base_groove_id", "")),
+            target_drummer_slug=str(data.get("target_drummer_slug", "")),
+            reference_artifact_id=data.get("reference_artifact_id"),
+            baseline_run_id=data.get("baseline_run_id"),
+            candidate_a_run_id=data.get("candidate_a_run_id"),
+            candidate_b_run_id=data.get("candidate_b_run_id"),
+            ab_mapping=self._json_loads(data.get("ab_mapping_json"), default={}) or {},
+            eval_mode=str(data.get("eval_mode") or "AB"),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    def _row_to_pairwise_judgment(self, row: sqlite3.Row) -> Optional[PairwiseJudgment]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return PairwiseJudgment(
+            judgment_id=str(data.get("judgment_id", "")),
+            item_id=str(data.get("item_id", "")),
+            preferred_candidate=data.get("preferred_candidate"),
+            closer_to_target=data.get("closer_to_target"),
+            better_feel=data.get("better_feel"),
+            more_musical=data.get("more_musical"),
+            confidence=self._safe_int(data.get("confidence")),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    def _row_to_attribute_rating(self, row: sqlite3.Row) -> Optional[AttributeRating]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return AttributeRating(
+            rating_id=str(data.get("rating_id", "")),
+            item_id=str(data.get("item_id", "")),
+            candidate_label=str(data.get("candidate_label", "")),
+            stylistic_authenticity=self._safe_float(data.get("stylistic_authenticity")),
+            groove_feel=self._safe_float(data.get("groove_feel")),
+            dynamics=self._safe_float(data.get("dynamics")),
+            phrasing=self._safe_float(data.get("phrasing")),
+            kit_balance=self._safe_float(data.get("kit_balance")),
+            fill_behavior=self._safe_float(data.get("fill_behavior")),
+            human_realism=self._safe_float(data.get("human_realism")),
+            overall_usefulness=self._safe_float(data.get("overall_usefulness")),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+        )
+
+    # ---- Phase 2 run version helpers ---------------------------------
+
+    def upsert_run_version(
+        self,
+        *,
+        run_id: str,
+        generator_version: str,
+        feature_version: str,
+        rollup_version: str,
+        sample_pack_version: str,
+        seed: int,
+        commit_hash: Optional[str] = None,
+    ) -> bool:
+        try:
+            run_id = (run_id or "").strip()
+            if not run_id:
+                return False
+
+            now = datetime.utcnow().isoformat()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    """
+                    INSERT INTO run_versions (
+                        run_id, generator_version, feature_version, rollup_version,
+                        sample_pack_version, seed, commit_hash, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        generator_version = excluded.generator_version,
+                        feature_version = excluded.feature_version,
+                        rollup_version = excluded.rollup_version,
+                        sample_pack_version = excluded.sample_pack_version,
+                        seed = excluded.seed,
+                        commit_hash = excluded.commit_hash
+                    """,
+                    (
+                        run_id,
+                        generator_version,
+                        feature_version,
+                        rollup_version,
+                        sample_pack_version,
+                        int(seed),
+                        commit_hash,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return True
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("run_versions", "upsert")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"run_versions table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error upserting run version {run_id}: {str(e)}")
+            self.database_error.emit(f"Error upserting run version: {str(e)}")
+            return False
+
+    def get_run_version(self, *, run_id: str) -> Optional[RunVersion]:
+        try:
+            run_id = (run_id or "").strip()
+            if not run_id:
+                return None
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT run_id, generator_version, feature_version, rollup_version,
+                       sample_pack_version, seed, commit_hash, created_at
+                FROM run_versions
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_run_version(row) if row else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"run_versions table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching run version {run_id}: {str(e)}")
+            self.database_error.emit(f"Error fetching run version: {str(e)}")
+            return None
+
+    def log_audio_artifact(
+        self,
+        *,
+        run_id: Optional[str],
+        artifact_type: str,
+        storage_uri: str,
+        duration_sec: Optional[float] = None,
+        loudness_lufs: Optional[float] = None,
+        sample_pack_version: Optional[str] = None,
+        render_recipe: Optional[Dict[str, Any]] = None,
+        artifact_id: Optional[str] = None,
+    ) -> Optional[str]:
+        try:
+            artifact_type = (artifact_type or "").strip()
+            storage_uri = (storage_uri or "").strip()
+            if not artifact_type or not storage_uri:
+                return None
+
+            artifact_id = (artifact_id or f"art_{uuid.uuid4().hex[:12]}").strip()
+            now = datetime.utcnow().isoformat()
+            render_json = self._json_dumps(render_recipe) if render_recipe is not None else "{}"
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO audio_artifacts (
+                        artifact_id, run_id, artifact_type, storage_uri,
+                        duration_sec, loudness_lufs, sample_pack_version,
+                        render_recipe_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(artifact_id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        artifact_type = excluded.artifact_type,
+                        storage_uri = excluded.storage_uri,
+                        duration_sec = excluded.duration_sec,
+                        loudness_lufs = excluded.loudness_lufs,
+                        sample_pack_version = excluded.sample_pack_version,
+                        render_recipe_json = excluded.render_recipe_json,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        artifact_id,
+                        run_id,
+                        artifact_type,
+                        storage_uri,
+                        self._safe_float(duration_sec),
+                        self._safe_float(loudness_lufs),
+                        sample_pack_version,
+                        render_json,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return artifact_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("audio_artifacts", "upsert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"audio_artifacts table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error logging audio artifact for run {run_id}: {str(e)}")
+            self.database_error.emit(f"Error logging audio artifact: {str(e)}")
+            return None
+
+    def get_audio_artifacts_for_run(self, *, run_id: str) -> List[AudioArtifact]:
+        artifacts: List[AudioArtifact] = []
+        try:
+            run_id = (run_id or "").strip()
+            if not run_id:
+                return artifacts
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
+                       loudness_lufs, sample_pack_version, render_recipe_json, created_at
+                FROM audio_artifacts
+                WHERE run_id = ?
+                ORDER BY created_at DESC
+                """,
+                (run_id,),
+            )
+            for row in cursor.fetchall() or []:
+                artifact = self._row_to_audio_artifact(row)
+                if artifact:
+                    artifacts.append(artifact)
+            return artifacts
+        except sqlite3.OperationalError as e:
+            logger.warning(f"audio_artifacts table not available: {e}")
+            return artifacts
+        except Exception as e:
+            logger.error(f"Error fetching audio artifacts for run {run_id}: {str(e)}")
+            self.database_error.emit(f"Error fetching audio artifacts: {str(e)}")
+            return artifacts
+
+    def upsert_reviewer_profile(
+        self,
+        *,
+        reviewer_id: str,
+        display_name: str,
+        expertise_level: Optional[str] = None,
+        primary_styles: Optional[List[str]] = None,
+        years_experience: Optional[int] = None,
+        weighting_factor: float = 1.0,
+    ) -> bool:
+        try:
+            reviewer_id = (reviewer_id or "").strip()
+            display_name = (display_name or "").strip()
+            if not reviewer_id or not display_name:
+                return False
+
+            now = datetime.utcnow().isoformat()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    """
+                    INSERT INTO reviewer_profiles (
+                        reviewer_id, display_name, expertise_level,
+                        primary_styles_json, years_experience,
+                        weighting_factor, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(reviewer_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        expertise_level = excluded.expertise_level,
+                        primary_styles_json = excluded.primary_styles_json,
+                        years_experience = excluded.years_experience,
+                        weighting_factor = excluded.weighting_factor
+                    """,
+                    (
+                        reviewer_id,
+                        display_name,
+                        expertise_level,
+                        self._json_dumps(primary_styles or []) or "[]",
+                        self._safe_int(years_experience),
+                        float(weighting_factor),
+                        now,
+                    ),
+                )
+                conn.commit()
+                return True
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("reviewer_profiles", "upsert")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"reviewer_profiles table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error upserting reviewer profile {reviewer_id}: {str(e)}")
+            self.database_error.emit(f"Error upserting reviewer profile: {str(e)}")
+            return False
+
+    def create_evaluation_session(
+        self,
+        *,
+        reviewer_id: str,
+        target_drummer_slug: str,
+        app_version: Optional[str] = None,
+        notes: Optional[str] = None,
+        assigned_at: Optional[datetime] = None,
+    ) -> Optional[str]:
+        try:
+            reviewer_id = (reviewer_id or "").strip()
+            target_drummer_slug = (target_drummer_slug or "").strip()
+            if not reviewer_id or not target_drummer_slug:
+                return None
+
+            session_id = f"sess_{uuid.uuid4().hex[:12]}"
+            assigned_iso = (assigned_at or datetime.utcnow()).isoformat()
+            now = datetime.utcnow().isoformat()
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO evaluation_sessions (
+                        session_id, reviewer_id, target_drummer_slug,
+                        assigned_at, started_at, completed_at,
+                        app_version, notes, created_at
+                    ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        reviewer_id,
+                        target_drummer_slug,
+                        assigned_iso,
+                        app_version,
+                        notes,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return session_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("evaluation_sessions", "insert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_sessions table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating evaluation session for {reviewer_id}: {str(e)}")
+            self.database_error.emit(f"Error creating evaluation session: {str(e)}")
+            return None
+
+    def start_evaluation_session(self, *, session_id: str) -> bool:
+        try:
+            session_id = (session_id or "").strip()
+            if not session_id:
+                return False
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    "UPDATE evaluation_sessions SET started_at = ? WHERE session_id = ?",
+                    (datetime.utcnow().isoformat(), session_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("evaluation_sessions", "update")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_sessions table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error starting evaluation session {session_id}: {str(e)}")
+            self.database_error.emit(f"Error starting evaluation session: {str(e)}")
+            return False
+
+    def complete_evaluation_session(self, *, session_id: str) -> bool:
+        try:
+            session_id = (session_id or "").strip()
+            if not session_id:
+                return False
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    "UPDATE evaluation_sessions SET completed_at = ? WHERE session_id = ?",
+                    (datetime.utcnow().isoformat(), session_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("evaluation_sessions", "update")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_sessions table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error completing evaluation session {session_id}: {str(e)}")
+            self.database_error.emit(f"Error completing evaluation session: {str(e)}")
+            return False
+
+    def get_next_evaluation_session(
+        self,
+        *,
+        reviewer_id: Optional[str] = None,
+        target_drummer_slug: Optional[str] = None,
+    ) -> Optional[EvaluationSession]:
+        try:
+            clauses: List[str] = []
+            params: List[Any] = []
+            if reviewer_id:
+                clauses.append("reviewer_id = ?")
+                params.append((reviewer_id or "").strip())
+            if target_drummer_slug:
+                clauses.append("target_drummer_slug = ?")
+                params.append((target_drummer_slug or "").strip())
+            clauses.append("started_at IS NULL")
+
+            query = "SELECT * FROM evaluation_sessions"
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY assigned_at ASC LIMIT 1"
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            row = cursor.fetchone()
+            return self._row_to_evaluation_session(row) if row else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_sessions table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching next evaluation session: {str(e)}")
+            self.database_error.emit(f"Error fetching evaluation session: {str(e)}")
+            return None
+
+    def create_evaluation_item(
+        self,
+        *,
+        session_id: str,
+        base_groove_id: str,
+        target_drummer_slug: str,
+        reference_artifact_id: Optional[str] = None,
+        baseline_run_id: Optional[str] = None,
+        candidate_a_run_id: Optional[str] = None,
+        candidate_b_run_id: Optional[str] = None,
+        eval_mode: str = "AB",
+        ab_mapping: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        try:
+            session_id = (session_id or "").strip()
+            base_groove_id = (base_groove_id or "").strip()
+            target_drummer_slug = (target_drummer_slug or "").strip()
+            if not session_id or not base_groove_id or not target_drummer_slug:
+                return None
+
+            item_id = f"item_{uuid.uuid4().hex[:12]}"
+            now = datetime.utcnow().isoformat()
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO evaluation_items (
+                        item_id, session_id, base_groove_id, target_drummer_slug,
+                        reference_artifact_id, baseline_run_id, candidate_a_run_id,
+                        candidate_b_run_id, ab_mapping_json, eval_mode, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_id,
+                        session_id,
+                        base_groove_id,
+                        target_drummer_slug,
+                        reference_artifact_id,
+                        baseline_run_id,
+                        candidate_a_run_id,
+                        candidate_b_run_id,
+                        self._json_dumps(ab_mapping or {}) or "{}",
+                        eval_mode or "AB",
+                        now,
+                    ),
+                )
+                conn.commit()
+                return item_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("evaluation_items", "insert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_items table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating evaluation item for session {session_id}: {str(e)}")
+            self.database_error.emit(f"Error creating evaluation item: {str(e)}")
+            return None
+
+    def get_evaluation_item(self, *, item_id: str) -> Optional[EvaluationItem]:
+        try:
+            item_id = (item_id or "").strip()
+            if not item_id:
+                return None
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM evaluation_items WHERE item_id = ? LIMIT 1",
+                (item_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_evaluation_item(row) if row else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"evaluation_items table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching evaluation item {item_id}: {str(e)}")
+            self.database_error.emit(f"Error fetching evaluation item: {str(e)}")
+            return None
+
+    def log_pairwise_judgment(
+        self,
+        *,
+        item_id: str,
+        preferred_candidate: Optional[str] = None,
+        closer_to_target: Optional[str] = None,
+        better_feel: Optional[str] = None,
+        more_musical: Optional[str] = None,
+        confidence: Optional[int] = None,
+    ) -> Optional[str]:
+        try:
+            item_id = (item_id or "").strip()
+            if not item_id:
+                return None
+
+            judgment_id = f"judge_{uuid.uuid4().hex[:12]}"
+            now = datetime.utcnow().isoformat()
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO pairwise_judgments (
+                        judgment_id, item_id, preferred_candidate,
+                        closer_to_target, better_feel, more_musical,
+                        confidence, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        judgment_id,
+                        item_id,
+                        preferred_candidate,
+                        closer_to_target,
+                        better_feel,
+                        more_musical,
+                        self._safe_int(confidence),
+                        now,
+                    ),
+                )
+                conn.commit()
+                return judgment_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("pairwise_judgments", "insert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"pairwise_judgments table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error logging pairwise judgment for item {item_id}: {str(e)}")
+            self.database_error.emit(f"Error logging pairwise judgment: {str(e)}")
+            return None
+
+    def log_attribute_rating(
+        self,
+        *,
+        item_id: str,
+        candidate_label: str,
+        stylistic_authenticity: Optional[float] = None,
+        groove_feel: Optional[float] = None,
+        dynamics: Optional[float] = None,
+        phrasing: Optional[float] = None,
+        kit_balance: Optional[float] = None,
+        fill_behavior: Optional[float] = None,
+        human_realism: Optional[float] = None,
+        overall_usefulness: Optional[float] = None,
+    ) -> Optional[str]:
+        try:
+            item_id = (item_id or "").strip()
+            candidate_label = (candidate_label or "").strip()
+            if not item_id or not candidate_label:
+                return None
+
+            rating_id = f"rate_{uuid.uuid4().hex[:12]}"
+            now = datetime.utcnow().isoformat()
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO attribute_ratings (
+                        rating_id, item_id, candidate_label,
+                        stylistic_authenticity, groove_feel, dynamics,
+                        phrasing, kit_balance, fill_behavior,
+                        human_realism, overall_usefulness, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rating_id,
+                        item_id,
+                        candidate_label,
+                        self._safe_float(stylistic_authenticity),
+                        self._safe_float(groove_feel),
+                        self._safe_float(dynamics),
+                        self._safe_float(phrasing),
+                        self._safe_float(kit_balance),
+                        self._safe_float(fill_behavior),
+                        self._safe_float(human_realism),
+                        self._safe_float(overall_usefulness),
+                        now,
+                    ),
+                )
+                conn.commit()
+                return rating_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("attribute_ratings", "insert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"attribute_ratings table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error logging attribute rating for item {item_id}: {str(e)}")
+            self.database_error.emit(f"Error logging attribute rating: {str(e)}")
+            return None
+
     def log_calibration_run(
         self,
         *,
@@ -3124,6 +5612,36 @@ class CentralDatabaseService(QObject):
             self.database_error.emit(f"Error logging calibration run: {str(e)}")
             return None
 
+    def get_calibration_run(self, *, run_id: str) -> Optional[CalibrationRun]:
+        try:
+            run_id = (run_id or "").strip()
+            if not run_id:
+                return None
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT run_id, drummer_slug, started_at, completed_at, outcome,
+                       note_count, fills_per_minute, within_tolerance_count,
+                       total_compared, delta_summary, metadata_json,
+                       metrics_json, comparison_json, log_path
+                FROM calibration_runs
+                WHERE run_id = ?
+                LIMIT 1
+                """,
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_calibration_run(row) if row else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_runs table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching calibration run {run_id}: {str(e)}")
+            self.database_error.emit(f"Error fetching calibration run: {str(e)}")
+            return None
+
     def get_calibration_runs(
         self,
         *,
@@ -3181,10 +5699,6 @@ class CentralDatabaseService(QObject):
             logger.error(f"Error getting calibration runs for {drummer_slug}: {str(e)}")
             self.database_error.emit(f"Error getting calibration runs: {str(e)}")
             return runs
-
-    def get_latest_calibration_run(self, *, drummer_slug: str) -> Optional[CalibrationRun]:
-        runs = self.get_calibration_runs(drummer_slug=drummer_slug, limit=1)
-        return runs[0] if runs else None
 
     def log_calibration_feedback(
         self,
