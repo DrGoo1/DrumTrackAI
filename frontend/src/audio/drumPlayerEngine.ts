@@ -128,16 +128,14 @@ export class DrumPlayerEngine {
   }
 
   async ensureRunning() {
-    if (this.ctx.state !== "suspended") return;
-    this.installResumeHook();
-    try {
-      await this.ctx.resume();
-    } catch (e) {
-      // keep hook installed; caller may retry after a gesture
-      throw e;
-    }
     if (this.ctx.state === "suspended") {
-      throw new Error("AudioContext is not running. Click anywhere in the page, then try Play again.");
+      this.installResumeHook();
+      await this.ctx.resume();
+      if (this.ctx.state === "suspended") {
+        throw new Error("AudioContext is not running. Click anywhere in the page, then try Play again.");
+      }
+    } else {
+      return;
     }
   }
 
