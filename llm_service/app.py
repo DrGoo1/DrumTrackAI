@@ -3,16 +3,22 @@ import logging
 import os
 import time
 import sqlite3
+import uuid
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 
 from backend.calibration_api import router as calibration_router
+from backend.app.assimilation.api.routes_drummer_generation import router as assimilation_generation_router
+from backend.app.assimilation.api.routes_drummer_profiles import router as assimilation_profiles_router
 
 try:
     from backend.drummerbrain.performance_spec_sentient import build_sentient_instrument_profile
@@ -99,6 +105,22 @@ try:
     from backend.groove_catalog import GrooveCatalog
 except Exception:  # pragma: no cover - optional additive patch
     GrooveCatalog = None
+
+try:
+    from admin.services.central_database_service import CentralDatabaseService
+except Exception:  # pragma: no cover - optional additive patch
+    CentralDatabaseService = None  # type: ignore[assignment]
+
+try:
+    from backend.services.calibration_render_service import CalibrationRenderService, RenderRequest
+except Exception:  # pragma: no cover - optional additive patch
+    CalibrationRenderService = None  # type: ignore[assignment]
+    RenderRequest = None  # type: ignore[assignment]
+
+try:
+    from backend.services.calibration_candidate_generator import generate_candidate_run
+except Exception:  # pragma: no cover - optional additive patch
+    generate_candidate_run = None
 
 try:
     import torch
@@ -1073,7 +1095,29 @@ def _cached_infer(tempo_bpm: float, style_int: int, complexity: float) -> Dict[s
 # ------------------------------------------------------------
 
 app = FastAPI(title="DrumTracKAI Humanization Service", version=API_VERSION)
+
+# CORS for internet frontend access (Netlify/Vercel)
+_cors_env = str(os.getenv("CORS_ALLOW_ORIGINS", "")).strip()
+_cors_origins = [o.strip() for o in _cors_env.replace(";", ",").split(",") if o.strip()]
+_allow_all = not _cors_origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if _allow_all else _cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(calibration_router)
+app.include_router(assimilation_profiles_router)
+app.include_router(assimilation_generation_router)
+
+_CALIBRATION_ARTIFACT_DIR = (_repo_root() / "artifacts" / "calibration").resolve()
+_CALIBRATION_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/static/calibration_artifacts",
+    StaticFiles(directory=str(_CALIBRATION_ARTIFACT_DIR), check_dir=False),
+    name="calibration_artifacts",
+)
 
 TORCH_MODEL = None
 TORCH_DEVICE = "cpu"
@@ -1318,6 +1362,290 @@ def healthz():
         },
         "model_error": MODEL_LOAD_ERROR,
     }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "version": API_VERSION}
+
+
+_DRY_PROBE_JOBS: Dict[str, Dict[str, Any]] = {}
+_DRY_PROBE_JOB_TTL_SECONDS = 10 * 60
+
+
+def _normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "none" else text
+
+
+def _normalize_int(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("integer value cannot be empty")
+        if text.lower() == "none":
+            return default
+        value = text
+
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid integer value: {value!r}") from exc
+
+
+@lru_cache(maxsize=1)
+def _central_db_service() -> Any:
+    if CentralDatabaseService is None:
+        raise RuntimeError("CentralDatabaseService is unavailable; dry-probe render cannot run")
+
+    service = (
+        CentralDatabaseService.get_instance()  # type: ignore[attr-defined]
+        if hasattr(CentralDatabaseService, "get_instance")
+        else CentralDatabaseService()
+    )
+
+    if hasattr(service, "initialize"):
+        db_path = os.getenv("DRY_PROBE_DB_PATH")
+        try:
+            ok = service.initialize(db_path=db_path) if db_path else service.initialize()
+        except Exception as exc:
+            logger.exception("dry_probe: database initialization failed: %s", exc)
+            raise RuntimeError(f"Failed to initialize central database service: {exc}") from exc
+        else:
+            if not ok:
+                raise RuntimeError("Failed to initialize central database service")
+
+    return service
+
+
+@lru_cache(maxsize=1)
+def _calibration_renderer() -> Any:
+    if CalibrationRenderService is None or RenderRequest is None:
+        raise RuntimeError("CalibrationRenderService is unavailable; dry-probe render cannot run")
+
+    artifact_root_env = os.getenv("DRY_PROBE_ARTIFACT_ROOT")
+    base_root = Path(artifact_root_env).expanduser() if artifact_root_env else _CALIBRATION_ARTIFACT_DIR
+    base_root = Path(base_root).resolve()
+    base_root.mkdir(parents=True, exist_ok=True)
+    return CalibrationRenderService(_central_db_service(), artifact_root=base_root)
+
+
+def _prune_dry_probe_jobs(now: float) -> None:
+    expired = [job_id for job_id, job in _DRY_PROBE_JOBS.items() if now - job.get("created_at", now) > _DRY_PROBE_JOB_TTL_SECONDS]
+    for job_id in expired:
+        try:
+            _DRY_PROBE_JOBS.pop(job_id, None)
+        except Exception:
+            continue
+
+
+def _execute_dry_probe(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if generate_candidate_run is None:
+        raise RuntimeError("Candidate generator unavailable; dry-probe render cannot run")
+
+    now = time.time()
+
+    def _prepare_dry_probe_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+        drummer = _normalize_text(payload.get("drummer")).lower()
+        base_groove = _normalize_text(payload.get("base_groove"))
+        target_drummer = _normalize_text(payload.get("target_drummer")).lower() or drummer
+
+        if not base_groove:
+            raise HTTPException(status_code=400, detail="base_groove must be provided")
+        if not drummer:
+            raise HTTPException(status_code=400, detail="drummer must be provided")
+
+        try:
+            seed = _normalize_int(payload.get("seed"), default=0)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="seed must be an integer") from exc
+
+        try:
+            repeats = _normalize_int(payload.get("repeats"), default=1)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="repeats must be an integer") from exc
+
+        sample_pack_version = _normalize_text(payload.get("sample_pack_version")) or None
+
+        return {
+            "drummer": drummer,
+            "base_groove": base_groove,
+            "target_drummer": target_drummer,
+            "seed": seed,
+            "repeats": repeats,
+            "sample_pack_version": sample_pack_version,
+        }
+
+    payload = _prepare_dry_probe_payload(payload)
+
+    base_groove_id = payload["base_groove"]
+    drummer_slug = payload["target_drummer"]
+    seed = payload["seed"]
+    repeats = payload["repeats"]
+    sample_pack_version = payload.get("sample_pack_version")
+
+    db = _central_db_service()
+
+    try:
+        candidate = generate_candidate_run(
+            db=db,
+            base_groove_id=base_groove_id,
+            target_drummer_slug=drummer_slug,
+            drummer_slug=drummer_slug,
+            seed=seed,
+            repeats=repeats,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("dry_probe: base groove missing: %s", exc)
+        raise HTTPException(status_code=400, detail=f"base_groove_not_found: {exc}") from exc
+    except ValueError as exc:
+        logger.warning("dry_probe: invalid request for drummer '%s': %s", drummer_slug, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("dry_probe: candidate generation failed for %s", drummer_slug)
+        raise HTTPException(status_code=500, detail=f"candidate_generation_failed: {exc}") from exc
+
+    run_id = f"dry_probe_{uuid.uuid4().hex[:12]}"
+
+    started_at = datetime.utcnow()
+    run_metadata = dict(candidate.metadata or {})
+    run_metadata.update(
+        {
+            "source": "dry_probe",
+            "sample_pack_version": sample_pack_version,
+            "base_groove_id": base_groove_id,
+            "seed": seed,
+            "repeats": repeats,
+        }
+    )
+    run_metrics = {
+        "tempo_bpm": candidate.tempo_bpm,
+        "bars": candidate.bars,
+        "note_count": candidate.note_count,
+    }
+
+    try:
+        logged_run_id = db.log_calibration_run(
+            drummer_slug=drummer_slug,
+            outcome="dry_probe_preview",
+            started_at=started_at,
+            completed_at=started_at,
+            note_count=candidate.note_count,
+            metadata=run_metadata,
+            metrics=run_metrics,
+            run_id=run_id,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("dry_probe: failed to log calibration run for %s", run_id)
+        raise HTTPException(status_code=500, detail=f"calibration_run_log_failed: {exc}") from exc
+
+    if not logged_run_id:
+        logger.error("dry_probe: calibration run logging returned no run_id for %s", run_id)
+        raise HTTPException(status_code=500, detail="calibration_run_log_failed")
+
+    try:
+        db.upsert_calibration_run_events(
+            run_id=run_id,
+            drummer_slug=drummer_slug,
+            event_stream=candidate.event_stream,
+            tempo_bpm=candidate.tempo_bpm,
+            time_signature=candidate.time_signature,
+            bars=candidate.bars,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("dry_probe: failed to persist run events for %s", run_id)
+        raise HTTPException(status_code=500, detail=f"persist_failed: {exc}") from exc
+
+    renderer = _calibration_renderer()
+
+    render_recipe = {
+        "source": "dry_probe",
+        "drummer": drummer_slug,
+        "base_groove_id": base_groove_id,
+        "seed": seed,
+        "repeats": repeats,
+        "sample_pack_version": sample_pack_version,
+        "metadata": candidate.metadata,
+    }
+    if candidate.performance_spec:
+        render_recipe["performance_spec"] = candidate.performance_spec
+
+    try:
+        result = renderer.render_run(
+            RenderRequest(
+                run_id=run_id,
+                render_profile_id="dry_probe_preview_v1",
+                sample_pack_version=str(sample_pack_version or "default"),
+                kit_id=str(candidate.kit_id or "default_kit"),
+                seed=seed,
+                render_recipe=render_recipe,
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("dry_probe: render failed for run %s", run_id)
+        raise HTTPException(status_code=500, detail=f"render_failed: {exc}") from exc
+
+    artifacts: List[Dict[str, Any]] = list(result.get("artifacts") or [])
+    preview_url = next((art.get("url") for art in artifacts if art.get("url")), None)
+    download_url = preview_url or next((art.get("storage_uri") for art in artifacts if art.get("storage_uri")), None)
+
+    job = {
+        "ok": True,
+        "job_id": result.get("job_id"),
+        "state": "completed",
+        "created_at": now,
+        "payload": {
+            "drummer": drummer_slug,
+            "base_groove": base_groove_id,
+            "seed": seed,
+            "repeats": repeats,
+            "sample_pack_version": sample_pack_version,
+        },
+        "run_id": run_id,
+        "preview_url": preview_url,
+        "download_url": download_url,
+        "artifacts": artifacts,
+        "metadata": {
+            "note_count": candidate.note_count,
+            "tempo_bpm": candidate.tempo_bpm,
+            "time_signature": candidate.time_signature,
+            "bars": candidate.bars,
+            "kit_id": candidate.kit_id,
+            "sections": candidate.sections,
+            "rollup_available": bool(candidate.rollup),
+            "performance_spec": candidate.performance_spec,
+        },
+    }
+
+    job_id = str(job.get("job_id") or f"dry-probe-{uuid.uuid4().hex[:12]}")
+    job["job_id"] = job_id
+    _DRY_PROBE_JOBS[job_id] = job
+    return job
+
+
+@app.post("/api/render/dry-probe")
+def create_dry_probe_job(req: Dict[str, Any]):
+    payload = {
+        "drummer": req.get("drummer"),
+        "base_groove": req.get("base_groove"),
+        "seed": req.get("seed", 0),
+        "repeats": req.get("repeats", 1),
+        "sample_pack_version": req.get("sample_pack_version"),
+    }
+    return _execute_dry_probe(payload)
+
+
+@app.get("/api/render/dry-probe/{job_id}")
+def get_dry_probe_job(job_id: str):
+    job = _DRY_PROBE_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @app.get("/api/sentient-profiles/{drummer_id}")
