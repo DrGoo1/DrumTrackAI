@@ -46,7 +46,7 @@ export async function analyzeTempo(fileKey: string, opts?: { start?: number; end
   return res.json();
 }
 
-export async function sectionizeSmart(fileKey: string) {
+export async function sectionizeSmart(fileKey: string, _bpm?: number) {
   const res = await fetchWithBases(`/align/sections?key=${encodeURIComponent(fileKey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([]) });
   if (!res.ok) throw new Error('Sectionization failed');
   return res.json();
