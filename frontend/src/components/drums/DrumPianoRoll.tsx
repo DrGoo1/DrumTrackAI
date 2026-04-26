@@ -237,7 +237,8 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   onSectionSelect,
   compact,
 }) => {
-  if (!drumTrack) {
+  const hasDrumTrack = Boolean(drumTrack);
+  if (!hasDrumTrack) {
     return (
       <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
         No drum track generated yet.
@@ -291,7 +292,9 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
     return () => window.clearInterval(interval);
   }, [drumEngine]);
 
-  const { resolution_ppq, notes } = drumTrack;
+  const resolution_ppq = drumTrack?.resolution_ppq ?? 960;
+  const notes = drumTrack?.notes ?? [];
+  const drumTrackId = drumTrack?.track_id ?? null;
 
   const trackBarCount = useMemo(
     () => (notes.length ? 1 + Math.max(...notes.map((n) => n.barIndex ?? 0)) : 0),
@@ -1117,7 +1120,7 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
     update();
     laneEl.addEventListener("scroll", update, { passive: true });
     return () => laneEl.removeEventListener("scroll", update);
-  }, [drumTrack?.track_id, barWidthPx]);
+  }, [drumTrackId, barWidthPx]);
 
   React.useEffect(() => {
     if (scrollContainerRef) {
@@ -1128,7 +1131,7 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
         (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = null;
       }
     };
-  }, [scrollContainerRef, drumTrack?.track_id]);
+  }, [scrollContainerRef, drumTrackId]);
 
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-slate-900 text-xs overflow-hidden">
