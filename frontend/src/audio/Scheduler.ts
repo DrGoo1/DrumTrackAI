@@ -1,12 +1,5 @@
 // Scheduler: lookahead scheduler that posts events into the AudioEngine or Worklet
 
-export type ScheduledNote = {
-  time: number; // seconds (AudioContext time)
-  lane: string; // e.g., 'kick','snare'
-  midi: number;
-  velocity: number;
-};
-
 export class Scheduler {
   private lookaheadMs = 100;
   private timer: number | null = null;

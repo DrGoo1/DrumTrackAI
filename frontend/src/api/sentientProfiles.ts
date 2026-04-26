@@ -1,6 +1,6 @@
 import type { DrumGenerationConfig } from "../types/drumTrack";
 
-const profileCache = new Map<string, Promise<Record<string, any> | null>>();
+const profileCache = new Map<string, Promise<{ [key: string]: any } | null>>();
 
 function resolveApiBases(): string[] {
   const envBase = (import.meta as any).env?.VITE_API_BASE as string | undefined;
@@ -23,13 +23,13 @@ async function fetchWithBases(path: string, init?: RequestInit): Promise<Respons
   throw lastErr || new Error("request failed");
 }
 
-export function getSelectedPublicDrummerId(config: DrumGenerationConfig | Record<string, any>): string {
+export function getSelectedPublicDrummerId(config: DrumGenerationConfig | { [key: string]: any }): string {
   return String(
     (config as any)?.publicDrummerId || (config as any)?.drummer || (config as any)?.drummerId || ""
   ).trim();
 }
 
-export async function fetchSentientProfile(publicDrummerId: string): Promise<Record<string, any> | null> {
+export async function fetchSentientProfile(publicDrummerId: string): Promise<{ [key: string]: any } | null> {
   const id = String(publicDrummerId || "").trim();
   if (!id) return null;
   if (!profileCache.has(id)) {

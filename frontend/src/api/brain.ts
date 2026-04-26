@@ -1,7 +1,7 @@
 import { BrainElementDefinition, DrumBrainConfig, FALLBACK_BRAIN_ELEMENTS } from "../types/brain";
 import { getApiBases } from "./api";
 
-export type BrainConfigPatch = Partial<DrumBrainConfig>;
+export type BrainConfigPatch = { [K in keyof DrumBrainConfig]?: DrumBrainConfig[K] };
 
 async function fetchWithBases(path: string, init?: RequestInit): Promise<Response> {
   const bases = getApiBases();
