@@ -1,0 +1,91 @@
+$ErrorActionPreference = 'Stop'
+$path = "docs/assimilation_data_points.csv"
+$lines = @'
+phrase_index,drummer_phrase_features.phrase_index,phase 7 profiles,indirect (positioning)
+phrase_length_bars,drummer_phrase_features.phrase_length_bars,phase 7 profiles,indirect (normalization)
+bar_position_in_phrase,drummer_phrase_features.bar_position_in_phrase,phase 7 profiles,indirect (placement)
+energy_start,drummer_phrase_features.energy_start,phase 7 profiles,yes (dynamics trend)
+energy_end,drummer_phrase_features.energy_end,phase 7 profiles,yes (dynamics trend)
+energy_slope,drummer_phrase_features.energy_slope,phase 7 profiles,yes (builds/drops)
+pattern_repetition_score,drummer_phrase_features.pattern_repetition_score,phase 7 profiles,indirect
+pattern_mutation_rate,drummer_phrase_features.pattern_mutation_rate,phase 7 profiles,indirect
+density_curve_json,drummer_phrase_features.density_curve_json,phase 7 profiles,yes (fill/ghost shaping)
+accent_curve_json,drummer_phrase_features.accent_curve_json,phase 7 profiles,yes (accent placement)
+micro_instrument,drummer_microtiming_profiles.instrument,phase 7 profiles,yes (timing personality)
+micro_subdivision,drummer_microtiming_profiles.subdivision,phase 7 profiles,yes (grid context)
+mean_offset_ms,drummer_microtiming_profiles.mean_offset_ms,phase 7 profiles,yes
+std_offset_ms,drummer_microtiming_profiles.std_offset_ms,phase 7 profiles,yes
+skew_offset_ms,drummer_microtiming_profiles.skew_offset_ms,phase 7 profiles,indirect
+early_hit_probability,drummer_microtiming_profiles.early_hit_probability,phase 7 profiles,yes
+late_hit_probability,drummer_microtiming_profiles.late_hit_probability,phase 7 profiles,yes
+pocket_bias,drummer_microtiming_profiles.pocket_bias,phase 7 profiles,yes
+context_label,drummer_microtiming_profiles.context_label,phase 7 profiles,indirect
+timing_histogram_json,drummer_microtiming_profiles.histogram_json,phase 7 profiles,indirect (sampling)
+dyn_instrument,drummer_dynamic_profiles.instrument,phase 7 profiles,yes (velocity personality)
+velocity_mean,drummer_dynamic_profiles.velocity_mean,phase 7 profiles,yes
+velocity_std,drummer_dynamic_profiles.velocity_std,phase 7 profiles,yes
+velocity_skew,drummer_dynamic_profiles.velocity_skew,phase 7 profiles,indirect
+ghost_note_probability,drummer_dynamic_profiles.ghost_note_probability,phase 7 profiles,yes
+accent_probability,drummer_dynamic_profiles.accent_probability,phase 7 profiles,yes
+ghost_to_accent_ratio,drummer_dynamic_profiles.ghost_to_accent_ratio,phase 7 profiles,indirect
+accent_grid_json,drummer_dynamic_profiles.accent_grid_json,phase 7 profiles,yes (accenting)
+velocity_histogram_json,drummer_dynamic_profiles.velocity_histogram_json,phase 7 profiles,indirect (sampling)
+phrase_dynamic_curve_json,drummer_dynamic_profiles.phrase_dynamic_curve_json,phase 7 profiles,yes (macro dynamics)
+hihat_closed_ratio,drummer_cymbal_language.hihat_closed_ratio,phase 7 profiles,yes
+hihat_open_ratio,drummer_cymbal_language.hihat_open_ratio,phase 7 profiles,yes
+hihat_pedal_ratio,drummer_cymbal_language.hihat_pedal_ratio,phase 7 profiles,yes
+hihat_bark_probability,drummer_cymbal_language.hihat_bark_probability,phase 7 profiles,yes
+ride_usage_ratio,drummer_cymbal_language.ride_usage_ratio,phase 7 profiles,yes
+ride_bell_probability,drummer_cymbal_language.ride_bell_probability,phase 7 profiles,yes
+crash_frequency_per_min,drummer_cymbal_language.crash_frequency_per_min,phase 7 profiles,yes
+crash_on_downbeat_probability,drummer_cymbal_language.crash_on_downbeat_probability,phase 7 profiles,yes
+crash_on_transition_probability,drummer_cymbal_language.crash_on_transition_probability,phase 7 profiles,yes
+cymbal_decay_spacing_score,drummer_cymbal_language.cymbal_decay_spacing_score,phase 7 profiles,indirect (feasibility)
+cymbal_density_curve_json,drummer_cymbal_language.cymbal_density_curve_json,phase 7 profiles,indirect
+simultaneous_hit_matrix_json,drummer_limb_coordination.simultaneous_hit_matrix_json,phase 7 profiles,indirect (feasibility)
+kick_snare_dependency,drummer_limb_coordination.kick_snare_dependency,phase 7 profiles,indirect
+kick_hat_dependency,drummer_limb_coordination.kick_hat_dependency,phase 7 profiles,indirect
+snare_hat_dependency,drummer_limb_coordination.snare_hat_dependency,phase 7 profiles,indirect
+independence_score,drummer_limb_coordination.independence_score,phase 7 profiles,indirect (constraints)
+syncopation_score,drummer_limb_coordination.syncopation_score,phase 7 profiles,indirect (feel)
+limb_feasibility_violation_rate,drummer_limb_coordination.limb_feasibility_violation_rate,phase 7 profiles,yes (validation)
+common_limb_patterns_json,drummer_limb_coordination.common_limb_patterns_json,phase 7 profiles,indirect
+section_label,drummer_fill_behavior.section_label,phase 7 profiles,yes (placement)
+phrase_position,drummer_fill_behavior.phrase_position,phase 7 profiles,yes (placement)
+fill_probability,drummer_fill_behavior.fill_probability,phase 7 profiles,yes
+fill_length_mean_beats,drummer_fill_behavior.fill_length_mean_beats,phase 7 profiles,yes
+fill_length_std_beats,drummer_fill_behavior.fill_length_std_beats,phase 7 profiles,indirect
+fill_density_mean,drummer_fill_behavior.fill_density_mean,phase 7 profiles,yes (fill intensity)
+tom_usage_probability,drummer_fill_behavior.tom_usage_probability,phase 7 profiles,indirect
+snare_fill_probability,drummer_fill_behavior.snare_fill_probability,phase 7 profiles,indirect
+kick_fill_probability,drummer_fill_behavior.kick_fill_probability,phase 7 profiles,indirect
+cymbal_exit_probability,drummer_fill_behavior.cymbal_exit_probability,phase 7 profiles,yes (transition)
+triplet_fill_probability,drummer_fill_behavior.triplet_fill_probability,phase 7 profiles,yes (style)
+linear_fill_probability,drummer_fill_behavior.linear_fill_probability,phase 7 profiles,yes (style)
+rudimental_fill_probability,drummer_fill_behavior.rudimental_fill_probability,phase 7 profiles,yes (style)
+common_fill_shapes_json,drummer_fill_behavior.common_fill_shapes_json,phase 7 profiles,indirect
+embedding_model_version,drummer_personality_embeddings.model_version,embedding,indirect
+embedding_dim,drummer_personality_embeddings.embedding_dim,embedding,indirect
+embedding_vector_json,drummer_personality_embeddings.embedding_vector_json,embedding,indirect
+embedding_source_song_count,drummer_personality_embeddings.source_song_count,embedding,indirect
+embedding_source_hit_count,drummer_personality_embeddings.source_hit_count,embedding,indirect
+embedding_confidence_score,drummer_personality_embeddings.confidence_score,embedding,yes (overall bias)
+embedding_timing_weight,drummer_personality_embeddings.timing_weight,embedding,yes
+embedding_dynamics_weight,drummer_personality_embeddings.dynamics_weight,embedding,yes
+embedding_fill_weight,drummer_personality_embeddings.fill_weight,embedding,yes
+embedding_cymbal_weight,drummer_personality_embeddings.cymbal_weight,embedding,yes
+embedding_coordination_weight,drummer_personality_embeddings.coordination_weight,embedding,yes
+embedding_phrase_weight,drummer_personality_embeddings.phrase_weight,embedding,yes
+audit_source_similarity,generated_drummer_transform_audits.source_similarity_score,generation audit,indirect (QA)
+audit_target_similarity,generated_drummer_transform_audits.target_similarity_score,generation audit,indirect (QA)
+audit_human_feasibility,generated_drummer_transform_audits.human_feasibility_score,generation audit,indirect (QA)
+audit_groove_preservation,generated_drummer_transform_audits.groove_preservation_score,generation audit,indirect (QA)
+audit_before_features_json,generated_drummer_transform_audits.before_features_json,generation audit,indirect
+audit_after_features_json,generated_drummer_transform_audits.after_features_json,generation audit,indirect
+audit_transform_delta_json,generated_drummer_transform_audits.transform_delta_json,generation audit,indirect
+'@
+$rows = $lines -split "`r?`n"
+foreach ($line in $rows) {
+  if ($line.Trim().Length -gt 0) { Add-Content -LiteralPath $path -Value $line }
+}
+Write-Host "Appended $($rows.Length) lines to $path"
