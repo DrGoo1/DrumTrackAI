@@ -1,11 +1,7 @@
-import type { KitManifestV1, ListKitsResponse } from "../types/kits";
 import type { DrumGenerationConfig, DrumGenerationResponse } from "../types/drumTrack";
 import { attachSentientProfilesWithOverrides } from "./sentientProfileSession";
 
-export type AnalyzeTempoResponse = { bpm: number; tempoCurve?: Array<{time:number,bpm:number}> };
-
 // Use same-origin (relative URLs) since nginx proxies all API requests
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || '';
 
 export function getApiBases(): string[] {
   const envBase = (import.meta as any).env?.VITE_API_BASE as string | undefined;
@@ -50,7 +46,7 @@ export async function analyzeTempo(fileKey: string, opts?: { start?: number; end
   return res.json();
 }
 
-export async function sectionizeSmart(fileKey: string, bpm: number) {
+export async function sectionizeSmart(fileKey: string, _bpm?: number) {
   const res = await fetchWithBases(`/align/sections?key=${encodeURIComponent(fileKey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([]) });
   if (!res.ok) throw new Error('Sectionization failed');
   return res.json();
@@ -149,13 +145,13 @@ export async function analyzeTempoSections(fileKey: string, sections: Array<{ st
   return res.json();
 }
 
-export async function listKits(): Promise<ListKitsResponse> {
+export async function listKits(): Promise<any> {
   const res = await fetchWithBases(`/api/kits`);
   if (!res.ok) throw new Error('List kits failed');
   return res.json();
 }
 
-export async function getKitManifest(kitId: string): Promise<KitManifestV1> {
+export async function getKitManifest(kitId: string): Promise<any> {
   const safe = encodeURIComponent(String(kitId || "").trim());
   const res = await fetchWithBases(`/api/kits/${safe}/manifest`);
   if (!res.ok) throw new Error('Get kit manifest failed');

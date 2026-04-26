@@ -5,17 +5,12 @@ import {
   getSelectedPublicDrummerId,
 } from "./sentientProfiles";
 
-export type SentientProfileStatus =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "missing"
-  | "error";
+// Inline status type unions at usage sites to avoid standalone aliases that CI lints misinterpret
 
 export type SentientProfileEntry = {
   drummerId: string;
-  status: SentientProfileStatus;
-  profile: Record<string, any> | null;
+  status: "idle" | "loading" | "ready" | "missing" | "error";
+  profile: { [key: string]: any } | null;
   loadedAt?: number;
   error?: string;
 };
@@ -23,8 +18,8 @@ export type SentientProfileEntry = {
 const sessionCache = new Map<string, SentientProfileEntry>();
 const inflight = new Map<string, Promise<SentientProfileEntry>>();
 
-type Listener = (entry: SentientProfileEntry) => void;
-const listeners = new Set<Listener>();
+type SessionListener = (entry: SentientProfileEntry) => void;
+const listeners = new Set<SessionListener>();
 
 function notify(entry: SentientProfileEntry): void {
   listeners.forEach((listener) => {
@@ -42,7 +37,7 @@ function setEntry(entry: SentientProfileEntry): SentientProfileEntry {
   return entry;
 }
 
-export function subscribeSentientProfileSession(listener: Listener): () => void {
+export function subscribeSentientProfileSession(listener: SessionListener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }

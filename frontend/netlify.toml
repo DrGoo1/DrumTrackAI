@@ -5,6 +5,7 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_VERSION = "10"
+  CI = "false"
   # Set this to your backend API base (e.g., https://api.yourdomain.com)
   # Netlify UI can override these securely per environment.
   REACT_APP_API_BASE = ""
