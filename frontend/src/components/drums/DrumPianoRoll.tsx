@@ -238,13 +238,6 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
   compact,
 }) => {
   const hasDrumTrack = Boolean(drumTrack);
-  if (!hasDrumTrack) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
-        No drum track generated yet.
-      </div>
-    );
-  }
 
   const headerScrollRef = useRef<HTMLDivElement | null>(null);
   const laneScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1132,6 +1125,14 @@ export const DrumPianoRoll: React.FC<DrumPianoRollProps> = ({
       }
     };
   }, [scrollContainerRef, drumTrackId]);
+
+  if (!hasDrumTrack) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
+        No drum track generated yet.
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-slate-900 text-xs overflow-hidden">

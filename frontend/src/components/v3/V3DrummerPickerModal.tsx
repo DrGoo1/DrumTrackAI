@@ -27,10 +27,10 @@ function normalizeProfileType(d: DrummerCard | null | undefined): string {
     String((d as any)?.style_group || "").trim() ||
     String((d as any)?.profileType || "").trim() ||
     String((d as any)?.profile_type || "").trim();
-  const s = raw.toLowerCase().replace(/[\/|,]+/g, " ");
+  const s = raw.toLowerCase().replace(/[|/,]+/g, " ");
   if (!s) return "";
-  const normalized = s.replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
-  const primary = normalized.split(/[_\-]+/g).filter(Boolean)[0] || "";
+  const normalized = s.replace(/[^-a-z0-9_]/g, "");
+  const primary = normalized.split(/[-_]+/g).filter(Boolean)[0] || "";
   return primary || normalized;
 }
 
