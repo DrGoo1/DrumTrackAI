@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from admin.services.central_database_service import CentralDatabaseService
 
+import requests  # type: ignore
+from jose import jwt  # type: ignore
+
 from backend.services.artifact_url_service import ArtifactUrlService
 from backend.services.calibration_render_service import CalibrationRenderService, RenderRequest
 from backend.services.calibration_candidate_generator import generate_candidate_run
@@ -272,14 +275,68 @@ def _parse_jwt_sub_unverified(token: str) -> Optional[str]:
         return None
 
 
+_JWKS_CACHE: Dict[str, Any] = {"keys": [], "fetched_at": 0.0}
+
+
+def _load_jwks(force: bool = False) -> Dict[str, Any]:
+    import time as _time
+    now = _time.time()
+    ttl = 600.0
+    if not force and _JWKS_CACHE.get("keys") and (now - float(_JWKS_CACHE.get("fetched_at", 0.0))) < ttl:
+        return _JWKS_CACHE
+    url = os.getenv("SUPABASE_JWKS_URL", "").strip()
+    if not url:
+        return {"keys": []}
+    try:
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict) and isinstance(data.get("keys"), list):
+            _JWKS_CACHE["keys"] = data["keys"]
+            _JWKS_CACHE["fetched_at"] = now
+            return _JWKS_CACHE
+    except Exception:
+        return {"keys": []}
+    return {"keys": []}
+
+
+def _verify_supabase_jwt(token: str) -> Optional[Dict[str, Any]]:
+    audience = os.getenv("SUPABASE_JWT_AUDIENCE", None)
+    jwks = _load_jwks()
+    headers = jwt.get_unverified_header(token)
+    kid = headers.get("kid")
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            try:
+                return jwt.decode(token, key, algorithms=[key.get("alg", "RS256")], audience=audience)
+            except Exception:
+                continue
+    # As a fallback, try each key
+    for key in jwks.get("keys", []):
+        try:
+            return jwt.decode(token, key, algorithms=[key.get("alg", "RS256")], audience=audience)
+        except Exception:
+            continue
+    return None
+
+
 def _require_user(request: Request) -> str:
     token = _bearer_token_from_request(request)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    user_id = _parse_jwt_sub_unverified(token)
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    return user_id
+    # Production: verify against Supabase JWKS
+    if str(os.getenv("ALLOW_UNVERIFIED_JWT", "").strip().lower()) in {"1", "true", "yes"}:
+        user_id = _parse_jwt_sub_unverified(token)
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return user_id
+    claims = _verify_supabase_jwt(token)
+    if not isinstance(claims, dict):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed")
+    sub = str(claims.get("sub") or claims.get("user_id") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing subject")
+    return sub
 
 
 class AnalysisDetailPayload(BaseModel):
