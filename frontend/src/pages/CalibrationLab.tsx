@@ -1,10 +1,12 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { resolveApiBaseNormalized } from '../utils/apiBase';
 import {
   Activity,
   ArrowRight,
   ClipboardList,
   Gauge,
+  Headphones,
   RefreshCcw,
   Save,
   Sparkles,
@@ -12,7 +14,7 @@ import {
 } from 'lucide-react';
 
 type CompletionStatus = 'ready' | 'refine' | 'needs_tuning' | 'unknown';
-type TabId = 'adjustments' | 'metrics' | 'feedback';
+type TabId = 'adjustments' | 'metrics' | 'feedback' | 'listening';
 
 interface CompletionStatusInfo {
   status: CompletionStatus;
@@ -24,6 +26,13 @@ interface DrummerListItem {
   displayName: string;
   headline?: string;
   completionStatus: CompletionStatusInfo;
+  assimilationStatus?: {
+    status?: string;
+    ready_for_calibration?: boolean;
+    missing_steps?: string[];
+    counts?: Record<string, number>;
+    metrics?: Record<string, number>;
+  };
   latestRunAt?: string | null;
   metricsWithin?: number;
   metricsCompared?: number;
@@ -58,9 +67,67 @@ interface DrummerDetailPayload {
   rollupTargets: Record<string, any>;
   metrics?: Record<string, any>;
   metadata?: AdjustmentMetadata;
+  assimilationStatus?: {
+    status?: string;
+    ready_for_calibration?: boolean;
+    missing_steps?: string[];
+    counts?: Record<string, number>;
+    metrics?: Record<string, number>;
+  };
   runHistory?: CalibrationRun[];
   feedbackSamples?: FeedbackEntry[];
   completionStatus?: CompletionStatusInfo;
+}
+
+interface CalibrationHealth {
+  status: 'ok' | 'degraded';
+  db_path?: string | null;
+  db_exists: boolean;
+  calibration_tables: Record<string, boolean>;
+  notes?: string[];
+}
+
+interface AudioArtifactPayload {
+  artifact_id: string;
+  run_id?: string | null;
+  artifact_type: string;
+  storage_uri: string;
+  public_url?: string | null;
+  duration_sec?: number | null;
+  loudness_lufs?: number | null;
+  render_recipe?: Record<string, unknown> | null;
+}
+
+interface EvaluationItemPayload {
+  item_id: string;
+  session_id: string;
+  target_drummer_slug: string;
+  base_groove_id: string;
+  baseline_label?: string | null;
+  reference_artifact_id?: string | null;
+  baseline_run_id?: string | null;
+  candidate_a_run_id?: string | null;
+  candidate_b_run_id?: string | null;
+  eval_mode: 'single' | 'AB' | 'ABX';
+  ab_mapping: Record<string, string | null>;
+  artifact_map: Record<string, AudioArtifactPayload[]>;
+}
+
+interface GenerateCandidatesResponse {
+  status: string;
+  run_ids: string[];
+  session_id?: string | null;
+  item_id?: string | null;
+}
+
+type JudgmentChoice = '' | 'A' | 'B' | 'tie';
+
+interface PairwiseJudgmentForm {
+  preferred_candidate: JudgmentChoice;
+  closer_to_target: JudgmentChoice;
+  better_feel: JudgmentChoice;
+  more_musical: JudgmentChoice;
+  confidence: number;
 }
 
 interface DrummerDetail extends DrummerDetailPayload {
@@ -133,10 +200,41 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
 ];
 
 const api = axios.create({ baseURL: '/calibration' });
+const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
+
+const ensureAbsoluteArtifactUrl = (value: string): string => {
+  if (!value) return value;
+  if (/^https?:\/\//i.test(value)) return value;
+  const normalized = value.startsWith('/') ? value : `/${value}`;
+  const apiBase = resolveApiBaseNormalized();
+  const backendBase = (apiBase && apiBase.trim()) || 'http://localhost:8000';
+  return `${backendBase.replace(/\/$/, '')}${normalized}`;
+};
+
+const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
+  const candidate = artifact.public_url ?? artifact.storage_uri;
+  if (!candidate) return null;
+  const trimmed = candidate.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
+
+  const normalized = trimmed.replace(/\\/g, '/');
+  const marker = '/artifacts/calibration/';
+  const markerIndex = normalized.toLowerCase().indexOf(marker);
+  if (markerIndex !== -1) {
+    const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
+    return ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${relative}`);
+  }
+
+  const segments = normalized.split('/').filter(Boolean);
+  const filename = segments.pop();
+  return filename ? ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${filename}`) : null;
+};
 
 const formatPercent = (value?: number | null) => {
-  if (value == null) return '—';
-  return ${Math.round(value * 100)}%;
+  if (value == null) return 'ï¿½';
+  return `${Math.round(value * 100)}%`;
 };
 
 const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : 'No runs yet');
@@ -167,7 +265,7 @@ const slugToTitle = (value: string) =>
 
 const CompletionBadge: React.FC<{ status: CompletionStatus; ratio?: number | null }> = ({ status, ratio }) => (
   <span
-    className={inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide }
+    className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
   >
     <span className="h-2 w-2 rounded-full bg-current" />
     {STATUS_LABEL[status]}
@@ -182,8 +280,8 @@ const labelize = (key: string) =>
     .replace('Fpm', 'FPM');
 
 const formatShare = (value?: number | null) => {
-  if (value == null) return '—';
-  return ${(value * 100).toFixed(1)}%;
+  if (value == null) return 'ï¿½';
+  return `${(value * 100).toFixed(1)}%`;
 };
 
 const describeRunOutcome = (run: CalibrationRun) => {
@@ -232,6 +330,22 @@ const CalibrationLab: React.FC = () => {
   const [textErrors, setTextErrors] = useState<Record<string, string>>({});
   const [feedbackForm, setFeedbackForm] = useState<{ rating: number; comment: string }>({ rating: 4, comment: '' });
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [health, setHealth] = useState<CalibrationHealth | null>(null);
+  const [currentItem, setCurrentItem] = useState<EvaluationItemPayload | null>(null);
+  const [itemLoading, setItemLoading] = useState(false);
+  const [itemError, setItemError] = useState<string | null>(null);
+  const [listeningBusy, setListeningBusy] = useState(false);
+  const [reviewerId, setReviewerId] = useState('calibration_auto');
+  const [baseGrooveId, setBaseGrooveId] = useState('base_groove');
+  const [pairwiseSubmitting, setPairwiseSubmitting] = useState(false);
+  const [pairwiseMessage, setPairwiseMessage] = useState<string | null>(null);
+  const [pairwiseForm, setPairwiseForm] = useState<PairwiseJudgmentForm>({
+    preferred_candidate: '',
+    closer_to_target: '',
+    better_feel: '',
+    more_musical: '',
+    confidence: 3,
+  });
 
   const loadDrummers = useCallback(async () => {
     setListLoading(true);
@@ -250,6 +364,21 @@ const CalibrationLab: React.FC = () => {
     }
   }, [selectedSlug]);
 
+  const loadHealth = useCallback(async () => {
+    try {
+      const response = await api.get<CalibrationHealth>('/health');
+      setHealth(response.data);
+    } catch (error) {
+      setHealth({
+        status: 'degraded',
+        db_exists: false,
+        db_path: null,
+        calibration_tables: {},
+        notes: ['health_unavailable'],
+      });
+    }
+  }, []);
+
   const loadDetail = useCallback(
     async (slug: string | null) => {
       if (!slug) {
@@ -261,7 +390,7 @@ const CalibrationLab: React.FC = () => {
       setDetailError(null);
       setStatusMessage(null);
       try {
-        const response = await api.get<DrummerDetailPayload>(/drummers/);
+        const response = await api.get<DrummerDetailPayload>(`/drummers/${slug}`);
         const payload = response.data;
         const merged: DrummerDetail = {
           ...payload,
@@ -286,9 +415,31 @@ const CalibrationLab: React.FC = () => {
     []
   );
 
+  const fetchItem = useCallback(async (itemId: string) => {
+    const normalized = (itemId || '').trim();
+    if (!normalized) {
+      setCurrentItem(null);
+      return;
+    }
+    setItemLoading(true);
+    setItemError(null);
+    try {
+      const response = await api.get<EvaluationItemPayload>(`/evaluation-items/${normalized}`);
+      setCurrentItem(response.data);
+    } catch (error) {
+      setItemError('Unable to load listening item.');
+    } finally {
+      setItemLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadDrummers();
   }, [loadDrummers]);
+
+  useEffect(() => {
+    loadHealth();
+  }, [loadHealth]);
 
   useEffect(() => {
     loadDetail(selectedSlug);
@@ -312,6 +463,8 @@ const CalibrationLab: React.FC = () => {
   const hasPendingChanges = changedKeys.length > 0;
 
   const completion = detail?.completionStatus ?? detail?.metrics?.completion_status;
+  const assimilation = detail?.assimilationStatus;
+  const missingSteps = assimilation?.missing_steps ?? [];
 
   const handleSelectDrummer = (slug: string) => {
     setSelectedSlug(slug);
@@ -344,12 +497,65 @@ const CalibrationLab: React.FC = () => {
     }
   };
 
+  const handleQueueListeningItem = async () => {
+    if (!selectedSlug) return;
+    setListeningBusy(true);
+    setItemError(null);
+    setPairwiseMessage(null);
+    try {
+      const response = await api.post<GenerateCandidatesResponse>('/generate-candidates', {
+        base_groove_id: baseGrooveId,
+        target_drummer_slug: selectedSlug,
+        candidate_count: 2,
+        include_baseline: true,
+        reviewer_id: reviewerId || `calibration_auto_${selectedSlug}`,
+      });
+      const nextItemId = response.data.item_id;
+      if (nextItemId) {
+        await fetchItem(nextItemId);
+        setTab('listening');
+        setPairwiseMessage('Listening item queued. Review baseline vs A/B and submit judgment.');
+      } else {
+        setPairwiseMessage('Candidates queued, but no evaluation item was created.');
+      }
+    } catch (error) {
+      setItemError('Unable to queue listening item. Check backend logs and retry.');
+    } finally {
+      setListeningBusy(false);
+    }
+  };
+
+  const handlePairwiseSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!currentItem) return;
+    if (!pairwiseForm.preferred_candidate || !pairwiseForm.closer_to_target || !pairwiseForm.better_feel || !pairwiseForm.more_musical) {
+      setPairwiseMessage('Select all judgment choices before submitting.');
+      return;
+    }
+    setPairwiseSubmitting(true);
+    setPairwiseMessage(null);
+    try {
+      await api.post(`/evaluation-items/${currentItem.item_id}/judgment`, {
+        preferred_candidate: pairwiseForm.preferred_candidate,
+        closer_to_target: pairwiseForm.closer_to_target,
+        better_feel: pairwiseForm.better_feel,
+        more_musical: pairwiseForm.more_musical,
+        confidence: pairwiseForm.confidence,
+      });
+      setPairwiseMessage('Judgment saved.');
+    } catch (error) {
+      setPairwiseMessage('Unable to save judgment.');
+    } finally {
+      setPairwiseSubmitting(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!pendingAdjustments || !selectedSlug) return;
     setSaving(true);
     setStatusMessage(null);
     try {
-      await api.post(/drummers//adjustments, {
+      await api.post(`/drummers/${selectedSlug}/adjustments`, {
         adjustments: pendingAdjustments,
       });
       setStatusMessage('Adjustments saved. Regenerate to validate the new feel.');
@@ -364,9 +570,9 @@ const CalibrationLab: React.FC = () => {
   const handleGenerate = async () => {
     if (!selectedSlug) return;
     setGenerating(true);
-    setStatusMessage('Launching calibration run…');
+    setStatusMessage('Launching calibration runï¿½');
     try {
-      await api.post(/drummers//generate);
+      await api.post(`/drummers/${selectedSlug}/generate`);
       setStatusMessage('Generation triggered. Refresh for updated metrics once the run completes.');
       await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
     } catch (error) {
@@ -446,6 +652,34 @@ const CalibrationLab: React.FC = () => {
     [detail]
   );
 
+  const artifactGroups = useMemo(() => {
+    if (!currentItem?.artifact_map) return [] as Array<{ label: string; entries: AudioArtifactPayload[] }>;
+    return Object.entries(currentItem.artifact_map).map(([label, entries]) => {
+      let displayLabel = label;
+      if (label.toLowerCase() === 'baseline' && currentItem.baseline_label) {
+        displayLabel = `Baseline Â· ${currentItem.baseline_label}`;
+      }
+      return { label: displayLabel, entries: entries || [] };
+    });
+  }, [currentItem]);
+
+  const sourceAnalysisId = useMemo(() => {
+    if (!currentItem?.artifact_map) return null;
+    const candidateArtifact = currentItem.artifact_map.A?.[0] || currentItem.artifact_map.B?.[0];
+    const recipe = candidateArtifact?.render_recipe as Record<string, unknown> | undefined;
+    const sourceAnalysis = recipe?.source_analysis_id;
+    if (typeof sourceAnalysis === 'string' && sourceAnalysis.trim()) {
+      return sourceAnalysis.trim();
+    }
+    return null;
+  }, [currentItem]);
+
+  const sourceAnalysisUrl = useMemo(() => {
+    if (!sourceAnalysisId) return null;
+    const apiBase = resolveApiBaseNormalized() || 'http://localhost:8000';
+    return `${apiBase.replace(/\/$/, '')}/calibration/analysis/${encodeURIComponent(sourceAnalysisId)}`;
+  }, [sourceAnalysisId]);
+
   return (
     <div className="min-h-screen bg-[#09031a] text-white">
       <header className="relative overflow-hidden border-b border-purple-500/20 bg-gradient-to-br from-purple-950/80 via-purple-900/40 to-amber-900/20">
@@ -470,7 +704,7 @@ const CalibrationLab: React.FC = () => {
               </span>
               <span className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1">
                 <Gauge className="h-3 w-3 text-amber-200" />
-                Metric tolerance target ±10%
+                Metric tolerance target ï¿½10%
               </span>
             </div>
           </div>
@@ -494,6 +728,21 @@ const CalibrationLab: React.FC = () => {
                 {statusMessage}
               </div>
             )}
+            {health && (
+              <div className="rounded-xl border border-purple-400/40 bg-purple-500/10 p-4 text-xs text-purple-100">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold uppercase tracking-[0.2em]">Backend Health</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                      health.status === 'ok' ? 'bg-emerald-500/25 text-emerald-100' : 'bg-rose-500/25 text-rose-100'
+                    }`}
+                  >
+                    {health.status}
+                  </span>
+                </div>
+                <p className="mt-2 break-all text-[11px] text-purple-100/80">DB: {health.db_path || 'unknown'}</p>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -510,7 +759,7 @@ const CalibrationLab: React.FC = () => {
                   key={option.id}
                   type="button"
                   onClick={() => setFilter(option.id)}
-                  className={ounded-full px-3.5 py-1.5 text-xs font-semibold transition }
+                  className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition"
                 >
                   {option.label}
                 </button>
@@ -521,7 +770,7 @@ const CalibrationLab: React.FC = () => {
           <section className="space-y-4">
             {listLoading ? (
               <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-6 text-sm text-purple-100/70">
-                Loading roster…
+                Loading rosterï¿½
               </div>
             ) : listError ? (
               <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-100/90">
@@ -537,7 +786,7 @@ const CalibrationLab: React.FC = () => {
                   key={entry.slug}
                   type="button"
                   onClick={() => handleSelectDrummer(entry.slug)}
-                  className={w-full rounded-3xl border px-5 py-4 text-left transition hover:-translate-y-1 hover:border-amber-300/60 hover:shadow-lg hover:shadow-purple-900/30 }
+                  className="w-full rounded-3xl border px-5 py-4 text-left transition hover:-translate-y-1 hover:border-amber-300/60 hover:shadow-lg hover:shadow-purple-900/30"
                 >
                   <div className="flex items-center justify-between">
                     <div>
@@ -554,6 +803,10 @@ const CalibrationLab: React.FC = () => {
                     />
                   </div>
                   <div className="mt-4 flex flex-wrap gap-3 text-[11px] text-purple-100/60">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5">
+                      <Activity className="h-3 w-3 text-amber-300" />
+                      {entry.assimilationStatus?.ready_for_calibration ? 'Ready for calibration' : 'Needs processing'}
+                    </span>
                     <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5">
                       <Gauge className="h-3 w-3 text-amber-300" />
                       {entry.metricsWithin ?? 0}/{entry.metricsCompared ?? 0} metrics in tolerance
@@ -592,12 +845,12 @@ const CalibrationLab: React.FC = () => {
                 then compare target vs actual in the <em>Metrics</em> tab.
               </li>
               <li>
-                <span className="font-semibold text-amber-200">5.</span> Share qualitative feedback in the <em>Feedback</em> tab— focus on feel, fills, and balance observations.
+                <span className="font-semibold text-amber-200">5.</span> Share qualitative feedback in the <em>Feedback</em> tabï¿½ focus on feel, fills, and balance observations.
               </li>
             </ol>
             <p className="mt-4 text-xs italic text-purple-100/60">
               Producers: once a profile holds =80% metrics within tolerance and external feedback is positive, flip the
-              completion status to “ready” in the backend.
+              completion status to ï¿½readyï¿½ in the backend.
             </p>
           </section>
         </aside>
@@ -605,7 +858,7 @@ const CalibrationLab: React.FC = () => {
         <section className="space-y-8">
           <div className="rounded-3xl border border-purple-500/30 bg-purple-900/20 p-6">
             {detailLoading ? (
-              <div className="text-sm text-purple-100/70">Loading calibration detail…</div>
+              <div className="text-sm text-purple-100/70">Loading calibration detailï¿½</div>
             ) : detailError ? (
               <div className="text-sm text-rose-100/80">{detailError}</div>
             ) : !detail ? (
@@ -622,18 +875,30 @@ const CalibrationLab: React.FC = () => {
                       )}
                     </div>
                     <p className="mt-2 text-xs text-purple-100/70">
-                      Last run: {formatDate(detail?.runHistory?.[0]?.started_at)} • Note count:{' '}
-                      {detail?.metrics?.note_count ?? '—'}
+                      Last run: {formatDate(detail?.runHistory?.[0]?.started_at)} ï¿½ Note count:{' '}
+                      {detail?.metrics?.note_count ?? 'ï¿½'}
                     </p>
+                    <p className="mt-2 text-xs text-purple-100/70">
+                      Assimilation: {assimilation?.ready_for_calibration ? 'Ready for calibration' : 'Needs processing'}
+                    </p>
+                    {!assimilation?.ready_for_calibration && missingSteps.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-amber-100">
+                        {missingSteps.map((step) => (
+                          <span key={step} className="rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5">
+                            {slugToTitle(step)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
                       onClick={handleSave}
                       disabled={!hasPendingChanges || saving}
-                      className={inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition }
+                      className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition"
                     >
-                      <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Adjustments'}
+                      <Save className="h-4 w-4" /> {saving ? 'Savingï¿½' : 'Save Adjustments'}
                     </button>
                     <button
                       type="button"
@@ -641,7 +906,15 @@ const CalibrationLab: React.FC = () => {
                       disabled={generating}
                       className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
                     >
-                      <RefreshCcw className="h-4 w-4" /> {generating ? 'Launching…' : 'Run Calibration'}
+                      <RefreshCcw className="h-4 w-4" /> {generating ? 'Launchingï¿½' : 'Run Calibration'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleQueueListeningItem}
+                      disabled={listeningBusy || !selectedSlug}
+                      className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
+                    >
+                      <Headphones className="h-4 w-4" /> {listeningBusy ? 'Queuingï¿½' : 'Queue Listening Item'}
                     </button>
                     <button
                       type="button"
@@ -672,12 +945,12 @@ const CalibrationLab: React.FC = () => {
                 )}
 
                 <div className="flex flex-wrap gap-3 text-xs">
-                  {(['adjustments', 'metrics', 'feedback'] as TabId[]).map((id) => (
+                  {(['adjustments', 'metrics', 'feedback', 'listening'] as TabId[]).map((id) => (
                     <button
                       key={id}
                       type="button"
                       onClick={() => setTab(id)}
-                      className={ounded-full px-4 py-2 font-semibold transition }
+                      className="rounded-full px-4 py-2 font-semibold transition"
                     >
                       {labelize(id)}
                     </button>
@@ -784,10 +1057,10 @@ const CalibrationLab: React.FC = () => {
                               return (
                                 <tr key={row.key}>
                                   <td className="px-4 py-3 font-medium text-white">{row.label}</td>
-                                  <td className="px-4 py-3">{actual != null ? actual.toFixed(3) : '—'}</td>
-                                  <td className="px-4 py-3">{target != null ? target.toFixed(3) : '—'}</td>
-                                  <td className={px-4 py-3 }>
-                                    {diff != null ? formatPercent(diff) : '—'}
+                                  <td className="px-4 py-3">{actual != null ? actual.toFixed(3) : 'ï¿½'}</td>
+                                  <td className="px-4 py-3">{target != null ? target.toFixed(3) : 'ï¿½'}</td>
+                                  <td className="px-4 py-3">
+                                    {diff != null ? formatPercent(diff) : 'ï¿½'}
                                   </td>
                                 </tr>
                               );
@@ -833,7 +1106,7 @@ const CalibrationLab: React.FC = () => {
                             >
                               <div className="space-y-1 text-xs text-purple-100/80">
                                 <div className="flex items-center gap-2">
-                                  <span className={ounded-full px-2 py-0.5 text-[11px] }>
+                                  <span className="rounded-full px-2 py-0.5 text-[11px]">
                                     {describeRunOutcome(run)}
                                   </span>
                                   <span>{formatDate(run.started_at)}</span>
@@ -843,8 +1116,8 @@ const CalibrationLab: React.FC = () => {
                                   {run.delta_summary || 'Not provided'}
                                 </div>
                                 <div className="flex flex-wrap gap-3 text-purple-100/70">
-                                  <span>Notes: {run.note_count ?? '—'}</span>
-                                  <span>FPM: {run.fills_per_minute?.toFixed(2) ?? '—'}</span>
+                                  <span>Notes: {run.note_count ?? 'ï¿½'}</span>
+                                  <span>FPM: {run.fills_per_minute?.toFixed(2) ?? 'ï¿½'}</span>
                                 </div>
                               </div>
                             </div>
@@ -917,9 +1190,158 @@ const CalibrationLab: React.FC = () => {
                         disabled={feedbackSubmitting}
                         className="mt-4 inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-purple-900/40 transition hover:shadow-amber-500/30"
                       >
-                        <Users className="h-4 w-4" /> {feedbackSubmitting ? 'Sending…' : 'Submit Feedback'}
+                        <Users className="h-4 w-4" /> {feedbackSubmitting ? 'Sendingï¿½' : 'Submit Feedback'}
                       </button>
                     </form>
+                  </div>
+                )}
+
+                {tab === 'listening' && (
+                  <div className="space-y-5 rounded-3xl border border-purple-500/20 bg-purple-900/10 p-5">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="text-xs text-purple-100">
+                        Reviewer ID
+                        <input
+                          type="text"
+                          value={reviewerId}
+                          onChange={(event) => setReviewerId(event.target.value)}
+                          className="mt-2 w-full rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs text-purple-100"
+                        />
+                      </label>
+                      <label className="text-xs text-purple-100">
+                        Base Groove ID
+                        <input
+                          type="text"
+                          value={baseGrooveId}
+                          onChange={(event) => setBaseGrooveId(event.target.value)}
+                          className="mt-2 w-full rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs text-purple-100"
+                        />
+                      </label>
+                    </div>
+
+                    {itemLoading && <p className="text-xs text-purple-100/70">Loading listening itemâ€¦</p>}
+                    {itemError && <p className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs text-rose-200">{itemError}</p>}
+                    {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
+
+                    {currentItem && (
+                      <>
+                        <div className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4 text-xs text-purple-100/80">
+                          <p>Session: <span className="font-mono">{currentItem.session_id}</span></p>
+                          <p className="mt-1">Item: <span className="font-mono">{currentItem.item_id}</span></p>
+                          <p className="mt-1">Base groove: {currentItem.base_groove_id}</p>
+                          {currentItem.baseline_label && <p className="mt-1">Baseline song: {currentItem.baseline_label}</p>}
+                          {sourceAnalysisId && (
+                            <p className="mt-1">
+                              A/B generated from baseline analysis:{' '}
+                              {sourceAnalysisUrl ? (
+                                <a
+                                  href={sourceAnalysisUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-mono text-purple-200 underline decoration-dotted underline-offset-2 hover:text-white"
+                                >
+                                  {sourceAnalysisId}
+                                </a>
+                              ) : (
+                                <span className="font-mono">{sourceAnalysisId}</span>
+                              )}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-3">
+                          {artifactGroups.map(({ label, entries }) => (
+                            <div key={label} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-3">
+                              <p className="text-[11px] uppercase tracking-[0.3em] text-purple-200/80">{label}</p>
+                              {sourceAnalysisId && (label === 'A' || label === 'B') && (
+                                <p className="mt-1 text-[10px] text-purple-100/60">
+                                  Source analysis:{' '}
+                                  {sourceAnalysisUrl ? (
+                                    <a
+                                      href={sourceAnalysisUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="font-mono text-purple-200 underline decoration-dotted underline-offset-2 hover:text-white"
+                                    >
+                                      {sourceAnalysisId}
+                                    </a>
+                                  ) : (
+                                    <span className="font-mono">{sourceAnalysisId}</span>
+                                  )}
+                                </p>
+                              )}
+                              <div className="mt-2 space-y-3">
+                                {entries.map((artifact) => {
+                                  const src = resolveArtifactSource(artifact);
+                                  return (
+                                    <div key={artifact.artifact_id} className="space-y-2">
+                                      {src ? (
+                                        <audio controls src={src} className="w-full" preload="none" />
+                                      ) : (
+                                        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
+                                          Unable to resolve audio source.
+                                        </div>
+                                      )}
+                                      <p className="text-[11px] text-purple-100/60">{artifact.artifact_id}</p>
+                                    </div>
+                                  );
+                                })}
+                                {entries.length === 0 && <p className="text-[11px] text-purple-100/60">No artifacts yet.</p>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <form onSubmit={handlePairwiseSubmit} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
+                          <p className="text-sm font-semibold text-white">Pairwise Judgment</p>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            {([
+                              ['preferred_candidate', 'Preferred candidate'],
+                              ['closer_to_target', 'Closer to target drummer'],
+                              ['better_feel', 'Better feel'],
+                              ['more_musical', 'More musical'],
+                            ] as Array<[keyof PairwiseJudgmentForm, string]>).map(([key, label]) => (
+                              <label key={key} className="text-xs text-purple-100">
+                                {label}
+                                <select
+                                  value={String(pairwiseForm[key] || '')}
+                                  onChange={(event) =>
+                                    setPairwiseForm((prev) => ({ ...prev, [key]: event.target.value as JudgmentChoice }))
+                                  }
+                                  className="mt-2 w-full rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs text-purple-100"
+                                >
+                                  <option value="">Selectâ€¦</option>
+                                  <option value="A">A</option>
+                                  <option value="B">B</option>
+                                  <option value="tie">Tie</option>
+                                </select>
+                              </label>
+                            ))}
+                          </div>
+                          <label className="mt-3 block text-xs text-purple-100">
+                            Confidence (1-5)
+                            <input
+                              type="range"
+                              min={1}
+                              max={5}
+                              step={1}
+                              value={pairwiseForm.confidence}
+                              onChange={(event) =>
+                                setPairwiseForm((prev) => ({ ...prev, confidence: Number(event.target.value) }))
+                              }
+                              className="mt-2 w-full accent-amber-400"
+                            />
+                          </label>
+                          <button
+                            type="submit"
+                            disabled={pairwiseSubmitting}
+                            className="mt-4 inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-gradient-to-r from-purple-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white"
+                          >
+                            <Users className="h-4 w-4" /> {pairwiseSubmitting ? 'Submittingâ€¦' : 'Submit Judgment'}
+                          </button>
+                        </form>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
