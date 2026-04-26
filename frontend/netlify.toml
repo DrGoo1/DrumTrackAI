@@ -5,6 +5,11 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_VERSION = "10"
+  # Set this to your backend API base (e.g., https://api.yourdomain.com)
+  # Netlify UI can override these securely per environment.
+  REACT_APP_API_BASE = ""
+  REACT_APP_SUPABASE_URL = ""
+  REACT_APP_SUPABASE_ANON_KEY = ""
 
 [[redirects]]
   from = "/*"
