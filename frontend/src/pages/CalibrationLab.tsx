@@ -199,7 +199,8 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
   },
 ];
 
-const api = axios.create({ baseURL: '/calibration' });
+const API_BASE = resolveApiBaseNormalized();
+const api = axios.create({ baseURL: `${API_BASE}/calibration` });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
