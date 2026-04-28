@@ -352,7 +352,7 @@ const CalibrationLab: React.FC = () => {
     setListLoading(true);
     setListError(null);
     try {
-      const response = await api.get<DrummerListItem[]>('/drummers');
+      const response = await api.get<DrummerListItem[]>('drummers');
       const payload = response.data || [];
       setDrummers(payload);
       if (payload.length && !selectedSlug) {
@@ -367,7 +367,7 @@ const CalibrationLab: React.FC = () => {
 
   const loadHealth = useCallback(async () => {
     try {
-      const response = await api.get<CalibrationHealth>('/health');
+      const response = await api.get<CalibrationHealth>('health');
       setHealth(response.data);
     } catch (error) {
       setHealth({
@@ -391,7 +391,7 @@ const CalibrationLab: React.FC = () => {
       setDetailError(null);
       setStatusMessage(null);
       try {
-        const response = await api.get<DrummerDetailPayload>(`/drummers/${slug}`);
+        const response = await api.get<DrummerDetailPayload>(`drummers/${slug}`);
         const payload = response.data;
         const merged: DrummerDetail = {
           ...payload,
@@ -425,7 +425,7 @@ const CalibrationLab: React.FC = () => {
     setItemLoading(true);
     setItemError(null);
     try {
-      const response = await api.get<EvaluationItemPayload>(`/evaluation-items/${normalized}`);
+      const response = await api.get<EvaluationItemPayload>(`evaluation-items/${normalized}`);
       setCurrentItem(response.data);
     } catch (error) {
       setItemError('Unable to load listening item.');
@@ -504,7 +504,7 @@ const CalibrationLab: React.FC = () => {
     setItemError(null);
     setPairwiseMessage(null);
     try {
-      const response = await api.post<GenerateCandidatesResponse>('/generate-candidates', {
+      const response = await api.post<GenerateCandidatesResponse>('generate-candidates', {
         base_groove_id: baseGrooveId,
         target_drummer_slug: selectedSlug,
         candidate_count: 2,
@@ -536,7 +536,7 @@ const CalibrationLab: React.FC = () => {
     setPairwiseSubmitting(true);
     setPairwiseMessage(null);
     try {
-      await api.post(`/evaluation-items/${currentItem.item_id}/judgment`, {
+      await api.post(`evaluation-items/${currentItem.item_id}/judgment`, {
         preferred_candidate: pairwiseForm.preferred_candidate,
         closer_to_target: pairwiseForm.closer_to_target,
         better_feel: pairwiseForm.better_feel,
@@ -556,7 +556,7 @@ const CalibrationLab: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await api.post(`/drummers/${selectedSlug}/adjustments`, {
+      await api.post(`drummers/${selectedSlug}/adjustments`, {
         adjustments: pendingAdjustments,
       });
       setStatusMessage('Adjustments saved. Regenerate to validate the new feel.');
@@ -573,7 +573,7 @@ const CalibrationLab: React.FC = () => {
     setGenerating(true);
     setStatusMessage('Launching calibration run�');
     try {
-      await api.post(`/drummers/${selectedSlug}/generate`);
+      await api.post(`drummers/${selectedSlug}/generate`);
       setStatusMessage('Generation triggered. Refresh for updated metrics once the run completes.');
       await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
     } catch (error) {
@@ -593,7 +593,7 @@ const CalibrationLab: React.FC = () => {
     setFeedbackSubmitting(true);
     setStatusMessage(null);
     try {
-      await api.post('/feedback', {
+      await api.post('feedback', {
         drummer: selectedSlug,
         rating: feedbackForm.rating,
         comment: feedbackForm.comment.trim(),
