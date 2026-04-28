@@ -3,13 +3,15 @@ const LOCAL_API_PORT = "8000";
 /** Resolve the backend base URL, preferring explicit overrides and falling back to sensible defaults. */
 export function resolveApiBase(): string {
   if (typeof window !== "undefined") {
-    const win = window as any;
-    if (win.__API_BASE__) {
-      return String(win.__API_BASE__);
-    }
+    // Prefer explicit environment variable configured at build-time (e.g., Netlify UI)
     const explicitBase = process.env.REACT_APP_API_BASE;
     if (explicitBase) {
       return explicitBase;
+    }
+    // Then allow a runtime override via window.__API_BASE__ if provided
+    const win = window as any;
+    if (win.__API_BASE__) {
+      return String(win.__API_BASE__);
     }
     const protocol = win.location?.protocol || "http:";
     const hostname = win.location?.hostname || "localhost";
