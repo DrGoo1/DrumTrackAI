@@ -348,6 +348,17 @@ const CalibrationLab: React.FC = () => {
     confidence: 3,
   });
 
+  const [debugInfo, setDebugInfo] = useState<{
+    apiBase: string;
+    drummersUrl: string;
+    status?: number;
+    contentType?: string | null;
+    bodyStart?: string;
+    isArray?: boolean;
+    length?: number;
+    error?: string;
+  } | null>(null);
+
   const loadDrummers = useCallback(async () => {
     setListLoading(true);
     setListError(null);
@@ -452,6 +463,34 @@ const CalibrationLab: React.FC = () => {
   useEffect(() => {
     loadDetail(selectedSlug);
   }, [selectedSlug, loadDetail]);
+
+  useEffect(() => {
+    const url = `${API_BASE.replace(/\/$/, '')}/calibration/drummers`;
+    fetch(url, { mode: 'cors', cache: 'no-store' })
+      .then(async (r) => {
+        const text = await r.text();
+        let parsed: any;
+        let parseErr: string | undefined;
+        try {
+          parsed = JSON.parse(text);
+        } catch (e: any) {
+          parseErr = e?.message ? String(e.message) : 'parse_error';
+        }
+        setDebugInfo({
+          apiBase: API_BASE,
+          drummersUrl: url,
+          status: r.status,
+          contentType: r.headers.get('content-type'),
+          bodyStart: text.slice(0, 240),
+          isArray: Array.isArray(parsed),
+          length: Array.isArray(parsed) ? parsed.length : undefined,
+          error: parseErr,
+        });
+      })
+      .catch((e) => {
+        setDebugInfo({ apiBase: API_BASE, drummersUrl: url, error: String(e) });
+      });
+  }, []);
 
   const filteredDrummers = useMemo(() => {
     if (filter === 'all') return drummers;
@@ -776,6 +815,23 @@ const CalibrationLab: React.FC = () => {
           </section>
 
           <div className="text-[11px] text-amber-300/90">Debug: {drummers.length} drummers loaded</div>
+
+          {debugInfo && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100/90">
+              <div>API Base: <span className="break-all">{debugInfo.apiBase}</span></div>
+              <div>URL: <span className="break-all">{debugInfo.drummersUrl}</span></div>
+              {typeof debugInfo.status !== 'undefined' && (
+                <div>Status: {debugInfo.status} · {debugInfo.contentType || 'no content-type'}</div>
+              )}
+              {typeof debugInfo.isArray !== 'undefined' && (
+                <div>Detected Array: {String(debugInfo.isArray)} {typeof debugInfo.length !== 'undefined' ? `· length ${debugInfo.length}` : ''}</div>
+              )}
+              {debugInfo.error && <div className="text-rose-200">Error: {debugInfo.error}</div>}
+              {debugInfo.bodyStart && (
+                <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[10px] text-amber-200/80">{debugInfo.bodyStart}</pre>
+              )}
+            </div>
+          )}
 
           <section className="space-y-4">
             {listLoading ? (
