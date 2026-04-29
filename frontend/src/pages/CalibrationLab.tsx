@@ -775,6 +775,8 @@ const CalibrationLab: React.FC = () => {
             </div>
           </section>
 
+          <div className="text-[11px] text-amber-300/90">Debug: {drummers.length} drummers loaded</div>
+
           <section className="space-y-4">
             {listLoading ? (
               <div className="rounded-3xl border border-purple-500/20 bg-purple-900/10 p-6 text-sm text-purple-100/70">
