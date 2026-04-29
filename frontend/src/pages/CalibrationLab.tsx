@@ -352,11 +352,18 @@ const CalibrationLab: React.FC = () => {
     setListLoading(true);
     setListError(null);
     try {
-      const response = await api.get<DrummerListItem[]>('drummers');
-      const payload = response.data || [];
-      setDrummers(payload);
-      if (payload.length && !selectedSlug) {
-        setSelectedSlug(payload[0].slug);
+      const response = await api.get<DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] }>('drummers');
+      const raw: any = response.data;
+      const items: DrummerListItem[] = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.value)
+        ? raw.value
+        : Array.isArray(raw?.drummers)
+        ? raw.drummers
+        : [];
+      setDrummers(items);
+      if (items.length && !selectedSlug) {
+        setSelectedSlug(items[0].slug);
       }
     } catch (error) {
       setListError('Unable to load drummer roster. Confirm the calibration API is available.');
