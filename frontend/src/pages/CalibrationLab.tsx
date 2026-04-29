@@ -814,7 +814,7 @@ const CalibrationLab: React.FC = () => {
             </div>
           </section>
 
-          <div className="text-[11px] text-amber-300/90">Debug: {drummers.length} drummers loaded</div>
+          <div className="text-[11px] text-amber-300/90">Debug: {drummers.length} drummers loaded · API_BASE: {API_BASE}</div>
 
           {debugInfo && (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100/90">

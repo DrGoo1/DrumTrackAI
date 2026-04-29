@@ -22,6 +22,10 @@ export function resolveApiBase(): string {
       void desiredPort;
       return "";
     }
+    const hostLower = String(hostname).toLowerCase();
+    if (hostLower.endsWith("netlify.app") || hostLower === "drumtrackai.netlify.app") {
+      return "https://drumtrackai-calibration-api.onrender.com";
+    }
     const portSegment = win.location?.port ? `:${win.location.port}` : "";
     return `${protocol}//${hostname}${portSegment}`;
   }
