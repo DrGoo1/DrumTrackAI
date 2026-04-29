@@ -93,3 +93,4 @@ secrets.yaml
 admin/drumtrackai.db*
 ChatGPT_Gap_Analysis/
 _BACKUPS/
+admin/models/checkpoints/
