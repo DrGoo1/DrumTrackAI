@@ -465,7 +465,8 @@ const CalibrationLab: React.FC = () => {
   }, [selectedSlug, loadDetail]);
 
   useEffect(() => {
-    const url = `${API_BASE.replace(/\/$/, '')}/calibration/drummers`;
+    const liveBase = resolveApiBaseNormalized();
+    const url = `${liveBase.replace(/\/$/, '')}/calibration/drummers`;
     fetch(url, { mode: 'cors', cache: 'no-store' })
       .then(async (r) => {
         const text = await r.text();
@@ -477,7 +478,7 @@ const CalibrationLab: React.FC = () => {
           parseErr = e?.message ? String(e.message) : 'parse_error';
         }
         setDebugInfo({
-          apiBase: API_BASE,
+          apiBase: liveBase,
           drummersUrl: url,
           status: r.status,
           contentType: r.headers.get('content-type'),
@@ -488,7 +489,7 @@ const CalibrationLab: React.FC = () => {
         });
       })
       .catch((e) => {
-        setDebugInfo({ apiBase: API_BASE, drummersUrl: url, error: String(e) });
+        setDebugInfo({ apiBase: liveBase, drummersUrl: url, error: String(e) });
       });
   }, []);
 
