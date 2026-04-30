@@ -10,7 +10,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from admin.services.central_database_service import CentralDatabaseService
@@ -21,6 +22,9 @@ from jose import jwt  # type: ignore
 from backend.services.artifact_url_service import ArtifactUrlService
 from backend.services.calibration_render_service import CalibrationRenderService, RenderRequest
 from backend.services.calibration_candidate_generator import generate_candidate_run
+from backend.app.assimilation.api.routes_drummer_generation import (
+    router as assimilation_generation_router,
+)
 
 if TYPE_CHECKING:
     from admin.services.central_database_service import (
@@ -1223,6 +1227,26 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
         return sorted(results, key=lambda item: item.displayName.lower())
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# ASGI application factory
+app = FastAPI(title="DrumTrackAI Calibration API")
+
+_allowed_origins = [
+    "https://drumtrackai.netlify.app",
+    "http://localhost:3000",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Routers
+app.include_router(router)
+app.include_router(assimilation_generation_router)
 
 
 @router.post("/storage/presign-upload", response_model=StoragePresignUploadResponse)
