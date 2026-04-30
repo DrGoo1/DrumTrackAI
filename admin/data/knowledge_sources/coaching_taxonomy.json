@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "goals_sound_first": [
+    {
+      "id": "laid_back_pocket",
+      "label": "Laid-back pocket",
+      "tags": ["feel", "timing"],
+      "description": "Backbeat and time feel slightly behind the beat; relaxed but confident.",
+      "suggested_knobs": [
+        {"path": "humanizeAmount", "direction": "up", "reason": "More micro-timing variance"},
+        {"path": "swingAmount", "direction": "slight_up", "reason": "Optional subtle lilt depending on style"}
+      ]
+    },
+    {
+      "id": "tight_and_punchy",
+      "label": "Tight + punchy",
+      "tags": ["feel", "mix"],
+      "description": "Cleaner timing, fewer small deviations, strong backbeat clarity.",
+      "suggested_knobs": [
+        {"path": "humanizeAmount", "direction": "down", "reason": "Tighter timing"},
+        {"path": "ghostNoteAmount", "direction": "down", "reason": "Reduce blur in snare lane"}
+      ]
+    },
+    {
+      "id": "more_ghosty",
+      "label": "More ghost notes",
+      "tags": ["snare", "technique"],
+      "description": "Adds lighter snare notes between backbeats for groove depth.",
+      "suggested_knobs": [
+        {"path": "ghostNoteAmount", "direction": "up", "reason": "Increase ghost density"},
+        {"path": "humanizeAmount", "direction": "slight_up", "reason": "More natural ghost placement"}
+      ]
+    },
+    {
+      "id": "less_busy_more_space",
+      "label": "Less busy / more space",
+      "tags": ["density", "arrangement"],
+      "description": "Fewer notes, clearer groove. Especially useful under vocals.",
+      "suggested_knobs": [
+        {"path": "variation", "direction": "down", "reason": "Fewer pattern changes"},
+        {"path": "fillControls.density", "direction": "down", "reason": "Fewer fills"},
+        {"path": "fillControls.frequency", "direction": "down", "reason": "Less frequent fills"}
+      ]
+    },
+    {
+      "id": "more_energy_bigger_chorus",
+      "label": "More energy / bigger chorus",
+      "tags": ["dynamics", "arrangement"],
+      "description": "More intensity and contrast in chorus (often more cymbal + harder hits).",
+      "suggested_knobs": [
+        {"path": "intensity", "direction": "up", "reason": "Stronger velocities / accents"},
+        {"path": "chorusRidePreference", "direction": "up", "reason": "More ride in chorus when applicable"}
+      ]
+    }
+  ],
+  "goals_technique_first": [
+    {
+      "id": "ghost_notes",
+      "label": "Ghost notes",
+      "tags": ["snare", "dynamics"],
+      "description": "Low-velocity snare notes that create internal subdivision feel.",
+      "suggested_knobs": [
+        {"path": "ghostNoteAmount", "direction": "up"},
+        {"path": "humanizeAmount", "direction": "slight_up"}
+      ]
+    },
+    {
+      "id": "tom_led_groove",
+      "label": "Tom-led groove",
+      "tags": ["toms", "orchestration"],
+      "description": "Toms participate in the timekeeping/ostinato, not just fills.",
+      "notes": "May require dedicated generator controls/presets beyond current defaults; start by using song/flavor presets that increase tom usage.",
+      "suggested_knobs": [
+        {"path": "fillControls.density", "direction": "slight_up", "reason": "More tom movement can arrive via fills initially"},
+        {"path": "variation", "direction": "up", "reason": "More orchestration variation"}
+      ]
+    },
+    {
+      "id": "ride_timekeeping",
+      "label": "Ride timekeeping",
+      "tags": ["cymbals", "timekeeping"],
+      "description": "Use ride as primary timekeeper (often choruses or jazz/rock).",
+      "suggested_knobs": [
+        {"path": "hatsToRideBlend", "direction": "up"},
+        {"path": "chorusRidePreference", "direction": "up"}
+      ]
+    },
+    {
+      "id": "shuffle_swing_feel",
+      "label": "Shuffle / swing feel",
+      "tags": ["feel", "timing"],
+      "description": "Triplet-based subdivision feel.",
+      "suggested_knobs": [
+        {"path": "swingAmount", "direction": "up"}
+      ]
+    }
+  ],
+  "preset_tier_guidance": {
+    "song": "Signature song-inspired intent (big, recognizable feel or orchestration bias).",
+    "flavor": "Style color and vibe (ghost density, hat/ride preference, humanization).",
+    "utility": "Practical helpers (tighten timing, reduce fills, simplify hats)."
+  }
+}

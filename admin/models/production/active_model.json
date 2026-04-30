@@ -1,0 +1,10 @@
+{
+  "drumtrackai_version": "v1.1.17",
+  "name": "drum_humanizer",
+  "model_version": "v1.1.17.0",
+  "candidates": [
+    "/models/production/v1.1.17/drum_humanizer/model.pth",
+    "/models/production/v1.1.17/drum_humanizer/best_model.pth",
+    "/models/checkpoints/best_model.pth"
+  ]
+}

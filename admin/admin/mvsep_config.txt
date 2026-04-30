@@ -1,0 +1,3 @@
+# MVSep API Configuration
+# Replace the value below with your actual MVSep API key
+MVSEP_API_KEY=MfPdUMwxmFDCcDJj0Z4kmb9SCOLKPh

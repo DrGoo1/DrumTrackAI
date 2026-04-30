@@ -1,0 +1,213 @@
+{
+  "ok": true,
+  "db_path": "F:\\DrumTracKAI_v1.1.17\\admin\\data\\drummerbrain_clips.db",
+  "cases_path": "F:\\DrumTracKAI_v1.1.17\\backend\\drummerbrain\\eval_cases.json",
+  "case_count": 8,
+  "used_count": 6,
+  "fallback_count": 2,
+  "used_fraction": 0.75,
+  "dataset_stats": {
+    "drumbeats": {
+      "used": 5,
+      "fallback": 0,
+      "cases": 5
+    },
+    "snare_rudiments": {
+      "used": 1,
+      "fallback": 0,
+      "cases": 1
+    }
+  },
+  "dataset_type_stats": {
+    "audio_phrase": {
+      "used": 6,
+      "fallback": 0,
+      "cases": 6
+    }
+  },
+  "failure_reasons": {
+    "no_scored_candidates": 1,
+    "built_no_events": 1
+  },
+  "checks": {
+    "used_fraction": 0.75
+  },
+  "results": [
+    {
+      "case": "bpm70_2bar_44",
+      "used": false,
+      "reason": "no_scored_candidates",
+      "asset_id": null,
+      "dataset_id": null,
+      "dataset_type": "",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": null,
+      "best_score": null,
+      "target_bpm": null,
+      "score_terms": null
+    },
+    {
+      "case": "bpm90_4bar_44",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "drumbeats:c24703c4e1173b1e",
+      "dataset_id": "drumbeats",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 7,
+      "best_score": 0.801065438630494,
+      "target_bpm": 90.0,
+      "score_terms": {
+        "src_bpm": 110.29412,
+        "tempo_err_bpm": 20.294120000000007,
+        "pattern_len_s": 11.96799803,
+        "bar_multiple_err": 0.4879992612500006,
+        "loop_fit_err": 0.10873425614470411,
+        "confidence": 0.8884398359324278,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    },
+    {
+      "case": "bpm100_8bar_44",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "drumbeats:c24703c4e1173b1e",
+      "dataset_id": "drumbeats",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 8,
+      "best_score": 0.4501732048381494,
+      "target_bpm": 100.0,
+      "score_terms": {
+        "src_bpm": 110.29412,
+        "tempo_err_bpm": 10.294120000000007,
+        "pattern_len_s": 11.96799803,
+        "bar_multiple_err": 0.013334154166666501,
+        "loop_fit_err": 0.39572166106046747,
+        "confidence": 0.8884398359324278,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    },
+    {
+      "case": "bpm120_4bar_44",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "drumbeats:c24703c4e1173b1e",
+      "dataset_id": "drumbeats",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 8,
+      "best_score": 0.379448768915861,
+      "target_bpm": 120.0,
+      "score_terms": {
+        "src_bpm": 110.29412,
+        "tempo_err_bpm": 9.705879999999993,
+        "pattern_len_s": 11.96799803,
+        "bar_multiple_err": 0.0160009849999998,
+        "loop_fit_err": 0.33155069210852806,
+        "confidence": 0.8884398359324278,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    },
+    {
+      "case": "bpm140_8bar_44",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "snare_rudiments:16521f5894679e94",
+      "dataset_id": "snare_rudiments",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 8,
+      "best_score": 0.8763099043949829,
+      "target_bpm": 140.0,
+      "score_terms": {
+        "src_bpm": 130.81396,
+        "tempo_err_bpm": 9.186039999999991,
+        "pattern_len_s": 315.1046703,
+        "bar_multiple_err": 0.18894232499997088,
+        "loop_fit_err": 0.04352295286905404,
+        "confidence": 0.5499229792054376,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    },
+    {
+      "case": "bpm160_1bar_44",
+      "used": false,
+      "reason": "built_no_events",
+      "asset_id": "snare_rudiments:16521f5894679e94",
+      "dataset_id": null,
+      "dataset_type": "",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": null,
+      "best_score": null,
+      "target_bpm": null,
+      "score_terms": null
+    },
+    {
+      "case": "bpm120_4bar_34",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "drumbeats:c24703c4e1173b1e",
+      "dataset_id": "drumbeats",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 8,
+      "best_score": 0.5066497957288453,
+      "target_bpm": 120.0,
+      "score_terms": {
+        "src_bpm": 110.29412,
+        "tempo_err_bpm": 9.705879999999993,
+        "pattern_len_s": 11.96799803,
+        "bar_multiple_err": 0.0213346466666664,
+        "loop_fit_err": 0.498663019081396,
+        "confidence": 0.8884398359324278,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    },
+    {
+      "case": "bpm120_4bar_68",
+      "used": true,
+      "reason": "selected",
+      "asset_id": "drumbeats:c24703c4e1173b1e",
+      "dataset_id": "drumbeats",
+      "dataset_type": "audio_phrase",
+      "policy_version": "drummerbrain_v1_mvp_2026_02_11",
+      "candidate_count": 8,
+      "best_score": 0.13092443962903771,
+      "target_bpm": 120.0,
+      "score_terms": {
+        "src_bpm": 110.29412,
+        "tempo_err_bpm": 9.705879999999993,
+        "pattern_len_s": 11.96799803,
+        "bar_multiple_err": 0.0106673233333332,
+        "loop_fit_err": 0.0026739618372080276,
+        "confidence": 0.8884398359324278,
+        "has_kick": false,
+        "has_snare": false,
+        "backbeat_ratio": 0.0,
+        "syncopation_ratio": 0.0,
+        "hits_per_beat": 0.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "downloads": [
+    {
+      "url": "https://youtu.be/I57nIP0vc44?si=8Jqlg8NK7xhpnldH",
+      "title": "Fool in the Rain (Remaster)",
+      "uploader": "Led Zeppelin",
+      "duration": 371,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Fool in the Rain (Remaster).wav",
+      "drummer_name": "John Bonham",
+      "style": "rock",
+      "download_date": "20150801"
+    },
+    {
+      "url": "https://youtu.be/TA9Rec1qAFQ?si=BnYdWJ2ZJiwSiEjl",
+      "title": "Led Zeppelin - Good Times Bad Times (Official Audio)",
+      "uploader": "Led Zeppelin",
+      "duration": 167,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Led Zeppelin - Good Times Bad Times (Official Audio).wav",
+      "drummer_name": "John Bonham",
+      "style": "rock",
+      "download_date": "20200710"
+    },
+    {
+      "url": "https://youtu.be/y8OtzJtp-EM?si=sGNXb4LMoMjDY0uh",
+      "title": "Immigrant Song (Remaster)",
+      "uploader": "Led Zeppelin",
+      "duration": 147,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Immigrant Song (Remaster).wav",
+      "drummer_name": "John Bonham",
+      "style": "rock",
+      "download_date": "20170125"
+    }
+  ]
+}

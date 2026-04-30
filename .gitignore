@@ -25,17 +25,14 @@ var/
 *.db
 *.sqlite
 *.sqlite3
-
 # Environment files
 .env
 .flaskenv
-
 # IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
-
 # OS specific files
 .DS_Store
 .DS_Store?
@@ -44,3 +41,5 @@ var/
 .Trashes
 ehthumbs.db
 Thumbs.db
+admin/data/test_download/
+admin/data/test_download/videoplayback.wav

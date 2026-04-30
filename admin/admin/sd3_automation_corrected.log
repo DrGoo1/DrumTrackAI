@@ -1,0 +1,24 @@
+2025-07-23 07:44:51,397 - INFO - Corrected database initialized successfully
+2025-07-23 07:44:51,397 - INFO - SD3 Corrected Automation System initialized
+2025-07-23 07:44:51,401 - INFO - Processing MIDI file: china_china_hard_053.mid (Instrument: china_china_hard)
+2025-07-23 07:44:51,402 - INFO - Loading MIDI file and positioning: china_china_hard_053.mid
+2025-07-23 07:45:08,175 - INFO - MIDI file loaded and positioned: china_china_hard_053.mid
+2025-07-23 07:45:08,176 - INFO - Opening bounce window via Track menu...
+2025-07-23 07:45:15,780 - INFO - Bounce window opened successfully
+2025-07-23 07:45:15,780 - INFO - Configuring bounce settings...
+2025-07-23 07:45:20,383 - INFO - Bounce settings configured successfully
+2025-07-23 07:45:20,384 - INFO - Selecting output folder: H:\DrumTracKAI_v1.1.7\admin\sd3_extracted_samples
+2025-07-23 07:45:25,047 - INFO - Bounce process started
+2025-07-23 07:45:25,047 - INFO - Waiting for bounce completion...
+2025-07-23 07:47:25,080 - ERROR - Bounce timeout after 120 seconds
+2025-07-23 07:47:25,086 - ERROR - Failed to process china_china_hard_053.mid: Bounce process failed or timed out
+2025-07-23 07:47:25,086 - INFO - Processing MIDI file: china_china_medium_052.mid (Instrument: china_china_medium)
+2025-07-23 07:47:25,087 - INFO - Loading MIDI file and positioning: china_china_medium_052.mid
+2025-07-23 07:47:41,862 - INFO - MIDI file loaded and positioned: china_china_medium_052.mid
+2025-07-23 07:47:41,862 - INFO - Opening bounce window via Track menu...
+2025-07-23 07:47:49,468 - INFO - Bounce window opened successfully
+2025-07-23 07:47:49,468 - INFO - Configuring bounce settings...
+2025-07-23 07:47:54,070 - INFO - Bounce settings configured successfully
+2025-07-23 07:47:54,071 - INFO - Selecting output folder: H:\DrumTracKAI_v1.1.7\admin\sd3_extracted_samples
+2025-07-23 07:47:58,717 - INFO - Bounce process started
+2025-07-23 07:47:58,717 - INFO - Waiting for bounce completion...

@@ -1,0 +1,10 @@
+[
+  {"name": "bpm70_2bar_44", "bpm": 70.0, "bars": 2, "time_signature": [4, 4]},
+  {"name": "bpm90_4bar_44", "bpm": 90.0, "bars": 4, "time_signature": [4, 4]},
+  {"name": "bpm100_8bar_44", "bpm": 100.0, "bars": 8, "time_signature": [4, 4]},
+  {"name": "bpm120_4bar_44", "bpm": 120.0, "bars": 4, "time_signature": [4, 4]},
+  {"name": "bpm140_8bar_44", "bpm": 140.0, "bars": 8, "time_signature": [4, 4]},
+  {"name": "bpm160_1bar_44", "bpm": 160.0, "bars": 1, "time_signature": [4, 4]},
+  {"name": "bpm120_4bar_34", "bpm": 120.0, "bars": 4, "time_signature": [3, 4]},
+  {"name": "bpm120_4bar_68", "bpm": 120.0, "bars": 4, "time_signature": [6, 8]}
+]

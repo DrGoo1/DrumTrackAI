@@ -1,0 +1,8 @@
+# YouTube Integration Requirements
+# Install with: pip install -r requirements_youtube.txt
+
+# YouTube downloader
+yt-dlp>=2024.1.0
+
+# All training requirements
+-r requirements.txt

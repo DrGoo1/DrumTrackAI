@@ -1,0 +1,9 @@
+{
+  "total_patterns": 579,
+  "processed_patterns": 579,
+  "successful_extractions": 0,
+  "failed_extractions": 579,
+  "success_rate": 0.0,
+  "total_time_seconds": 23906.723039150238,
+  "average_time_per_sample": 41.28967709697796
+}

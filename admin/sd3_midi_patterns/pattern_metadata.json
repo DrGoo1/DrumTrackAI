@@ -1,0 +1,6494 @@
+[
+  {
+    "name": "hihat_hihat_closed_tip_ghost_closed_000",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_ghost_slightly_open_001",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_ghost_quarter_open_002",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_ghost_half_open_003",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_ghost_three_quarter_open_004",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_ghost_fully_open_005",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_closed_006",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_slightly_open_007",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_quarter_open_008",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_half_open_009",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_three_quarter_open_010",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_soft_fully_open_011",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_closed_012",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_slightly_open_013",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_quarter_open_014",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_half_open_015",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_three_quarter_open_016",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_soft_fully_open_017",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_closed_018",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_slightly_open_019",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_quarter_open_020",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_half_open_021",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_three_quarter_open_022",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_fully_open_023",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_closed_024",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_slightly_open_025",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_quarter_open_026",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_half_open_027",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_three_quarter_open_028",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_medium_hard_fully_open_029",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_closed_030",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_slightly_open_031",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_quarter_open_032",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_half_open_033",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_three_quarter_open_034",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_hard_fully_open_035",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_closed_036",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_closed",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_slightly_open_037",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_slightly_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_quarter_open_038",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_quarter_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_half_open_039",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_half_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_three_quarter_open_040",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_three_quarter_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_tip_accent_fully_open_041",
+    "instrument": "hihat",
+    "technique": "hihat_closed_tip_fully_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_closed_042",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_slightly_open_043",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_quarter_open_044",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_half_open_045",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_three_quarter_open_046",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_ghost_fully_open_047",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_closed_048",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_slightly_open_049",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_quarter_open_050",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_half_open_051",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_three_quarter_open_052",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_soft_fully_open_053",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_closed_054",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_slightly_open_055",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_quarter_open_056",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_half_open_057",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_three_quarter_open_058",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_soft_fully_open_059",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_closed_060",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_slightly_open_061",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_quarter_open_062",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_half_open_063",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_three_quarter_open_064",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_fully_open_065",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_closed_066",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_slightly_open_067",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_quarter_open_068",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_half_open_069",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_three_quarter_open_070",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_medium_hard_fully_open_071",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_closed_072",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_slightly_open_073",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_quarter_open_074",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_half_open_075",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_three_quarter_open_076",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_hard_fully_open_077",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_closed_078",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_closed",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_slightly_open_079",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_slightly_open",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_quarter_open_080",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_quarter_open",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_half_open_081",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_half_open",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_three_quarter_open_082",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_three_quarter_open",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_closed_edge_accent_fully_open_083",
+    "instrument": "hihat",
+    "technique": "hihat_closed_edge_fully_open",
+    "note": 22,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_closed_084",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_slightly_open_085",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_quarter_open_086",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_half_open_087",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_three_quarter_open_088",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_ghost_fully_open_089",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_closed_090",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_slightly_open_091",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_quarter_open_092",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_half_open_093",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_three_quarter_open_094",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_soft_fully_open_095",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_closed_096",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_slightly_open_097",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_quarter_open_098",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_half_open_099",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_three_quarter_open_100",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_soft_fully_open_101",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_closed_102",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_slightly_open_103",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_quarter_open_104",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_half_open_105",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_three_quarter_open_106",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_fully_open_107",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_closed_108",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_slightly_open_109",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_quarter_open_110",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_half_open_111",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_three_quarter_open_112",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_medium_hard_fully_open_113",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_closed_114",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_slightly_open_115",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_quarter_open_116",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_half_open_117",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_three_quarter_open_118",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_hard_fully_open_119",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_closed_120",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_closed",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_slightly_open_121",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_slightly_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_quarter_open_122",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_half_open_123",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_half_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_three_quarter_open_124",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_three_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_1_accent_fully_open_125",
+    "instrument": "hihat",
+    "technique": "hihat_open_1_fully_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_closed_126",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_slightly_open_127",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_quarter_open_128",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_half_open_129",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_three_quarter_open_130",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_ghost_fully_open_131",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_closed_132",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_slightly_open_133",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_quarter_open_134",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_half_open_135",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_three_quarter_open_136",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_soft_fully_open_137",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_closed_138",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_slightly_open_139",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_quarter_open_140",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_half_open_141",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_three_quarter_open_142",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_soft_fully_open_143",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_closed_144",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_slightly_open_145",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_quarter_open_146",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_half_open_147",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_three_quarter_open_148",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_fully_open_149",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_closed_150",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_slightly_open_151",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_quarter_open_152",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_half_open_153",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_three_quarter_open_154",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_medium_hard_fully_open_155",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_closed_156",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_slightly_open_157",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_quarter_open_158",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_half_open_159",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_three_quarter_open_160",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_hard_fully_open_161",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_closed_162",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_closed",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_slightly_open_163",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_slightly_open",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_quarter_open_164",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_quarter_open",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_half_open_165",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_half_open",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_three_quarter_open_166",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_three_quarter_open",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_open_2_accent_fully_open_167",
+    "instrument": "hihat",
+    "technique": "hihat_open_2_fully_open",
+    "note": 26,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_closed_168",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_slightly_open_169",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_quarter_open_170",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_half_open_171",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_three_quarter_open_172",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_ghost_fully_open_173",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_closed_174",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_slightly_open_175",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_quarter_open_176",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_half_open_177",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_three_quarter_open_178",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_soft_fully_open_179",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_closed_180",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_slightly_open_181",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_quarter_open_182",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_half_open_183",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_three_quarter_open_184",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_soft_fully_open_185",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_closed_186",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_slightly_open_187",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_quarter_open_188",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_half_open_189",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_three_quarter_open_190",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_fully_open_191",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_closed_192",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_slightly_open_193",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_quarter_open_194",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_half_open_195",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_three_quarter_open_196",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_medium_hard_fully_open_197",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_closed_198",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_slightly_open_199",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_quarter_open_200",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_half_open_201",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_three_quarter_open_202",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_hard_fully_open_203",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_closed_204",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_closed",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_slightly_open_205",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_slightly_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_quarter_open_206",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_half_open_207",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_half_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_three_quarter_open_208",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_three_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_semi_open_accent_fully_open_209",
+    "instrument": "hihat",
+    "technique": "hihat_semi_open_fully_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_closed_210",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_slightly_open_211",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_quarter_open_212",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_half_open_213",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_three_quarter_open_214",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_ghost_fully_open_215",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_closed_216",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_slightly_open_217",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_quarter_open_218",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_half_open_219",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_three_quarter_open_220",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_soft_fully_open_221",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_closed_222",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_slightly_open_223",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_quarter_open_224",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_half_open_225",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_three_quarter_open_226",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_soft_fully_open_227",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_closed_228",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_slightly_open_229",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_quarter_open_230",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_half_open_231",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_three_quarter_open_232",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_fully_open_233",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_closed_234",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_slightly_open_235",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_quarter_open_236",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_half_open_237",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_three_quarter_open_238",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_medium_hard_fully_open_239",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_closed_240",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_slightly_open_241",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_quarter_open_242",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_half_open_243",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_three_quarter_open_244",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_hard_fully_open_245",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_closed_246",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_closed",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_slightly_open_247",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_slightly_open",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_quarter_open_248",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_quarter_open",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_half_open_249",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_half_open",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_three_quarter_open_250",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_three_quarter_open",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_pedal_accent_fully_open_251",
+    "instrument": "hihat",
+    "technique": "hihat_pedal_fully_open",
+    "note": 44,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_closed_252",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_slightly_open_253",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_quarter_open_254",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_half_open_255",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_three_quarter_open_256",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_ghost_fully_open_257",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_closed_258",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_slightly_open_259",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_quarter_open_260",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_half_open_261",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_three_quarter_open_262",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_soft_fully_open_263",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_closed_264",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_slightly_open_265",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_quarter_open_266",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_half_open_267",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_three_quarter_open_268",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_soft_fully_open_269",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_closed_270",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_slightly_open_271",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_quarter_open_272",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_half_open_273",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_three_quarter_open_274",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_fully_open_275",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_closed_276",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_slightly_open_277",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_quarter_open_278",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_half_open_279",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_three_quarter_open_280",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_medium_hard_fully_open_281",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_closed_282",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_slightly_open_283",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_quarter_open_284",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_half_open_285",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_three_quarter_open_286",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_hard_fully_open_287",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_closed_288",
+    "instrument": "hihat",
+    "technique": "hihat_splash_closed",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_slightly_open_289",
+    "instrument": "hihat",
+    "technique": "hihat_splash_slightly_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_quarter_open_290",
+    "instrument": "hihat",
+    "technique": "hihat_splash_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_half_open_291",
+    "instrument": "hihat",
+    "technique": "hihat_splash_half_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_three_quarter_open_292",
+    "instrument": "hihat",
+    "technique": "hihat_splash_three_quarter_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_splash_accent_fully_open_293",
+    "instrument": "hihat",
+    "technique": "hihat_splash_fully_open",
+    "note": 46,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_closed_294",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_slightly_open_295",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_quarter_open_296",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_half_open_297",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_three_quarter_open_298",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_ghost_fully_open_299",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 15,
+    "velocity_layer": "ghost",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_closed_300",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_slightly_open_301",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_quarter_open_302",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_half_open_303",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_three_quarter_open_304",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_soft_fully_open_305",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 35,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_closed_306",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_slightly_open_307",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_quarter_open_308",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_half_open_309",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_three_quarter_open_310",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_soft_fully_open_311",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 55,
+    "velocity_layer": "medium_soft",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_closed_312",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_slightly_open_313",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_quarter_open_314",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_half_open_315",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_three_quarter_open_316",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_fully_open_317",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 75,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_closed_318",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_slightly_open_319",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_quarter_open_320",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_half_open_321",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_three_quarter_open_322",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_medium_hard_fully_open_323",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 95,
+    "velocity_layer": "medium_hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_closed_324",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_slightly_open_325",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_quarter_open_326",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_half_open_327",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_three_quarter_open_328",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_hard_fully_open_329",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 115,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_closed_330",
+    "instrument": "hihat",
+    "technique": "hihat_tight_closed",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 0
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_slightly_open_331",
+    "instrument": "hihat",
+    "technique": "hihat_tight_slightly_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 20
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_quarter_open_332",
+    "instrument": "hihat",
+    "technique": "hihat_tight_quarter_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 40
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_half_open_333",
+    "instrument": "hihat",
+    "technique": "hihat_tight_half_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 64
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_three_quarter_open_334",
+    "instrument": "hihat",
+    "technique": "hihat_tight_three_quarter_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 90
+    }
+  },
+  {
+    "name": "hihat_hihat_tight_accent_fully_open_335",
+    "instrument": "hihat",
+    "technique": "hihat_tight_fully_open",
+    "note": 42,
+    "velocity": 127,
+    "velocity_layer": "accent",
+    "duration": 2.0,
+    "cc_values": {
+      "4": 127
+    }
+  },
+  {
+    "name": "ride_ride_tip_whisper_single_000",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_whisper_double_001",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_whisper_triplet_002",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_whisper_sustained_003",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_ghost_single_004",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_ghost_double_005",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_ghost_triplet_006",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_ghost_sustained_007",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_soft_single_008",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_soft_double_009",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_soft_triplet_010",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_soft_sustained_011",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_soft_single_012",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_soft_double_013",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_soft_triplet_014",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_soft_sustained_015",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_single_016",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_double_017",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_triplet_018",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_sustained_019",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_hard_single_020",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_hard_double_021",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_hard_triplet_022",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_medium_hard_sustained_023",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_hard_single_024",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_hard_double_025",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_hard_triplet_026",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_hard_sustained_027",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_crash_single_028",
+    "instrument": "ride",
+    "technique": "ride_tip_single",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_crash_double_029",
+    "instrument": "ride",
+    "technique": "ride_tip_double",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_crash_triplet_030",
+    "instrument": "ride",
+    "technique": "ride_tip_triplet",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_tip_crash_sustained_031",
+    "instrument": "ride",
+    "technique": "ride_tip_sustained",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_whisper_single_032",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_whisper_double_033",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_whisper_triplet_034",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_whisper_sustained_035",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_ghost_single_036",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_ghost_double_037",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_ghost_triplet_038",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_ghost_sustained_039",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_soft_single_040",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_soft_double_041",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_soft_triplet_042",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_soft_sustained_043",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_soft_single_044",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_soft_double_045",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_soft_triplet_046",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_soft_sustained_047",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_single_048",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_double_049",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_triplet_050",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_sustained_051",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_hard_single_052",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_hard_double_053",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_hard_triplet_054",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_medium_hard_sustained_055",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_hard_single_056",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_hard_double_057",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_hard_triplet_058",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_hard_sustained_059",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_crash_single_060",
+    "instrument": "ride",
+    "technique": "ride_edge_single",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_crash_double_061",
+    "instrument": "ride",
+    "technique": "ride_edge_double",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_crash_triplet_062",
+    "instrument": "ride",
+    "technique": "ride_edge_triplet",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_edge_crash_sustained_063",
+    "instrument": "ride",
+    "technique": "ride_edge_sustained",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_whisper_single_064",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_whisper_double_065",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_whisper_triplet_066",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_whisper_sustained_067",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_ghost_single_068",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_ghost_double_069",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_ghost_triplet_070",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_ghost_sustained_071",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_soft_single_072",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_soft_double_073",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_soft_triplet_074",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_soft_sustained_075",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_soft_single_076",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_soft_double_077",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_soft_triplet_078",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_soft_sustained_079",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_single_080",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_double_081",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_triplet_082",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_sustained_083",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_hard_single_084",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_hard_double_085",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_hard_triplet_086",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_medium_hard_sustained_087",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_hard_single_088",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_hard_double_089",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_hard_triplet_090",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_hard_sustained_091",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_crash_single_092",
+    "instrument": "ride",
+    "technique": "ride_bell_single",
+    "note": 53,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_crash_double_093",
+    "instrument": "ride",
+    "technique": "ride_bell_double",
+    "note": 53,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_crash_triplet_094",
+    "instrument": "ride",
+    "technique": "ride_bell_triplet",
+    "note": 53,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bell_crash_sustained_095",
+    "instrument": "ride",
+    "technique": "ride_bell_sustained",
+    "note": 53,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_whisper_single_096",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_whisper_double_097",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_whisper_triplet_098",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_whisper_sustained_099",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_ghost_single_100",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_ghost_double_101",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_ghost_triplet_102",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_ghost_sustained_103",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_soft_single_104",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_soft_double_105",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_soft_triplet_106",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_soft_sustained_107",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_soft_single_108",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_soft_double_109",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_soft_triplet_110",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_soft_sustained_111",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_single_112",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_double_113",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_triplet_114",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_sustained_115",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_hard_single_116",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_hard_double_117",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_hard_triplet_118",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_medium_hard_sustained_119",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_hard_single_120",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_hard_double_121",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_hard_triplet_122",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_hard_sustained_123",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_crash_single_124",
+    "instrument": "ride",
+    "technique": "ride_crash_single",
+    "note": 57,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_crash_double_125",
+    "instrument": "ride",
+    "technique": "ride_crash_double",
+    "note": 57,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_crash_triplet_126",
+    "instrument": "ride",
+    "technique": "ride_crash_triplet",
+    "note": 57,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_crash_crash_sustained_127",
+    "instrument": "ride",
+    "technique": "ride_crash_sustained",
+    "note": 57,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_whisper_single_128",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_whisper_double_129",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_whisper_triplet_130",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_whisper_sustained_131",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_ghost_single_132",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_ghost_double_133",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_ghost_triplet_134",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_ghost_sustained_135",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_soft_single_136",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_soft_double_137",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_soft_triplet_138",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_soft_sustained_139",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_soft_single_140",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_soft_double_141",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_soft_triplet_142",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_soft_sustained_143",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_single_144",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_double_145",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_triplet_146",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_sustained_147",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_hard_single_148",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_hard_double_149",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_hard_triplet_150",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_medium_hard_sustained_151",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_hard_single_152",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_hard_double_153",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_hard_triplet_154",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_hard_sustained_155",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_crash_single_156",
+    "instrument": "ride",
+    "technique": "ride_bow_single",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_crash_double_157",
+    "instrument": "ride",
+    "technique": "ride_bow_double",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_crash_triplet_158",
+    "instrument": "ride",
+    "technique": "ride_bow_triplet",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_bow_crash_sustained_159",
+    "instrument": "ride",
+    "technique": "ride_bow_sustained",
+    "note": 51,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_whisper_single_160",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_whisper_double_161",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_whisper_triplet_162",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_whisper_sustained_163",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 10,
+    "velocity_layer": "whisper",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_ghost_single_164",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_ghost_double_165",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_ghost_triplet_166",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_ghost_sustained_167",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 25,
+    "velocity_layer": "ghost",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_soft_single_168",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_soft_double_169",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_soft_triplet_170",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_soft_sustained_171",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_soft_single_172",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_soft_double_173",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_soft_triplet_174",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_soft_sustained_175",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 60,
+    "velocity_layer": "medium_soft",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_single_176",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_double_177",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_triplet_178",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_sustained_179",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_hard_single_180",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_hard_double_181",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_hard_triplet_182",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_medium_hard_sustained_183",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 100,
+    "velocity_layer": "medium_hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_hard_single_184",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_hard_double_185",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_hard_triplet_186",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_hard_sustained_187",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_crash_single_188",
+    "instrument": "ride",
+    "technique": "ride_shoulder_single",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_crash_double_189",
+    "instrument": "ride",
+    "technique": "ride_shoulder_double",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_crash_triplet_190",
+    "instrument": "ride",
+    "technique": "ride_shoulder_triplet",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 3.0,
+    "cc_values": {}
+  },
+  {
+    "name": "ride_ride_shoulder_crash_sustained_191",
+    "instrument": "ride",
+    "technique": "ride_shoulder_sustained",
+    "note": 59,
+    "velocity": 127,
+    "velocity_layer": "crash",
+    "duration": 5.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_center_soft_000",
+    "instrument": "kick",
+    "technique": "kick_center",
+    "note": 36,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_center_medium_001",
+    "instrument": "kick",
+    "technique": "kick_center",
+    "note": 36,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_center_hard_002",
+    "instrument": "kick",
+    "technique": "kick_center",
+    "note": 36,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_edge_soft_003",
+    "instrument": "kick",
+    "technique": "kick_edge",
+    "note": 35,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_edge_medium_004",
+    "instrument": "kick",
+    "technique": "kick_edge",
+    "note": 35,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "kick_kick_edge_hard_005",
+    "instrument": "kick",
+    "technique": "kick_edge",
+    "note": 35,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_soft_006",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 38,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_medium_007",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 38,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_hard_008",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 38,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_soft_009",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 40,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_medium_010",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 40,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_center_hard_011",
+    "instrument": "snare",
+    "technique": "snare_center",
+    "note": 40,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_rim_shot_soft_012",
+    "instrument": "snare",
+    "technique": "snare_rim_shot",
+    "note": 37,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_rim_shot_medium_013",
+    "instrument": "snare",
+    "technique": "snare_rim_shot",
+    "note": 37,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_rim_shot_hard_014",
+    "instrument": "snare",
+    "technique": "snare_rim_shot",
+    "note": 37,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_cross_stick_soft_015",
+    "instrument": "snare",
+    "technique": "snare_cross_stick",
+    "note": 37,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_cross_stick_medium_016",
+    "instrument": "snare",
+    "technique": "snare_cross_stick",
+    "note": 37,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_cross_stick_hard_017",
+    "instrument": "snare",
+    "technique": "snare_cross_stick",
+    "note": 37,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_ghost_soft_018",
+    "instrument": "snare",
+    "technique": "snare_ghost",
+    "note": 38,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_ghost_medium_019",
+    "instrument": "snare",
+    "technique": "snare_ghost",
+    "note": 38,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_ghost_hard_020",
+    "instrument": "snare",
+    "technique": "snare_ghost",
+    "note": 38,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_buzz_soft_021",
+    "instrument": "snare",
+    "technique": "snare_buzz",
+    "note": 38,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_buzz_medium_022",
+    "instrument": "snare",
+    "technique": "snare_buzz",
+    "note": 38,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "snare_snare_buzz_hard_023",
+    "instrument": "snare",
+    "technique": "snare_buzz",
+    "note": 38,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_soft_024",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 50,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_medium_025",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 50,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_hard_026",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 50,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_soft_027",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 48,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_medium_028",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 48,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_high_hard_029",
+    "instrument": "tom",
+    "technique": "tom_high",
+    "note": 48,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_soft_030",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 47,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_medium_031",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 47,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_hard_032",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 47,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_soft_033",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 45,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_medium_034",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 45,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_mid_hard_035",
+    "instrument": "tom",
+    "technique": "tom_mid",
+    "note": 45,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_soft_036",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 43,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_medium_037",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 43,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_hard_038",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 43,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_soft_039",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 41,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_medium_040",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 41,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "tom_tom_floor_hard_041",
+    "instrument": "tom",
+    "technique": "tom_floor",
+    "note": 41,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_1_soft_042",
+    "instrument": "crash",
+    "technique": "crash_1",
+    "note": 49,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_1_medium_043",
+    "instrument": "crash",
+    "technique": "crash_1",
+    "note": 49,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_1_hard_044",
+    "instrument": "crash",
+    "technique": "crash_1",
+    "note": 49,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_2_soft_045",
+    "instrument": "crash",
+    "technique": "crash_2",
+    "note": 57,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_2_medium_046",
+    "instrument": "crash",
+    "technique": "crash_2",
+    "note": 57,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "crash_crash_2_hard_047",
+    "instrument": "crash",
+    "technique": "crash_2",
+    "note": 57,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "splash_splash_soft_048",
+    "instrument": "splash",
+    "technique": "splash",
+    "note": 55,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "splash_splash_medium_049",
+    "instrument": "splash",
+    "technique": "splash",
+    "note": 55,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "splash_splash_hard_050",
+    "instrument": "splash",
+    "technique": "splash",
+    "note": 55,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "china_china_soft_051",
+    "instrument": "china",
+    "technique": "china",
+    "note": 52,
+    "velocity": 40,
+    "velocity_layer": "soft",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "china_china_medium_052",
+    "instrument": "china",
+    "technique": "china",
+    "note": 52,
+    "velocity": 80,
+    "velocity_layer": "medium",
+    "duration": 2.0,
+    "cc_values": {}
+  },
+  {
+    "name": "china_china_hard_053",
+    "instrument": "china",
+    "technique": "china",
+    "note": 52,
+    "velocity": 120,
+    "velocity_layer": "hard",
+    "duration": 2.0,
+    "cc_values": {}
+  }
+]

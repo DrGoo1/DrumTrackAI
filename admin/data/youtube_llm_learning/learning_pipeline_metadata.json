@@ -1,0 +1,357 @@
+{
+  "learning_sessions": [
+    {
+      "session_id": "Buddy_Rich_20260403_155840",
+      "drummer_name": "Buddy Rich",
+      "style": "jazz",
+      "timestamp": "2026-04-03T15:58:50.019294",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\Buddy Rich - Birdland.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\The Buddy Rich Orchestra \uff02Norwegian Wood (This Bird Has Flown)\uff02 on The Ed Sullivan Show.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\Groovin' Hard.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\Buddy Rich - Birdland.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/Rh9qDv3-TdM?si=TQ4seTs6yZiN3o2I"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\The Buddy Rich Orchestra \uff02Norwegian Wood (This Bird Has Flown)\uff02 on The Ed Sullivan Show.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/toJ41AjxFhw?si=NiX7SwVHnGeRKojy"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_155840\\Groovin' Hard.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/bbVVV6lO27w?si=wadhoWKaekJn1Pov"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/Rh9qDv3-TdM?si=TQ4seTs6yZiN3o2I",
+        "https://youtu.be/toJ41AjxFhw?si=NiX7SwVHnGeRKojy",
+        "https://youtu.be/bbVVV6lO27w?si=wadhoWKaekJn1Pov"
+      ]
+    },
+    {
+      "session_id": "John_Bonham_20260403_161918",
+      "drummer_name": "John Bonham",
+      "style": "rock",
+      "timestamp": "2026-04-03T16:19:25.741634",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Fool in the Rain (Remaster).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Led Zeppelin - Good Times Bad Times (Official Audio).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Immigrant Song (Remaster).wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Fool in the Rain (Remaster).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/I57nIP0vc44?si=8Jqlg8NK7xhpnldH"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Led Zeppelin - Good Times Bad Times (Official Audio).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/TA9Rec1qAFQ?si=BnYdWJ2ZJiwSiEjl"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\John_Bonham_20260403_161918\\Immigrant Song (Remaster).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/y8OtzJtp-EM?si=sGNXb4LMoMjDY0uh"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/I57nIP0vc44?si=8Jqlg8NK7xhpnldH",
+        "https://youtu.be/TA9Rec1qAFQ?si=BnYdWJ2ZJiwSiEjl",
+        "https://youtu.be/y8OtzJtp-EM?si=sGNXb4LMoMjDY0uh"
+      ]
+    },
+    {
+      "session_id": "Buddy_Rich_20260403_163409",
+      "drummer_name": "Buddy Rich",
+      "style": "jazz",
+      "timestamp": "2026-04-03T16:34:18.105612",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\Buddy Rich - Birdland.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\The Buddy Rich Orchestra \uff02Norwegian Wood (This Bird Has Flown)\uff02 on The Ed Sullivan Show.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\Groovin' Hard.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\Buddy Rich - Birdland.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/Rh9qDv3-TdM?si=TQ4seTs6yZiN3o2I"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\The Buddy Rich Orchestra \uff02Norwegian Wood (This Bird Has Flown)\uff02 on The Ed Sullivan Show.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/toJ41AjxFhw?si=NiX7SwVHnGeRKojy"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Buddy_Rich_20260403_163409\\Groovin' Hard.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/bbVVV6lO27w?si=wadhoWKaekJn1Pov"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/Rh9qDv3-TdM?si=TQ4seTs6yZiN3o2I",
+        "https://youtu.be/toJ41AjxFhw?si=NiX7SwVHnGeRKojy",
+        "https://youtu.be/bbVVV6lO27w?si=wadhoWKaekJn1Pov"
+      ]
+    },
+    {
+      "session_id": "Ringo_Starr_20260404_104010",
+      "drummer_name": "Ringo Starr",
+      "style": "rock",
+      "timestamp": "2026-04-04T10:40:18.988248",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Rain (Mono).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\The Beatles - The Beatles - Hello, Goodbye (Remastered 2015).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Ticket To Ride (Remastered 2015).wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Rain (Mono).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/FkY9BEuLJk4?si=DJ7Qnr1kKQFZyH-Y"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\The Beatles - The Beatles - Hello, Goodbye (Remastered 2015).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/rblYSKz_VnI?si=F1brbaXRgBx37L0b"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Ringo_Starr_20260404_104010\\Ticket To Ride (Remastered 2015).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/UHsN9d4FTVI?si=W0kkzHLQal_KQgTH"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/FkY9BEuLJk4?si=DJ7Qnr1kKQFZyH-Y",
+        "https://youtu.be/rblYSKz_VnI?si=F1brbaXRgBx37L0b",
+        "https://youtu.be/UHsN9d4FTVI?si=W0kkzHLQal_KQgTH"
+      ]
+    },
+    {
+      "session_id": "Charlie_Watts_20260404_104037",
+      "drummer_name": "Charlie Watts",
+      "style": "rock",
+      "timestamp": "2026-04-04T10:40:46.205947",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\Get Off Of My Cloud (Mono).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\(I Can't Get No) Satisfaction (Mono).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\Paint It, Black.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\Get Off Of My Cloud (Mono).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/1sWqmMAvmdU?si=oTcxiFOkDMTB1JRw"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\(I Can't Get No) Satisfaction (Mono).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/MSSxnv1_J2g?si=rvQ_pwyryZgXYz_D"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Charlie_Watts_20260404_104037\\Paint It, Black.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/8-AK67iz3gI?si=_bH6ckBLpmawGb4i"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/1sWqmMAvmdU?si=oTcxiFOkDMTB1JRw",
+        "https://youtu.be/MSSxnv1_J2g?si=rvQ_pwyryZgXYz_D",
+        "https://youtu.be/8-AK67iz3gI?si=_bH6ckBLpmawGb4i"
+      ]
+    },
+    {
+      "session_id": "Travis_Barker_20260404_160514",
+      "drummer_name": "Travis Barker",
+      "style": "rock",
+      "timestamp": "2026-04-04T16:05:21.569772",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\blink-182 - All The Small Things (Official Music Video).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\blink-182 - Feeling This (Official Video).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\Blink 182 - Family Reunion.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\blink-182 - All The Small Things (Official Music Video).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/9Ht5RZpzPqw?si=LPcWnsgwEQ3PeNtW"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\blink-182 - Feeling This (Official Video).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/4kMZ23T9VHE?si=h2bHLDBXd4XqwUp4"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Travis_Barker_20260404_160514\\Blink 182 - Family Reunion.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/W5wL_mwGGgg?si=JWOgRrG9K6WEWKGB"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/9Ht5RZpzPqw?si=LPcWnsgwEQ3PeNtW",
+        "https://youtu.be/4kMZ23T9VHE?si=h2bHLDBXd4XqwUp4",
+        "https://youtu.be/W5wL_mwGGgg?si=JWOgRrG9K6WEWKGB"
+      ]
+    },
+    {
+      "session_id": "Carter_Beauford_20260404_160539",
+      "drummer_name": "Carter Beauford",
+      "style": "fusion",
+      "timestamp": "2026-04-04T16:05:47.607572",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Dave Matthews - Ants Marching.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Drive in Drive Out.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Rapunzel.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Dave Matthews - Ants Marching.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/GhswH1bLMy8?si=Tufn_LZz3V32ljMq"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Drive in Drive Out.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/UXGMKWLQPJU?si=pYlvNPn1yN5vGTRO"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Rapunzel.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/4sABTXb2ks4?si=bpinsga7bGzhCZ20"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/GhswH1bLMy8?si=Tufn_LZz3V32ljMq",
+        "https://youtu.be/UXGMKWLQPJU?si=pYlvNPn1yN5vGTRO",
+        "https://youtu.be/4sABTXb2ks4?si=bpinsga7bGzhCZ20"
+      ]
+    },
+    {
+      "session_id": "Steve_Gadd_20260404_160608",
+      "drummer_name": "Steve Gadd",
+      "style": "jazz",
+      "timestamp": "2026-04-04T16:06:17.836688",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Paul Simon - 50 Ways to Leave Your Lover (Official Audio).wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Aja.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Chuck E's in Love.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Paul Simon - 50 Ways to Leave Your Lover (Official Audio).wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/ABXtWqmArUU?si=5WG83ZQV7yqx1SFK"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Aja.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/CYZwVf07tHA?si=bSEPA5LAtt9sLzgK"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Steve_Gadd_20260404_160608\\Chuck E's in Love.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/OeWKfVkNla4?si=eQ_YVutikS9UwcrS"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/ABXtWqmArUU?si=5WG83ZQV7yqx1SFK",
+        "https://youtu.be/CYZwVf07tHA?si=bSEPA5LAtt9sLzgK",
+        "https://youtu.be/OeWKfVkNla4?si=eQ_YVutikS9UwcrS"
+      ]
+    },
+    {
+      "session_id": "Simon_Phillips_20260404_160632",
+      "drummer_name": "Simon Phillips",
+      "style": "fusion",
+      "timestamp": "2026-04-04T16:06:40.563243",
+      "files_downloaded": 3,
+      "files": [
+        "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Toto - I will remember.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Space Boogie.wav",
+        "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Give Blood.wav"
+      ],
+      "download_root": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632",
+      "analysis": [
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Toto - I will remember.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/YrgnYZW-oXg?si=zmq5IgIo7uS8R5jS"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Space Boogie.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/ZZ_8YHFKRpM?si=aG7kiZJylknvJVjt"
+        },
+        {
+          "file": "admin\\data\\youtube_llm_learning\\downloads\\Simon_Phillips_20260404_160632\\Give Blood.wav",
+          "quality": 1.0,
+          "query": "url",
+          "url": "https://youtu.be/V4bD9w61Fs0?si=hdCjJrkxFzXGGZ0j"
+        }
+      ],
+      "source": "urls",
+      "urls": [
+        "https://youtu.be/YrgnYZW-oXg?si=zmq5IgIo7uS8R5jS",
+        "https://youtu.be/ZZ_8YHFKRpM?si=aG7kiZJylknvJVjt",
+        "https://youtu.be/V4bD9w61Fs0?si=hdCjJrkxFzXGGZ0j"
+      ]
+    }
+  ],
+  "trained_models": [],
+  "performance_metrics": []
+}

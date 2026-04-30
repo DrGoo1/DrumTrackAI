@@ -1,0 +1,34 @@
+{
+  "downloads": [
+    {
+      "url": "https://youtu.be/GhswH1bLMy8?si=Tufn_LZz3V32ljMq",
+      "title": "Dave Matthews - Ants Marching",
+      "uploader": "Dub Frog",
+      "duration": 271,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Dave Matthews - Ants Marching.wav",
+      "drummer_name": "Carter Beauford",
+      "style": "fusion",
+      "download_date": "20141101"
+    },
+    {
+      "url": "https://youtu.be/UXGMKWLQPJU?si=pYlvNPn1yN5vGTRO",
+      "title": "Drive in Drive Out",
+      "uploader": "Dave Matthews Band",
+      "duration": 355,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Drive in Drive Out.wav",
+      "drummer_name": "Carter Beauford",
+      "style": "fusion",
+      "download_date": "20150519"
+    },
+    {
+      "url": "https://youtu.be/4sABTXb2ks4?si=bpinsga7bGzhCZ20",
+      "title": "Rapunzel",
+      "uploader": "Dave Matthews Band",
+      "duration": 360,
+      "file_path": "admin\\data\\youtube_llm_learning\\downloads\\Carter_Beauford_20260404_160539\\Rapunzel.wav",
+      "drummer_name": "Carter Beauford",
+      "style": "fusion",
+      "download_date": "20141208"
+    }
+  ]
+}

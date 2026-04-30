@@ -1,0 +1,307 @@
+2026-03-20 18:14:47,385 - __main__ - INFO - ============================================================
+2026-03-20 18:14:47,385 - __main__ - INFO - DrumTracKAI Admin Application Starting
+2026-03-20 18:14:47,385 - __main__ - INFO - ============================================================
+2026-03-20 18:14:47,385 - __main__ - INFO - STEP 1: Setting up environment variables
+2026-03-20 18:14:47,385 - __main__ - INFO - Setting up environment variables...
+2026-03-20 18:14:47,385 - __main__ - INFO - LLVM environment configured for arrangement analysis:
+2026-03-20 18:14:47,385 - __main__ - INFO -   NUMBA_DISABLE_INTEL_SVML: 1
+2026-03-20 18:14:47,385 - __main__ - INFO -   OMP_NUM_THREADS: 1
+2026-03-20 18:14:47,385 - __main__ - INFO - Environment setup complete
+2026-03-20 18:14:47,385 - __main__ - INFO - STEP 2: Checking dependencies
+2026-03-20 18:14:47,647 - __main__ - INFO - All required dependencies are available
+2026-03-20 18:14:47,647 - __main__ - INFO - STEP 3: Checking GPU availability
+2026-03-20 18:14:47,647 - __main__ - WARNING - PyTorch not available. GPU features will be disabled.
+2026-03-20 18:14:47,647 - __main__ - WARNING - GPU acceleration not available. Some features may be slower.
+2026-03-20 18:14:47,647 - __main__ - INFO - STEP 4: Creating QApplication
+F:\DrumTracKAI_v1.1.17\admin\main.py:176: DeprecationWarning: Enum value 'Qt::ApplicationAttribute.AA_EnableHighDpiScaling' is marked as deprecated, please check the documentation for more information.
+  app.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
+F:\DrumTracKAI_v1.1.17\admin\main.py:177: DeprecationWarning: Enum value 'Qt::ApplicationAttribute.AA_UseHighDpiPixmaps' is marked as deprecated, please check the documentation for more information.
+  app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+2026-03-20 18:14:47,674 - __main__ - INFO - QApplication created successfully
+2026-03-20 18:14:47,674 - __main__ - INFO - STEP 5: Creating main window
+2026-03-20 18:14:47,674 - __main__ - INFO - Attempting to import MainWindow and ApplicationStateManager...
+2026-03-20 18:14:47,697 - __main__ - INFO - MainWindow import successful
+2026-03-20 18:14:47,701 - __main__ - INFO - ApplicationStateManager import successful
+2026-03-20 18:14:47,701 - __main__ - INFO - Creating ApplicationStateManager...
+2026-03-20 18:14:47,702 - __main__ - INFO - ApplicationStateManager created successfully
+2026-03-20 18:14:47,702 - __main__ - INFO - Creating MainWindow instance...
+2026-03-20 18:14:47,702 - admin.ui.main_window - INFO - Initializing MainWindow
+2026-03-20 18:14:47,702 - core.event_bus - INFO - Event bus initialized
+2026-03-20 18:14:47,702 - admin.ui.main_window - INFO - Initializing core services...
+2026-03-20 18:14:47,702 - admin.ui.main_window - INFO - Core system services registered
+2026-03-20 18:14:47,702 - admin.ui.main_window - INFO - Registering application services...
+2026-03-20 18:14:48,189 - admin.services.mvsep_service - WARNING - PyTorch not available - GPU monitoring disabled
+2026-03-20 18:14:48,190 - admin.services.mvsep_service - WARNING - psutil not available - resource monitoring disabled
+2026-03-20 18:14:48,193 - admin.ui.main_window - INFO - Initializing CRITICAL tier services...
+2026-03-20 18:14:48,193 - core.service_container - INFO - Initializing 3 critical services
+2026-03-20 18:14:48,193 - core.service_container - INFO - [OK] event_bus initialized successfully
+2026-03-20 18:14:48,193 - core.service_container - INFO - [OK] state_manager initialized successfully
+2026-03-20 18:14:48,193 - admin.services.central_database_service - INFO - CentralDatabaseService initialized
+2026-03-20 18:14:48,193 - core.service_container - INFO - [OK] central_database_service initialized successfully
+2026-03-20 18:14:48,193 - admin.ui.main_window - INFO - Critical services initialization results: {'event_bus': True, 'state_manager': True, 'central_database_service': True}
+2026-03-20 18:14:48,193 - admin.ui.main_window - INFO - Initializing IMPORTANT tier services...
+2026-03-20 18:14:48,193 - core.service_container - INFO - Initializing 3 important services
+2026-03-20 18:14:48,194 - core.service_container - INFO - [OK] youtube_service initialized successfully
+2026-03-20 18:14:48,194 - core.service_container - ERROR - Failed to initialize service mvsep_service: MVSepService.__init__() missing 1 required positional argument: 'api_key'
+2026-03-20 18:14:48,195 - core.service_container - ERROR - Traceback (most recent call last):
+  File "F:\DrumTracKAI_v1.1.17\admin\core\service_container.py", line 116, in _initialize_service
+    instance = definition.factory(**dependency_instances)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: MVSepService.__init__() missing 1 required positional argument: 'api_key'
+
+2026-03-20 18:14:48,195 - core.service_container - WARNING - [WARN] important service mvsep_service failed: Failed to initialize service mvsep_service: MVSepService.__init__() missing 1 required positional argument: 'api_key'
+2026-03-20 18:14:48,195 - admin.services.drum_analysis_service - ERROR - Error initializing database: name 'initialize_drum_analysis_db' is not defined
+2026-03-20 18:14:48,195 - admin.services.drum_analysis_service - INFO - DrumAnalysisService initialized with database: drumtrackai.db
+2026-03-20 18:14:48,195 - core.service_container - INFO - [OK] drum_analysis_service initialized successfully
+2026-03-20 18:14:48,195 - admin.ui.main_window - INFO - Important services initialization results: {'youtube_service': True, 'mvsep_service': False, 'drum_analysis_service': True}
+2026-03-20 18:14:48,195 - admin.ui.main_window - INFO - Core services registration and initialization complete
+DEBUG: _setup_ui called!
+2026-03-20 18:14:48,196 - admin.ui.main_window - INFO - DEBUG: _setup_ui starting...
+DEBUG DEBUG: About to call _setup_tabs()
+DEBUG DEBUG: _setup_tabs called!
+2026-03-20 18:14:48,378 - admin.ui.main_window - INFO - DEBUG DEBUG: _setup_tabs starting...
+2026-03-20 18:14:48,378 - admin.ui.main_window - INFO - Starting tab creation process...
+2026-03-20 18:14:48,378 - admin.ui.main_window - INFO - Creating tab: drummers
+2026-03-20 18:14:48,396 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater initialized
+2026-03-20 18:14:48,396 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater singleton initialized
+2026-03-20 18:14:48,409 - utils.youtube_search - WARNING - Failed to configure PyTube: type object 'InnerTube' has no attribute '_default_clients'
+2026-03-20 18:14:48,409 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater initialized
+2026-03-20 18:14:48,409 - admin.ui.drummers_widget - INFO - SUCCESS PhasedDrumAnalysis service initialized for arrangement analysis
+2026-03-20 18:14:48,430 - admin.ui.drummers_widget - INFO - Loaded 20 drummer profiles
+2026-03-20 18:14:48,439 - admin.ui.main_window - INFO - Successfully created Drummers tab
+2026-03-20 18:14:48,439 - admin.ui.main_window - INFO - Successfully created drummers tab
+2026-03-20 18:14:48,439 - admin.ui.main_window - INFO - Creating tab: drum_analysis
+2026-03-20 18:14:48,440 - admin.ui.drum_analysis_widget - INFO - MVSep service available
+2026-03-20 18:14:48,440 - admin.ui.drum_analysis_widget - INFO - Drum analysis service available
+2026-03-20 18:14:48,440 - admin.ui.drum_analysis_widget - INFO - Arrangement analysis available
+2026-03-20 18:14:48,441 - admin.ui.drum_analysis_widget - INFO - Setting up DrumAnalysisWidget UI
+2026-03-20 18:14:48,443 - admin.ui.drum_analysis_widget - WARNING - MVSEP_API_KEY not found in environment
+2026-03-20 18:14:48,444 - admin.ui.drum_analysis_widget - INFO - DrumAnalysisWidget initialization complete
+2026-03-20 18:14:48,445 - admin.ui.main_window - INFO - Successfully created Drum Analysis tab
+2026-03-20 18:14:48,445 - admin.ui.main_window - INFO - Successfully created drum_analysis tab
+2026-03-20 18:14:48,445 - admin.ui.main_window - INFO - Creating tab: mvsep
+2026-03-20 18:14:48,451 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater initialized
+2026-03-20 18:14:48,451 - admin.ui.mvsep_widget - INFO - MVSepWidget initialization complete
+2026-03-20 18:14:48,452 - admin.ui.main_window - INFO - Successfully created MVSep tab
+2026-03-20 18:14:48,452 - admin.ui.main_window - INFO - Successfully created mvsep tab
+2026-03-20 18:14:48,452 - admin.ui.main_window - INFO - Creating tab: drum_beats
+2026-03-20 18:14:48,453 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater initialized
+2026-03-20 18:14:48,453 - admin.services.central_database_service - INFO - CentralDatabaseService initialized
+2026-03-20 18:14:48,469 - admin.services.central_database_service - INFO - Initializing database at: F:\DrumTracKAI_v1.1.17\admin\drumtrackai.db
+2026-03-20 18:14:48,470 - admin.services.central_database_service - INFO - Database tables created successfully
+2026-03-20 18:14:48,470 - admin.services.central_database_service - INFO - Database initialized successfully at F:\DrumTracKAI_v1.1.17\admin\drumtrackai.db
+2026-03-20 18:14:48,470 - admin.ui.drum_beats_widget - INFO - Database connection established via central database service
+2026-03-20 18:14:48,472 - admin.ui.drum_beats_widget - INFO - DrumBeatsWidget initialized
+2026-03-20 18:14:48,483 - admin.ui.main_window - INFO - Successfully created DrumBeats tab
+2026-03-20 18:14:48,483 - admin.ui.main_window - INFO - Successfully created drum_beats tab
+2026-03-20 18:14:48,483 - admin.ui.main_window - INFO - Creating tab: audio_visualization
+2026-03-20 18:14:48,488 - admin.ui.main_window - WARNING - AudioVisualizationWidget not available: No module named 'matplotlib'
+2026-03-20 18:14:48,489 - admin.ui.main_window - WARNING - Tab audio_visualization creation returned False
+2026-03-20 18:14:48,489 - admin.ui.main_window - INFO - Creating tab: batch_processing
+2026-03-20 18:14:48,491 - admin.ui.batch_processor_widget - WARNING - ERROR Batch processor API key not found - processing will fail until key is set
+2026-03-20 18:14:48,491 - admin.ui.batch_processor_widget - INFO - BatchProcessor initialized
+2026-03-20 18:14:48,491 - admin.utils.thread_safe_ui_updater - INFO - ThreadSafeUIUpdater initialized
+2026-03-20 18:14:48,496 - admin.ui.batch_processor_widget - INFO - BatchProcessorWidget initialized
+2026-03-20 18:14:48,498 - admin.ui.main_window - INFO - Successfully created Batch Processing tab
+2026-03-20 18:14:48,498 - admin.ui.main_window - INFO - Successfully created batch_processing tab
+2026-03-20 18:14:48,498 - admin.ui.main_window - INFO - Creating tab: training
+2026-03-20 18:14:49,174 - training.model_trainer - WARNING - PyTorch not available - model training disabled
+2026-03-20 18:14:49,177 - admin.ui.main_window - ERROR - Error creating training tab: name 'nn' is not defined
+2026-03-20 18:14:49,178 - admin.ui.main_window - ERROR - Traceback (most recent call last):
+  File "F:\DrumTracKAI_v1.1.17\admin\ui\main_window.py", line 712, in _create_tabs
+    result = create_method()
+             ^^^^^^^^^^^^^^^
+  File "F:\DrumTracKAI_v1.1.17\admin\ui\main_window.py", line 846, in _create_training_tab
+    from admin.ui.working_comprehensive_training_widget import WorkingComprehensiveTrainingWidget as ComprehensiveTrainingWidget
+  File "F:\DrumTracKAI_v1.1.17\admin\ui\working_comprehensive_training_widget.py", line 25, in <module>
+    from training.model_trainer import AutonomousTrainer, TrainingConfig
+  File "F:\DrumTracKAI_v1.1.17\admin\training\__init__.py", line 11, in <module>
+    from .model_trainer import DrumHumanizationModel, AutonomousTrainer
+  File "F:\DrumTracKAI_v1.1.17\admin\training\model_trainer.py", line 58, in <module>
+    class DrumHumanizationModel(nn.Module):
+                                ^^
+NameError: name 'nn' is not defined
+
+2026-03-20 18:14:49,178 - admin.ui.main_window - INFO - Creating tab: database
+2026-03-20 18:14:49,181 - admin.ui.database_widget - INFO - Initializing DatabaseWidget
+2026-03-20 18:14:49,181 - admin.ui.database_widget - INFO - Setting up DatabaseWidget UI
+2026-03-20 18:14:49,183 - admin.ui.database_widget - INFO - Connecting DatabaseWidget signals
+2026-03-20 18:14:49,183 - admin.ui.database_widget - INFO - DatabaseWidget initialization complete
+2026-03-20 18:14:49,185 - admin.ui.main_window - INFO - Successfully created Database tab
+2026-03-20 18:14:49,185 - admin.ui.main_window - INFO - Successfully created database tab
+2026-03-20 18:14:49,186 - admin.ui.main_window - INFO - Creating tab: real_time_monitor
+[DEBUG] Forcing log position reset to 0
+[DEBUG] Timer tick: 18:14:49
+2026-03-20 18:14:49,191 - admin.widgets.simple_monitor - WARNING - Log file does not exist: F:\DrumTracKAI_v1.1.17\production_batch_analysis.log
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Successfully created Real-Time Monitor tab
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Successfully created real_time_monitor tab
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Created 7 tabs successfully out of 9 defined tabs
+2026-03-20 18:14:49,194 - admin.ui.main_window - WARNING - Failed to create these tabs: audio_visualization, training
+2026-03-20 18:14:49,194 - admin.ui.drum_beats_widget - INFO - Batch processor connected to DrumBeatsWidget
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Connected batch processor to drum beats widget
+DEBUG DEBUG: _create_tabs completed successfully!
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - DEBUG DEBUG: _create_tabs completed successfully!
+DEBUG DEBUG: _setup_tabs() completed
+2026-03-20 18:14:49,194 - admin.ui.drum_beats_widget - INFO - Batch processor connected to DrumBeatsWidget
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Connected batch processor to drum beats widget
+2026-03-20 18:14:49,194 - admin.ui.main_window - INFO - Main window initialized successfully
+2026-03-20 18:14:49,194 - __main__ - INFO - MainWindow instance created successfully
+2026-03-20 18:14:49,194 - __main__ - INFO - MainWindow creation complete
+2026-03-20 18:14:49,194 - __main__ - INFO - STEP 6: Showing main window
+2026-03-20 18:14:49,485 - __main__ - INFO - Main window displayed successfully
+2026-03-20 18:14:49,485 - __main__ - INFO - Starting application event loop...
+2026-03-20 18:15:36,207 - admin.ui.drummers_widget - INFO - Performing YouTube search for: good times bad times
+2026-03-20 18:15:36,207 - utils.youtube_search - INFO - Searching YouTube for: good times bad times
+2026-03-20 18:15:36,207 - utils.youtube_search - INFO - Search URL: https://www.youtube.com/results?search_query=good+times+bad+times&sp=EgIQAQ%253D%253D
+2026-03-20 18:15:36,940 - utils.youtube_search - INFO - Found 19 video IDs
+2026-03-20 18:15:36,959 - utils.youtube_search - INFO - Search returned 10 results
+2026-03-20 18:15:36,960 - admin.ui.drummers_widget - INFO - Search results: 10 items found
+2026-03-20 18:15:41,439 - admin.ui.drummers_widget - INFO - Starting download from URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+[debug] Encodings: locale cp1252, fs utf-8, pref cp1252, out cp1252 (No ANSI), error cp1252 (No ANSI), screen cp1252 (No ANSI)
+[debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip) API
+[debug] params: {'format': 'bestaudio[ext=m4a]/bestaudio/best', 'outtmpl': 'C:\\Users\\dagol\\AppData\\Local\\Temp\\youtube_download_2ctaaa18\\%(title)s.%(ext)s', 'progress_hooks': [<bound method YouTubeDownloadThread._progress_hook of <admin.services.youtube_service.YouTubeDownloadThread(0x1f0405f5090) at 0x000001F03AF95040>>], 'verbose': True, 'no_warnings': False, 'ignoreerrors': False, 'noplaylist': True, 'extract_flat': False, 'postprocessors': [], 'fixup': 'never', 'retries': 5, 'fragment_retries': 5, 'skip_unavailable_fragments': False, 'socket_timeout': 60, 'writeinfojson': False, 'overwrites': True, 'nopart': True, 'ffmpeg_location': 'E:\\ffmpeg\\bin', 'js_runtimes': {'deno': {}}, 'remote_components': set(), 'compat_opts': set(), 'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-us,en;q=0.5', 'Sec-Fetch-Mode': 'navigate'}}
+[debug] Python 3.11.9 (CPython AMD64 64bit) - Windows-10-10.0.26200-SP0 (OpenSSL 3.0.13 30 Jan 2024)
+[debug] exe versions: ffmpeg 2025-02-10-git-a28dc06869-full_build-www.gyan.dev (setts), ffprobe 2025-02-10-git-a28dc06869-full_build-www.gyan.dev
+[debug] Optional libraries: certifi-2025.11.12, requests-2.32.5, sqlite3-3.45.1, urllib3-2.5.0
+[debug] JS runtimes: none
+[debug] Proxy map: {}
+[debug] Request Handlers: urllib, requests
+[debug] Plugin directories: none
+[debug] Loaded 1864 extractors
+
+===== YOUTUBE DOWNLOAD STARTED =====
+YouTube ID/URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+Output path: F:\database\drummer_songs\john_bonham_Video TA9Rec1qAFQ.mp3
+Using URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+Temporary directory: C:\Users\dagol\AppData\Local\Temp\youtube_download_2ctaaa18
+Using ffmpeg_location: E:\ffmpeg\bin
+Starting yt-dlp download...
+2026-03-20 18:15:41,690 - admin.services.youtube_service - INFO - yt-dlp extract_info starting (includes download + postprocess)
+[debug] [youtube] [pot] PO Token Providers: none
+[debug] [youtube] [pot] PO Token Cache Providers: memory
+[debug] [youtube] [pot] PO Token Cache Spec Providers: webpo
+[debug] [youtube] [jsc] JS Challenge Providers: bun (unavailable), deno (unavailable), node (unavailable), quickjs (unavailable)
+[youtube] Extracting URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+[youtube] TA9Rec1qAFQ: Downloading webpage
+WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing. See  https://github.com/yt-dlp/yt-dlp/wiki/EJS  for details on installing one
+[debug] [youtube] Forcing "main" player JS variant for player 1ebf2aa6
+        original url = /s/player/1ebf2aa6/player_es6.vflset/en_US/base.js
+[youtube] TA9Rec1qAFQ: Downloading android vr player API JSON
+[debug] Sort order given by extractor: quality, res, fps, hdr:12, source, vcodec, channels, acodec, lang, proto
+[debug] Formats sorted by: hasvid, ie_pref, quality, res, fps, hdr:12(7), source, vcodec, channels, acodec, lang, proto, size, br, asr, vext, aext, hasaud, id
+[info] TA9Rec1qAFQ: Downloading 1 format(s): 140
+[debug] Invoking http downloader on "https://rr3---sn-ab5l6ny7.googlevideo.com/videoplayback?expire=1774066544&ei=EMe9aZrFHq-_kucPqZrSqQ0&ip=47.164.41.223&id=o-AJFlWhf-AZfJPBLLkZm3b35C9S3y7EBjvF2QulytiAA7&itag=140&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&met=1774044944%2C&mh=Nb&mm=31%2C26&mn=sn-ab5l6ny7%2Csn-p5qddn7z&ms=au%2Conr&mv=m&mvi=3&pl=14&rms=au%2Cau&gcr=us&initcwndbps=3208750&bui=AVNa5-y4jsgiaGL0nPZri0TPwOGUNcPWD-N1Aqf5kp8lPr7gQTNOj3u810e-trZWjHFdQZHu7m6QGOZj&spc=6dlaFN-re9GQiRXEGqSBRZsHnQS8493-5EmsUri98L-s&vprv=1&svpuc=1&mime=audio%2Fmp4&rqh=1&gir=yes&clen=2706841&dur=167.206&lmt=1751764909919040&mt=1774044349&fvip=3&keepalive=yes&fexp=51565115%2C51565682%2C51791334&c=ANDROID_VR&txp=5532534&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cgcr%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AHEqNM4wRQIhAMYFXd9GIhaXO_Ab7teEl03Nw4HXuPwg_Izmw8KoH_iVAiASD0A22jkXR3LnCJMD15aDHr5YYGo0wiSs2EzWkROzFw%3D%3D&lsparams=met%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRAIgHSZY4Zgv2wU-FUVSCkBB8n9BtUaobp8k_7ocDFSf4LwCIAm9LyumMHMFT_S9hqsuKM5-xbOu64sxnXiZ7pDtP5Dm"
+[debug] File locking is not supported. Proceeding without locking
+[download] Destination: C:\Users\dagol\AppData\Local\Temp\youtube_download_2ctaaa18\Led Zeppelin - Good Times Bad Times (Official Audio).m4a
+[download]   0.0% of    2.58MiB at  483.66KiB/s ETA 00:052026-03-20 18:15:43,654 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.1% of    2.58MiB at    1.42MiB/s ETA 00:022026-03-20 18:15:43,655 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.3% of    2.58MiB at    1.91MiB/s ETA 00:012026-03-20 18:15:43,656 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.6% of    2.58MiB at    4.09MiB/s ETA 00:002026-03-20 18:15:43,657 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   1.2% of    2.58MiB at    3.88MiB/s ETA 00:002026-03-20 18:15:43,660 - admin.services.youtube_service - INFO - YouTube download progress: 1%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   2.4% of    2.58MiB at    4.62MiB/s ETA 00:002026-03-20 18:15:43,666 - admin.services.youtube_service - INFO - YouTube download progress: 2%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   4.8% of    2.58MiB at    5.92MiB/s ETA 00:002026-03-20 18:15:43,674 - admin.services.youtube_service - INFO - YouTube download progress: 4%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   9.6% of    2.58MiB at    8.58MiB/s ETA 00:002026-03-20 18:15:43,681 - admin.services.youtube_service - INFO - YouTube download progress: 9%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  19.3% of    2.58MiB at   13.42MiB/s ETA 00:002026-03-20 18:15:43,690 - admin.services.youtube_service - INFO - YouTube download progress: 19%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  38.7% of    2.58MiB at   21.60MiB/s ETA 00:002026-03-20 18:15:43,698 - admin.services.youtube_service - INFO - YouTube download progress: 38%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  77.4% of    2.58MiB at   34.48MiB/s ETA 00:002026-03-20 18:15:43,710 - admin.services.youtube_service - INFO - YouTube download progress: 77%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download] 100.0% of    2.58MiB at   40.61MiB/s ETA 00:002026-03-20 18:15:43,717 - admin.services.youtube_service - INFO - YouTube download progress: 100%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download] 100% of    2.58MiB in 00:00:00 at 21.75MiB/s  2026-03-20 18:15:43,718 - admin.services.youtube_service - INFO - YouTube download finished, now converting...
+QObject::startTimer: Timers can only be used with threads started with QThread
+
+2026-03-20 18:15:43,736 - admin.services.youtube_service - INFO - yt-dlp extract_info finished
+Video title: Led Zeppelin - Good Times Bad Times (Official Audio)
+Duration: 167 seconds
+Downloaded source file: C:\Users\dagol\AppData\Local\Temp\youtube_download_2ctaaa18\Led Zeppelin - Good Times Bad Times (Official Audio).m4a (2706841 bytes)
+2026-03-20 18:15:43,738 - admin.services.youtube_service - INFO - Starting ffmpeg conversion to mp3...
+QObject::startTimer: Timers can only be used with threads started with QThread
+Final file: F:\database\drummer_songs\john_bonham_Video TA9Rec1qAFQ.mp3 (4014425 bytes)
+
+===== YOUTUBE DOWNLOAD COMPLETED =====
+2026-03-20 18:15:46,001 - admin.ui.drummers_widget - INFO - Download completed: F:\database\drummer_songs\john_bonham_Video TA9Rec1qAFQ.mp3
+Cleaned up temp directory: C:\Users\dagol\AppData\Local\Temp\youtube_download_2ctaaa18
+2026-03-20 18:33:52,750 - admin.ui.drummers_widget - INFO - Starting download from URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+[debug] Encodings: locale cp1252, fs utf-8, pref cp1252, out cp1252 (No ANSI), error cp1252 (No ANSI), screen cp1252 (No ANSI)
+[debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip) API
+[debug] params: {'format': 'bestaudio[ext=m4a]/bestaudio/best', 'outtmpl': 'C:\\Users\\dagol\\AppData\\Local\\Temp\\youtube_download_0haamw4_\\%(title)s.%(ext)s', 'progress_hooks': [<bound method YouTubeDownloadThread._progress_hook of <admin.services.youtube_service.YouTubeDownloadThread(0x1f040cb9120) at 0x000001F0427C20C0>>], 'verbose': True, 'no_warnings': False, 'ignoreerrors': False, 'noplaylist': True, 'extract_flat': False, 'postprocessors': [], 'fixup': 'never', 'retries': 5, 'fragment_retries': 5, 'skip_unavailable_fragments': False, 'socket_timeout': 60, 'writeinfojson': False, 'overwrites': True, 'nopart': True, 'ffmpeg_location': 'E:\\ffmpeg\\bin', 'js_runtimes': {'deno': {}}, 'remote_components': set(), 'compat_opts': set(), 'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-us,en;q=0.5', 'Sec-Fetch-Mode': 'navigate'}}
+[debug] Python 3.11.9 (CPython AMD64 64bit) - Windows-10-10.0.26200-SP0 (OpenSSL 3.0.13 30 Jan 2024)
+[debug] exe versions: ffmpeg 2025-02-10-git-a28dc06869-full_build-www.gyan.dev (setts), ffprobe 2025-02-10-git-a28dc06869-full_build-www.gyan.dev
+[debug] Optional libraries: certifi-2025.11.12, requests-2.32.5, sqlite3-3.45.1, urllib3-2.5.0
+[debug] JS runtimes: none
+[debug] Proxy map: {}
+[debug] Request Handlers: urllib, requests
+[debug] Plugin directories: none
+[debug] Loaded 1864 extractors
+
+===== YOUTUBE DOWNLOAD STARTED =====
+YouTube ID/URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+Output path: F:\database\drummer_songs\john_bonham_Good Times Bad Times.mp3
+Using URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+Temporary directory: C:\Users\dagol\AppData\Local\Temp\youtube_download_0haamw4_
+Using ffmpeg_location: E:\ffmpeg\bin
+Starting yt-dlp download...
+2026-03-20 18:33:52,835 - admin.services.youtube_service - INFO - yt-dlp extract_info starting (includes download + postprocess)
+[debug] [youtube] [pot] PO Token Providers: none
+[debug] [youtube] [pot] PO Token Cache Providers: memory
+[debug] [youtube] [pot] PO Token Cache Spec Providers: webpo
+[debug] [youtube] [jsc] JS Challenge Providers: bun (unavailable), deno (unavailable), node (unavailable), quickjs (unavailable)
+[youtube] Extracting URL: https://www.youtube.com/watch?v=TA9Rec1qAFQ
+[youtube] TA9Rec1qAFQ: Downloading webpage
+WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing. See  https://github.com/yt-dlp/yt-dlp/wiki/EJS  for details on installing one
+[debug] [youtube] Forcing "main" player JS variant for player 1ebf2aa6
+        original url = /s/player/1ebf2aa6/player_es6.vflset/en_US/base.js
+[youtube] TA9Rec1qAFQ: Downloading android vr player API JSON
+[debug] Sort order given by extractor: quality, res, fps, hdr:12, source, vcodec, channels, acodec, lang, proto
+[debug] Formats sorted by: hasvid, ie_pref, quality, res, fps, hdr:12(7), source, vcodec, channels, acodec, lang, proto, size, br, asr, vext, aext, hasaud, id
+[info] TA9Rec1qAFQ: Downloading 1 format(s): 140
+[debug] Invoking http downloader on "https://rr3---sn-ab5l6ny7.googlevideo.com/videoplayback?expire=1774067635&ei=U8u9aY6DCrmD0_wP4fvOgA4&ip=47.164.41.223&id=o-AMdVj6lo40soqNmC2P-TfGgLwNUtiv2KD7IAHWyR06JH&itag=140&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=762&met=1774046035%2C&mh=Nb&mm=31%2C29&mn=sn-ab5l6ny7%2Csn-ab5sznz6&ms=au%2Crdu&mv=m&mvi=3&pl=14&rms=au%2Cau&gcr=us&initcwndbps=3243750&bui=AVNa5-w6wF3-7jfkMDehKCtzvbsOnXLW4psRLIGOOJeUfvPY6Vsw3ag8-LzRPQdgDreG8emRx6qXzB8i&spc=6dlaFHppRYf94N4lMOaxh_J3todOZN9c3kGlDA317aYM&vprv=1&svpuc=1&mime=audio%2Fmp4&rqh=1&gir=yes&clen=2706841&dur=167.206&lmt=1751764909919040&mt=1774045559&fvip=5&keepalive=yes&fexp=51565116%2C51565681%2C51791334&c=ANDROID_VR&txp=5532534&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cgcr%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AHEqNM4wRgIhAMqr_dvtv9DYu5mhqS0PC77t1ASNGeOd5Pw_x4sMuIDfAiEAmZFbwIF57FUScQJBR4-uSGREVSOq0nQ9MBjaaramrn8%3D&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRAIgJCUV9GCCf35LfyXJy_DsQjDQMX3rF_8Zd6FCgxuh9NkCIF8ODHjzblST49B7nqignFFkLWYXztV13mOBvJgCrZVd"
+[debug] File locking is not supported. Proceeding without locking
+[download] Destination: C:\Users\dagol\AppData\Local\Temp\youtube_download_0haamw4_\Led Zeppelin - Good Times Bad Times (Official Audio).m4a
+[download]   0.0% of    2.58MiB at  475.11KiB/s ETA 00:052026-03-20 18:33:54,254 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.1% of    2.58MiB at    1.39MiB/s ETA 00:012026-03-20 18:33:54,254 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.3% of    2.58MiB at    1.87MiB/s ETA 00:012026-03-20 18:33:54,255 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   0.6% of    2.58MiB at    4.00MiB/s ETA 00:002026-03-20 18:33:54,255 - admin.services.youtube_service - INFO - YouTube download progress: 0%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   1.2% of    2.58MiB at    3.41MiB/s ETA 00:002026-03-20 18:33:54,261 - admin.services.youtube_service - INFO - YouTube download progress: 1%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   2.4% of    2.58MiB at    4.97MiB/s ETA 00:002026-03-20 18:33:54,265 - admin.services.youtube_service - INFO - YouTube download progress: 2%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   4.8% of    2.58MiB at    6.17MiB/s ETA 00:002026-03-20 18:33:54,272 - admin.services.youtube_service - INFO - YouTube download progress: 4%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]   9.6% of    2.58MiB at    8.99MiB/s ETA 00:002026-03-20 18:33:54,280 - admin.services.youtube_service - INFO - YouTube download progress: 9%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  19.3% of    2.58MiB at   14.46MiB/s ETA 00:002026-03-20 18:33:54,287 - admin.services.youtube_service - INFO - YouTube download progress: 19%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  38.7% of    2.58MiB at   23.70MiB/s ETA 00:002026-03-20 18:33:54,294 - admin.services.youtube_service - INFO - YouTube download progress: 38%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download]  77.4% of    2.58MiB at   38.91MiB/s ETA 00:002026-03-20 18:33:54,303 - admin.services.youtube_service - INFO - YouTube download progress: 77%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download] 100.0% of    2.58MiB at   33.70MiB/s ETA 00:002026-03-20 18:33:54,328 - admin.services.youtube_service - INFO - YouTube download progress: 100%
+QObject::startTimer: Timers can only be used with threads started with QThread
+[download] 100% of    2.58MiB in 00:00:00 at 19.40MiB/s  2026-03-20 18:33:54,330 - admin.services.youtube_service - INFO - YouTube download finished, now converting...
+QObject::startTimer: Timers can only be used with threads started with QThread
+
+2026-03-20 18:33:54,350 - admin.services.youtube_service - INFO - yt-dlp extract_info finished
+Video title: Led Zeppelin - Good Times Bad Times (Official Audio)
+Duration: 167 seconds
+Downloaded source file: C:\Users\dagol\AppData\Local\Temp\youtube_download_0haamw4_\Led Zeppelin - Good Times Bad Times (Official Audio).m4a (2706841 bytes)
+2026-03-20 18:33:54,352 - admin.services.youtube_service - INFO - Starting ffmpeg conversion to mp3...
+QObject::startTimer: Timers can only be used with threads started with QThread
+Final file: F:\database\drummer_songs\john_bonham_Good Times Bad Times.mp3 (4014425 bytes)
+
+===== YOUTUBE DOWNLOAD COMPLETED =====
+2026-03-20 18:33:56,631 - admin.ui.drummers_widget - INFO - Download completed: F:\database\drummer_songs\john_bonham_Good Times Bad Times.mp3
