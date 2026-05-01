@@ -3213,6 +3213,148 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             self._schema_cache[table_name] = set()
             return set()
 
+    def _ensure_postgres_schema(self) -> None:
+        """
+        Ensure core calibration tables exist in Postgres. This is a no-op if they already exist.
+        """
+        if getattr(self, "_engine", None) is None:
+            return
+        stmts = [
+            # Schema and search_path
+            "CREATE SCHEMA IF NOT EXISTS drumtrackai",
+            "SET search_path TO drumtrackai, public, extensions",
+            # Core entities
+            """
+            CREATE TABLE IF NOT EXISTS drummers (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT UNIQUE,
+                slug TEXT UNIQUE,
+                display_name TEXT,
+                name TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS calibration_adjustments (
+                drummer_slug TEXT PRIMARY KEY,
+                adjustments_json TEXT NOT NULL,
+                metadata_json TEXT,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS calibration_runs (
+                run_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                started_at TIMESTAMPTZ DEFAULT NOW(),
+                completed_at TIMESTAMPTZ,
+                outcome TEXT NOT NULL,
+                within_tolerance_count INTEGER,
+                total_compared INTEGER,
+                delta_summary TEXT,
+                note_count INTEGER,
+                fills_per_minute DOUBLE PRECISION
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS calibration_feedback (
+                feedback_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                run_id TEXT,
+                author TEXT,
+                rating INTEGER NOT NULL,
+                comment TEXT,
+                metadata_json TEXT,
+                submitted_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_sessions (
+                session_id TEXT PRIMARY KEY,
+                reviewer_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                assigned_at TIMESTAMPTZ,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                app_version TEXT,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_items (
+                item_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                base_groove_id TEXT NOT NULL,
+                reference_artifact_id TEXT,
+                baseline_run_id TEXT,
+                candidate_a_run_id TEXT,
+                candidate_b_run_id TEXT,
+                eval_mode TEXT,
+                ab_mapping_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pairwise_judgments (
+                judgment_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                preferred_candidate TEXT,
+                closer_to_target TEXT,
+                better_feel TEXT,
+                more_musical TEXT,
+                confidence INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS attribute_ratings (
+                rating_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                candidate_label TEXT NOT NULL,
+                stylistic_authenticity INTEGER,
+                groove_feel INTEGER,
+                dynamics INTEGER,
+                phrasing INTEGER,
+                kit_balance INTEGER,
+                fill_behavior INTEGER,
+                human_realism INTEGER,
+                overall_usefulness INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS run_versions (
+                run_id TEXT PRIMARY KEY,
+                generator_version TEXT NOT NULL,
+                feature_version TEXT NOT NULL,
+                rollup_version TEXT NOT NULL,
+                sample_pack_version TEXT NOT NULL,
+                seed INTEGER,
+                commit_hash TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS audio_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                artifact_type TEXT NOT NULL,
+                storage_uri TEXT NOT NULL,
+                duration_sec DOUBLE PRECISION,
+                loudness_lufs DOUBLE PRECISION,
+                sample_pack_version TEXT,
+                render_recipe_json TEXT
+            )
+            """,
+        ]
+        with self._engine.begin() as conn:
+            for sql in stmts:
+                conn.execute(text(sql))
+        # Clear schema cache so health reflects new tables
+        self._schema_cache.clear()
+
     @classmethod
     def get_instance(cls):
         """Get the singleton instance"""
@@ -3262,6 +3404,13 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                         pass
                     return False
                 else:
+                    # Ensure required schema/tables exist in Postgres
+                    try:
+                        self._ensure_postgres_schema()
+                    except Exception as se:
+                        logger.error(f"Postgres schema ensure failed: {se}")
+                        self.database_error.emit(f"Postgres schema ensure failed: {se}")
+                        return False
                     self._db_path = db_url or "postgres"
                     self._initialized = True
                     self.database_connected.emit(self._db_path)
