@@ -3255,14 +3255,18 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     with self._engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
                 except Exception as e:
-                    logger.error(f"Failed to initialize database: {str(e)}")
-                    self.database_error.emit(f"Failed to initialize database: {str(e)}")
+                    logger.error(f"Failed to initialize Postgres engine: {str(e)}")
+                    try:
+                        self.database_error.emit(f"Failed to initialize Postgres engine: {str(e)}")
+                    except Exception:
+                        pass
                     return False
-                self._db_path = db_url or "postgres"
-                self._initialized = True
-                self.database_connected.emit(self._db_path)
-                logger.info(f"Database initialized successfully at {self._db_path}")
-                return True
+                else:
+                    self._db_path = db_url or "postgres"
+                    self._initialized = True
+                    self.database_connected.emit(self._db_path)
+                    logger.info(f"Database initialized successfully at {self._db_path}")
+                    return True
 
             # Set default path if not provided
             if db_path is None:

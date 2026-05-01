@@ -13,3 +13,4 @@ yt-dlp==2023.7.6
 google-api-python-client==2.109.0yt-dlp==2023.7.6
 validators==0.22.0
 ffmpeg-python==0.2.0
+psycopg[binary]>=3.1
