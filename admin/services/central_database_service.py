@@ -19,6 +19,8 @@ from .calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 try:  # pragma: no cover - optional Qt dependency
     from PySide6.QtCore import QObject, Signal
@@ -226,6 +228,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         self._schema_cache: Dict[str, set] = {}
         self._write_lock = threading.RLock()
         self._last_ingest_error: str = ""
+        self._engine = None
         logger.info("CentralDatabaseService initialized")
 
     def _set_last_ingest_error(self, msg: str) -> None:
@@ -3185,6 +3188,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         if table_name in self._schema_cache:
             return self._schema_cache[table_name]
         try:
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    res = conn_pg.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = :tbl
+                            """
+                        ),
+                        {"tbl": table_name},
+                    )
+                    cols = {row[0] for row in res}
+                self._schema_cache[table_name] = cols
+                return cols
             conn = self._get_connection()
             cursor = conn.cursor()
             rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -3218,7 +3236,34 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if self._initialized:
                 logger.warning("Database already initialized")
                 return True
-                
+            
+            db_backend = str(os.getenv("DB_BACKEND", "")).strip().lower()
+            db_url = str(os.getenv("DATABASE_URL", "")).strip()
+            if db_backend in {"postgres", "postgresql"} or db_url.lower().startswith("postgres"):
+                try:
+                    max_overflow = int(str(os.getenv("DB_MAX_OVERFLOW", "5")).strip() or "5")
+                except Exception:
+                    max_overflow = 5
+                try:
+                    self._engine = create_engine(
+                        db_url,
+                        pool_pre_ping=True,
+                        pool_size=5,
+                        max_overflow=max_overflow,
+                        future=True,
+                    )
+                    with self._engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                except Exception as e:
+                    logger.error(f"Failed to initialize database: {str(e)}")
+                    self.database_error.emit(f"Failed to initialize database: {str(e)}")
+                    return False
+                self._db_path = db_url or "postgres"
+                self._initialized = True
+                self.database_connected.emit(self._db_path)
+                logger.info(f"Database initialized successfully at {self._db_path}")
+                return True
+
             # Set default path if not provided
             if db_path is None:
                 # First, honor an explicit environment override so backend
@@ -4493,17 +4538,29 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             List[Dict]: List of drummer records
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
             cols = self._table_columns("drummers")
-            if "display_name" in cols:
-                cursor.execute('SELECT * FROM drummers ORDER BY display_name')
-            elif "name" in cols:
-                cursor.execute('SELECT * FROM drummers ORDER BY name')
+            results: List[Dict] = []
+            if getattr(self, "_engine", None) is not None:
+                if "display_name" in cols:
+                    q = text('SELECT * FROM drummers ORDER BY display_name')
+                elif "name" in cols:
+                    q = text('SELECT * FROM drummers ORDER BY name')
+                else:
+                    q = text('SELECT * FROM drummers ORDER BY id')
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(q).mappings().all()
+                results = [dict(row) for row in rows]
             else:
-                cursor.execute('SELECT * FROM drummers ORDER BY id')
-            rows = cursor.fetchall()
-            results = [dict(row) for row in rows]
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                if "display_name" in cols:
+                    cursor.execute('SELECT * FROM drummers ORDER BY display_name')
+                elif "name" in cols:
+                    cursor.execute('SELECT * FROM drummers ORDER BY name')
+                else:
+                    cursor.execute('SELECT * FROM drummers ORDER BY id')
+                rows = cursor.fetchall()
+                results = [dict(row) for row in rows]
             if results:
                 return results
 
@@ -4512,12 +4569,25 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 vec_cols = self._table_columns("drummer_style_vectors")
                 if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
-                    cursor.execute(
-                        'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors '
-                        'WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) != "" '
-                        'ORDER BY drummer_name'
-                    )
-                    vec_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(
+                                text(
+                                    "SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors "
+                                    "WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) <> '' "
+                                    "ORDER BY drummer_name"
+                                )
+                            )
+                            vec_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors '
+                            'WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) != "" '
+                            'ORDER BY drummer_name'
+                        )
+                        vec_rows = cursor.fetchall()
                     if vec_rows:
                         return [
                             {
@@ -4537,8 +4607,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 persona_cols = self._table_columns("drummer_personas")
                 if persona_cols:
-                    cursor.execute('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name')
-                    persona_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name'))
+                            persona_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name')
+                        persona_rows = cursor.fetchall()
                     return [
                         {
                             "id": row[0],
@@ -4559,8 +4636,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 profile_cols = self._table_columns("drummer_profiles")
                 if profile_cols:
-                    cursor.execute('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name')
-                    profile_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name'))
+                            profile_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name')
+                        profile_rows = cursor.fetchall()
                     return [
                         {
                             "id": row[0],
@@ -4593,24 +4677,41 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             Dict or None: Drummer record or None if not found
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
             cols = self._table_columns("drummers")
-            if "drummer_id" in cols:
-                cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+            if getattr(self, "_engine", None) is not None:
+                q = text('SELECT * FROM drummers WHERE drummer_id = :id') if "drummer_id" in cols else text('SELECT * FROM drummers WHERE id = :id')
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(q, {"id": drummer_id}).mappings().first()
+                if row:
+                    return dict(row)
             else:
-                cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                if "drummer_id" in cols:
+                    cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+                else:
+                    cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
 
             vec_cols = self._table_columns("drummer_style_vectors")
             if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
-                cursor.execute(
-                    'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = ? LIMIT 1',
-                    (drummer_id,),
-                )
-                vrow = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = :id LIMIT 1'),
+                            {"id": drummer_id},
+                        )
+                        vrow = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = ? LIMIT 1',
+                        (drummer_id,),
+                    )
+                    vrow = cursor.fetchone()
                 if vrow:
                     return {
                         "id": vrow[0],
@@ -4622,11 +4723,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             persona_cols = self._table_columns("drummer_personas")
             if persona_cols:
-                cursor.execute(
-                    'SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = ?',
-                    (drummer_id,),
-                )
-                prow = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = :id'),
+                            {"id": drummer_id},
+                        )
+                        prow = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = ?',
+                        (drummer_id,),
+                    )
+                    prow = cursor.fetchone()
                 if prow:
                     return {
                         "id": prow[0],
@@ -4642,11 +4753,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             profile_cols = self._table_columns("drummer_profiles")
             if profile_cols:
-                cursor.execute(
-                    'SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = ?',
-                    (drummer_id,),
-                )
-                pr = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = :id'),
+                            {"id": drummer_id},
+                        )
+                        pr = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = ?',
+                        (drummer_id,),
+                    )
+                    pr = cursor.fetchone()
                 if pr:
                     return {
                         "id": pr[0],

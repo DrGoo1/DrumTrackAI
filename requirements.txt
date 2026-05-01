@@ -2,3 +2,7 @@ fastapi==0.110.0
 uvicorn[standard]==0.29.0
 python-jose==3.3.0
 requests==2.31.0
+
+# Database (Postgres via SQLAlchemy + psycopg3)
+SQLAlchemy>=2.0.0
+psycopg[binary]>=3.1
