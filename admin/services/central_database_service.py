@@ -3196,6 +3196,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                             SELECT column_name
                             FROM information_schema.columns
                             WHERE table_name = :tbl
+                              AND table_schema IN ('public', 'drumtrackai')
                             """
                         ),
                         {"tbl": table_name},
@@ -3214,18 +3215,12 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             return set()
 
     def _ensure_postgres_schema(self) -> None:
-        """
-        Ensure core calibration tables exist in Postgres. This is a no-op if they already exist.
-        """
         if getattr(self, "_engine", None) is None:
             return
         stmts = [
-            # Schema and search_path
             "CREATE SCHEMA IF NOT EXISTS drumtrackai",
-            "SET search_path TO drumtrackai, public, extensions",
-            # Core entities
             """
-            CREATE TABLE IF NOT EXISTS drummers (
+            CREATE TABLE IF NOT EXISTS public.drummers (
                 id TEXT PRIMARY KEY,
                 drummer_id TEXT UNIQUE,
                 slug TEXT UNIQUE,
@@ -3236,7 +3231,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS calibration_adjustments (
+            CREATE TABLE IF NOT EXISTS public.calibration_adjustments (
                 drummer_slug TEXT PRIMARY KEY,
                 adjustments_json TEXT NOT NULL,
                 metadata_json TEXT,
@@ -3244,7 +3239,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS calibration_runs (
+            CREATE TABLE IF NOT EXISTS public.calibration_runs (
                 run_id TEXT PRIMARY KEY,
                 drummer_slug TEXT NOT NULL,
                 started_at TIMESTAMPTZ DEFAULT NOW(),
@@ -3258,7 +3253,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS calibration_feedback (
+            CREATE TABLE IF NOT EXISTS public.calibration_feedback (
                 feedback_id TEXT PRIMARY KEY,
                 drummer_slug TEXT NOT NULL,
                 run_id TEXT,
@@ -3270,7 +3265,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS evaluation_sessions (
+            CREATE TABLE IF NOT EXISTS public.evaluation_sessions (
                 session_id TEXT PRIMARY KEY,
                 reviewer_id TEXT NOT NULL,
                 target_drummer_slug TEXT NOT NULL,
@@ -3283,7 +3278,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS evaluation_items (
+            CREATE TABLE IF NOT EXISTS public.evaluation_items (
                 item_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 target_drummer_slug TEXT NOT NULL,
@@ -3298,7 +3293,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS pairwise_judgments (
+            CREATE TABLE IF NOT EXISTS public.pairwise_judgments (
                 judgment_id TEXT PRIMARY KEY,
                 item_id TEXT NOT NULL,
                 preferred_candidate TEXT,
@@ -3310,7 +3305,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS attribute_ratings (
+            CREATE TABLE IF NOT EXISTS public.attribute_ratings (
                 rating_id TEXT PRIMARY KEY,
                 item_id TEXT NOT NULL,
                 candidate_label TEXT NOT NULL,
@@ -3326,7 +3321,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS run_versions (
+            CREATE TABLE IF NOT EXISTS public.run_versions (
                 run_id TEXT PRIMARY KEY,
                 generator_version TEXT NOT NULL,
                 feature_version TEXT NOT NULL,
@@ -3337,7 +3332,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS audio_artifacts (
+            CREATE TABLE IF NOT EXISTS public.audio_artifacts (
                 artifact_id TEXT PRIMARY KEY,
                 run_id TEXT,
                 artifact_type TEXT NOT NULL,
@@ -3352,7 +3347,6 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         with self._engine.begin() as conn:
             for sql in stmts:
                 conn.execute(text(sql))
-        # Clear schema cache so health reflects new tables
         self._schema_cache.clear()
 
     @classmethod
@@ -3396,6 +3390,18 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     )
                     with self._engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
+                        try:
+                            info_row = conn.execute(
+                                text(
+                                    "SELECT current_user, current_database(), version()"
+                                )
+                            ).first()
+                            sp_row = conn.execute(text("SHOW search_path")).first()
+                            logger.info(
+                                f"DB connected: user={info_row[0]} db={info_row[1]} search_path={sp_row[0]}"
+                            )
+                        except Exception as _:
+                            pass
                 except Exception as e:
                     logger.error(f"Failed to initialize Postgres engine: {str(e)}")
                     try:
@@ -3408,9 +3414,11 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     try:
                         self._ensure_postgres_schema()
                     except Exception as se:
-                        logger.error(f"Postgres schema ensure failed: {se}")
-                        self.database_error.emit(f"Postgres schema ensure failed: {se}")
-                        return False
+                        logger.warning(f"Postgres schema ensure failed (continuing): {se}")
+                        try:
+                            self.database_error.emit(f"Postgres schema ensure failed: {se}")
+                        except Exception:
+                            pass
                     self._db_path = db_url or "postgres"
                     self._initialized = True
                     self.database_connected.emit(self._db_path)
@@ -4693,17 +4701,17 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         try:
             cols = self._table_columns("drummers")
             results: List[Dict] = []
-            if getattr(self, "_engine", None) is not None:
+            if getattr(self, "_engine", None) is not None and cols:
                 if "display_name" in cols:
-                    q = text('SELECT * FROM drummers ORDER BY display_name')
+                    q = text('SELECT * FROM public.drummers ORDER BY display_name')
                 elif "name" in cols:
-                    q = text('SELECT * FROM drummers ORDER BY name')
+                    q = text('SELECT * FROM public.drummers ORDER BY name')
                 else:
-                    q = text('SELECT * FROM drummers ORDER BY id')
+                    q = text('SELECT * FROM public.drummers ORDER BY id')
                 with self._engine.connect() as conn_pg:
                     rows = conn_pg.execute(q).mappings().all()
                 results = [dict(row) for row in rows]
-            else:
+            elif getattr(self, "_engine", None) is None and cols:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 if "display_name" in cols:
@@ -4726,7 +4734,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                         with self._engine.connect() as conn:
                             res = conn.execute(
                                 text(
-                                    "SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors "
+                                    "SELECT DISTINCT drummer_id, drummer_name FROM public.drummer_style_vectors "
                                     "WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) <> '' "
                                     "ORDER BY drummer_name"
                                 )
@@ -4762,7 +4770,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if persona_cols:
                     if getattr(self, "_engine", None) is not None:
                         with self._engine.connect() as conn:
-                            res = conn.execute(text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name'))
+                            res = conn.execute(text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM public.drummer_personas ORDER BY display_name'))
                             persona_rows = res.all()
                     else:
                         conn = self._get_connection()
@@ -4791,7 +4799,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if profile_cols:
                     if getattr(self, "_engine", None) is not None:
                         with self._engine.connect() as conn:
-                            res = conn.execute(text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name'))
+                            res = conn.execute(text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM public.drummer_profiles ORDER BY display_name'))
                             profile_rows = res.all()
                     else:
                         conn = self._get_connection()
@@ -4831,29 +4839,30 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         """
         try:
             cols = self._table_columns("drummers")
-            if getattr(self, "_engine", None) is not None:
-                q = text('SELECT * FROM drummers WHERE drummer_id = :id') if "drummer_id" in cols else text('SELECT * FROM drummers WHERE id = :id')
-                with self._engine.connect() as conn_pg:
-                    row = conn_pg.execute(q, {"id": drummer_id}).mappings().first()
-                if row:
-                    return dict(row)
-            else:
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                if "drummer_id" in cols:
-                    cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+            if cols:
+                if getattr(self, "_engine", None) is not None:
+                    q = text('SELECT * FROM public.drummers WHERE drummer_id = :id') if "drummer_id" in cols else text('SELECT * FROM public.drummers WHERE id = :id')
+                    with self._engine.connect() as conn_pg:
+                        row = conn_pg.execute(q, {"id": drummer_id}).mappings().first()
+                    if row:
+                        return dict(row)
                 else:
-                    cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
-                row = cursor.fetchone()
-                if row:
-                    return dict(row)
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    if "drummer_id" in cols:
+                        cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+                    else:
+                        cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
 
             vec_cols = self._table_columns("drummer_style_vectors")
             if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
                 if getattr(self, "_engine", None) is not None:
                     with self._engine.connect() as conn:
                         res = conn.execute(
-                            text('SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = :id LIMIT 1'),
+                            text('SELECT DISTINCT drummer_id, drummer_name FROM public.drummer_style_vectors WHERE drummer_id = :id LIMIT 1'),
                             {"id": drummer_id},
                         )
                         vrow = res.first()
@@ -4879,7 +4888,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if getattr(self, "_engine", None) is not None:
                     with self._engine.connect() as conn:
                         res = conn.execute(
-                            text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = :id'),
+                            text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM public.drummer_personas WHERE persona_id = :id'),
                             {"id": drummer_id},
                         )
                         prow = res.first()
@@ -4909,7 +4918,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if getattr(self, "_engine", None) is not None:
                     with self._engine.connect() as conn:
                         res = conn.execute(
-                            text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = :id'),
+                            text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM public.drummer_profiles WHERE drummer_id = :id'),
                             {"id": drummer_id},
                         )
                         pr = res.first()

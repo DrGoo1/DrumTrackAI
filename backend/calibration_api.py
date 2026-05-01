@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from admin.services.central_database_service import CentralDatabaseService
+from sqlalchemy import create_engine, text  # type: ignore
 
 import requests  # type: ignore
 from jose import jwt  # type: ignore
@@ -1472,10 +1473,12 @@ async def submit_pairwise_judgment(
 
 
 @router.get("/health", response_model=CalibrationHealthPayload)
-async def calibration_health(db: CentralDatabaseService = Depends(get_db_service)) -> CalibrationHealthPayload:
+async def calibration_health() -> CalibrationHealthPayload:
     db_path = None
+    svc = CentralDatabaseService.get_instance()
     try:
-        db_path = getattr(db, "_db_path", None)
+        _ = svc.initialize()
+        db_path = getattr(svc, "_db_path", None)
     except Exception:
         db_path = None
 
@@ -1490,9 +1493,22 @@ async def calibration_health(db: CentralDatabaseService = Depends(get_db_service
     }
     notes: List[str] = []
     try:
-        for table_name in calibration_tables.keys():
-            cols = db._table_columns(table_name)
-            calibration_tables[table_name] = bool(cols)
+        engine_active = bool(getattr(svc, "_engine", None) is not None)
+        backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+        db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+        url_scheme = db_url_env.split("://", 1)[0] if "://" in db_url_env else ""
+        notes.append(f"engine_active={engine_active}")
+        if backend_env:
+            notes.append(f"db_backend={backend_env}")
+        if url_scheme:
+            notes.append(f"db_url_scheme={url_scheme}")
+    except Exception:
+        pass
+    try:
+        if engine_active:
+            for table_name in calibration_tables.keys():
+                cols = svc._table_columns(table_name)
+                calibration_tables[table_name] = bool(cols)
     except Exception as exc:
         notes.append(f"schema_probe_failed: {exc}")
 
@@ -1515,6 +1531,37 @@ async def calibration_health(db: CentralDatabaseService = Depends(get_db_service
         calibration_tables=calibration_tables,
         notes=notes,
     )
+
+
+@router.get("/db-diagnostics")
+async def db_diagnostics() -> Dict[str, Any]:
+    backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+    db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+    out: Dict[str, Any] = {
+        "db_backend": backend_env or None,
+        "has_database_url": bool(db_url_env),
+    }
+    configured = (backend_env in {"postgres", "postgresql"}) or db_url_env.lower().startswith("postgres")
+    out["configured"] = configured
+    if not configured:
+        return out
+    try:
+        engine = create_engine(db_url_env, pool_pre_ping=True, future=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            try:
+                row = conn.execute(text("SELECT current_user, current_database()"))
+                info = row.first()
+                if info is not None:
+                    out["current_user"] = info[0]
+                    out["current_database"] = info[1]
+            except Exception:
+                pass
+        out["connect_ok"] = True
+    except Exception as e:
+        out["connect_ok"] = False
+        out["error"] = str(e)
+    return out
 
 
 @router.get("/training-export", response_model=CalibrationTrainingExportPayload)
