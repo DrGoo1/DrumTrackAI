@@ -1227,8 +1227,6 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
         return sorted(results, key=lambda item: item.displayName.lower())
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
-
-
 # ASGI application factory
 app = FastAPI(title="DrumTrackAI Calibration API")
 
@@ -1244,9 +1242,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(router)
-app.include_router(assimilation_generation_router)
+# Routers are registered at end of file after all routes are defined.
 
 
 @router.post("/storage/presign-upload", response_model=StoragePresignUploadResponse)
@@ -1446,7 +1442,7 @@ async def get_analysis_detail(analysis_id: str, db: CentralDatabaseService = Dep
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
-
+ 
 @router.post("/evaluation-items/{item_id}/judgment")
 async def submit_pairwise_judgment(
     item_id: str,
@@ -2059,3 +2055,6 @@ async def submit_feedback(
         raise
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+app.include_router(router)
+app.include_router(assimilation_generation_router)
