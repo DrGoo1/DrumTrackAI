@@ -1529,10 +1529,25 @@ async def calibration_health() -> CalibrationHealthPayload:
         except Exception:
             db_exists = False
 
+    masked_db_path = None
+    if db_path:
+        try:
+            s = str(db_path)
+            i = s.find('://')
+            if i != -1:
+                j = s.find('@', i + 3)
+                if j != -1:
+                    userpass = s[i + 3 : j]
+                    user = userpass.split(':', 1)[0] if ':' in userpass else userpass
+                    s = s[: i + 3] + user + ':***' + s[j:]
+            masked_db_path = s
+        except Exception:
+            masked_db_path = str(db_path)
+
     status_text = "ok" if db_exists and not missing_tables else "degraded"
     return CalibrationHealthPayload(
         status=status_text,
-        db_path=str(db_path) if db_path else None,
+        db_path=masked_db_path,
         db_exists=db_exists,
         calibration_tables=calibration_tables,
         notes=notes,
