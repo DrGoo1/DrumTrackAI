@@ -1517,7 +1517,13 @@ async def calibration_health() -> CalibrationHealthPayload:
         notes.append("missing_tables=" + ",".join(missing_tables))
 
     db_exists = False
-    if db_path:
+    try:
+        is_pg = engine_active and ((backend_env in {"postgres", "postgresql"}) or url_scheme.startswith("postgres"))
+    except Exception:
+        is_pg = False
+    if is_pg:
+        db_exists = True
+    elif db_path:
         try:
             db_exists = bool(Path(str(db_path)).exists())
         except Exception:

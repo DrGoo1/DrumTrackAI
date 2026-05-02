@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: drumtrackai-calibration-api
+    env: python
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.calibration_api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /calibration/health
+    envVars:
+      - key: DB_BACKEND
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: AWS_S3_BUCKET
+        sync: false
+      - key: AWS_REGION
+        sync: false
