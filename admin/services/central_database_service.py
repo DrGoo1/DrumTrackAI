@@ -965,7 +965,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             rollup: Dict[str, Any] = {}
             try:
                 if drummer_fk is not None:
-                    rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
+                    rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
             except Exception:
                 rollup = {}
 
@@ -1363,7 +1363,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
     def compute_drummer_profile_rollup(self, *, drummer_fk: int) -> Dict[str, Any]:
         rollup: Dict[str, Any] = {
-            "drummer_id": int(drummer_fk),
+            "drummer_id": str(drummer_fk),
             "songs": 0,
             "hits": 0,
             "instrument_counts": {},
@@ -1799,7 +1799,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         return self._upsert_profile_row(
             table="drummer_personality_embeddings",
             profile_id=str(embedding_id or str(uuid.uuid4())),
-            drummer_fk=int(drummer_fk),
+            drummer_fk=drummer_fk,
             payload=payload,
         )
 
