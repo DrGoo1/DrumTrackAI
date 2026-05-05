@@ -15,7 +15,18 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from .calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
+try:
+    from .calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
+except Exception:
+    try:
+        from admin.services.calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
+    except Exception:
+        class CalibrationPhase4SampleMixin:
+            def phase4_prepare_sample(self, *args, **kwargs):
+                return {}
+
+            def phase4_finalize_sample(self, *args, **kwargs):
+                return {}
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
