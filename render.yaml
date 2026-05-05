@@ -1,10 +1,9 @@
 services:
   - type: web
     name: drumtrackai-calibration-api
-    env: python
+    env: docker
     autoDeploy: true
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.calibration_api:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: Dockerfile
     healthCheckPath: /calibration/health
     envVars:
       - key: DB_BACKEND
