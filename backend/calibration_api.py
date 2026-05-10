@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from admin.services.central_database_service import CentralDatabaseService
@@ -1242,6 +1243,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static artifacts mount
+_artifacts_root = (Path(__file__).resolve().parents[1] / "artifacts").resolve()
+try:
+    if _artifacts_root.exists():
+        app.mount(
+            "/artifacts",
+            StaticFiles(directory=str(_artifacts_root), html=False),
+            name="artifacts",
+        )
+except Exception:
+    pass
 
 # Routers are registered at end of file after all routes are defined.
 
