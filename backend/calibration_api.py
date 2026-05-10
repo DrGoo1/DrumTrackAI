@@ -1253,6 +1253,13 @@ try:
             StaticFiles(directory=str(_artifacts_root), html=False),
             name="artifacts",
         )
+        calib_dir = _artifacts_root / "calibration"
+        if calib_dir.exists():
+            app.mount(
+                "/static/calibration_artifacts",
+                StaticFiles(directory=str(calib_dir), html=False),
+                name="calibration_static",
+            )
 except Exception:
     pass
 

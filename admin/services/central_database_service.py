@@ -661,12 +661,38 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     (analysis_id,),
                 )
                 stems = cursor.fetchall() or []
-            if not stems and mvsep_output_dir and os.path.isdir(str(mvsep_output_dir)):
+            # Filter to existing files
+            try:
+                stems = [(sn, fp) for (sn, fp) in stems if fp and os.path.exists(str(fp))]
+            except Exception:
+                pass
+            if (not stems) and mvsep_output_dir and os.path.isdir(str(mvsep_output_dir)):
                 try:
                     candidates = [p for p in os.listdir(str(mvsep_output_dir)) if p.lower().endswith(".wav")]
                     stems = [(os.path.splitext(p)[0], os.path.join(str(mvsep_output_dir), p)) for p in candidates]
                 except Exception:
                     stems = []
+
+            try:
+                inst_like = []
+                drums_mix = []
+                for sn, fp in stems:
+                    s = str(sn or "").lower()
+                    if any(k in s for k in ["bass", "vocal", "other", "residual", "track", "mix"]):
+                        # non-drum stems
+                        if any(k in s for k in ["drums", "drumsep_drums"]):
+                            drums_mix.append((sn, fp))
+                        continue
+                    inst_like.append((sn, fp))
+                if inst_like:
+                    stems = inst_like
+                elif drums_mix:
+                    stems = [drums_mix[0]]
+                else:
+                    # As a last resort, keep original list
+                    pass
+            except Exception:
+                pass
 
             now = datetime.utcnow().isoformat()
 
@@ -926,9 +952,14 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             total_events = 0
             for r in rows:
                 aid = r[0] if isinstance(r, (tuple, list)) else r.analysis_id
-                total_events += int(
+                n = int(
                     self.extract_hit_events_for_analysis(analysis_id=aid, max_events_per_stem=max_events_per_stem) or 0
                 )
+                total_events += n
+                try:
+                    print(f"[Phase2] {drummer_slug} analysis={aid} events={n}", flush=True)
+                except Exception:
+                    pass
             out["events"] = total_events
             return out
         except Exception as e:
@@ -1160,7 +1191,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
     def generate_preset_from_rollup(self, *, drummer_slug: str, rollup: Dict[str, Any], persona: Dict[str, Any]) -> Dict[str, Any]:
         deltas: Dict[str, Any] = {}
-        policies: Dict[str, Any] = {"source": "phase6", "persona": persona}
+        policies: Dict[str, Any] = {"source": "phase6", "persona": persona, "sentient_drummer": True}
 
         pocket = rollup.get("pocket_tightness")
         human = rollup.get("humanness")
@@ -1232,6 +1263,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             payload = {
                 "drummer_id": drummer_slug,
                 "generated_at": datetime.utcnow().isoformat(),
+                "sentient_drummer": True,
                 "persona": persona,
                 "preset": {
                     "preset_id": preset.get("preset_id"),
@@ -1382,26 +1414,35 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         if getattr(self, "_engine", None) is not None:
             with self._engine.connect() as conn_pg:
                 d = str(drummer_fk)
-                row = conn_pg.execute(
-                    text("SELECT COUNT(DISTINCT analysis_id) FROM public.song_performance_analysis WHERE drummer_id = :d"),
-                    {"d": d},
-                ).first()
-                rollup["songs"] = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text("SELECT COUNT(DISTINCT analysis_id) FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).first()
+                    rollup["songs"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["songs"] = 0
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
-                    ),
-                    {"d": d},
-                ).first()
-                rollup["hits"] = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["hits"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["hits"] = 0
 
-                res = conn_pg.execute(
-                    text(
-                        "SELECT instrument, COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY instrument ORDER BY COUNT(1) DESC"
-                    ),
-                    {"d": d},
-                ).fetchall() or []
+                try:
+                    res = conn_pg.execute(
+                        text(
+                            "SELECT instrument, COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY instrument ORDER BY COUNT(1) DESC"
+                        ),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
                 inst_counts: Dict[str, int] = {}
                 for inst, n in res:
                     inst_counts[str(inst or "")] = int(n or 0)
@@ -1410,39 +1451,51 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if total_inst > 0:
                     rollup["instrument_shares"] = {k: float(v) / total_inst for k, v in inst_counts.items()}
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(1) FROM public.fill_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
-                    ),
-                    {"d": d},
-                ).first()
-                rollup["fills"] = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.fill_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["fills"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["fills"] = 0
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
-                    ),
-                    {"d": d},
-                ).first()
-                rollup["techniques"] = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["techniques"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["techniques"] = 0
 
-                res = conn_pg.execute(
-                    text(
-                        "SELECT technique_name, COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY technique_name ORDER BY COUNT(1) DESC"
-                    ),
-                    {"d": d},
-                ).fetchall() or []
+                try:
+                    res = conn_pg.execute(
+                        text(
+                            "SELECT technique_name, COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY technique_name ORDER BY COUNT(1) DESC"
+                        ),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
                 tb: Dict[str, int] = {}
                 for name, n in res:
                     tb[str(name or "")] = int(n or 0)
                 rollup["technique_breakdown"] = tb
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT AVG(groove_micro_timing_variance), AVG(groove_pocket_tightness), AVG(humanness_score) FROM public.song_performance_analysis WHERE drummer_id = :d"
-                    ),
-                    {"d": d},
-                ).first() or (None, None, None)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT AVG(groove_micro_timing_variance), AVG(groove_pocket_tightness), AVG(humanness_score) FROM public.song_performance_analysis WHERE drummer_id = :d"
+                        ),
+                        {"d": d},
+                    ).first() or (None, None, None)
+                except Exception:
+                    row = (None, None, None)
                 try:
                     rollup["timing_std_ms"] = None if row[0] is None else float(row[0])
                 except Exception:
@@ -1456,10 +1509,13 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 except Exception:
                     rollup["humanness"] = None
 
-                res = conn_pg.execute(
-                    text("SELECT dynamics_json FROM public.song_performance_analysis WHERE drummer_id = :d"),
-                    {"d": d},
-                ).fetchall() or []
+                try:
+                    res = conn_pg.execute(
+                        text("SELECT dynamics_json FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
                 vel_means: List[float] = []
                 vel_stds: List[float] = []
                 for (dj,) in res:
@@ -1477,10 +1533,13 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if vel_stds:
                     rollup["velocity_std"] = float(sum(vel_stds) / float(len(vel_stds)))
 
-                res = conn_pg.execute(
-                    text("SELECT duration_sec FROM public.song_performance_analysis WHERE drummer_id = :d"),
-                    {"d": d},
-                ).fetchall() or []
+                try:
+                    res = conn_pg.execute(
+                        text("SELECT duration_sec FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
                 total_min = 0.0
                 for (dur,) in res:
                     try:
@@ -1491,29 +1550,38 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if total_min > 0:
                     rollup["fills_per_min"] = float(rollup["fills"]) / total_min
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(DISTINCT bar_index) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
-                    ),
-                    {"d": d},
-                ).first()
-                bars = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(DISTINCT bar_index) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    bars = int((row or (0,))[0] or 0)
+                except Exception:
+                    bars = 0
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(DISTINCT section_label) FROM public.drummer_phrase_features WHERE drummer_id = :d AND COALESCE(section_label, '') <> ''"
-                    ),
-                    {"d": d},
-                ).first()
-                section_diversity = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(DISTINCT section_label) FROM public.drummer_phrase_features WHERE drummer_id = :d AND COALESCE(section_label, '') <> ''"
+                        ),
+                        {"d": d},
+                    ).first()
+                    section_diversity = int((row or (0,))[0] or 0)
+                except Exception:
+                    section_diversity = 0
 
-                row = conn_pg.execute(
-                    text(
-                        "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) AND instrument IN ('hihat','ride','crash','hh')"
-                    ),
-                    {"d": d},
-                ).first()
-                cymbal_evidence_hits = int((row or (0,))[0] or 0)
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) AND instrument IN ('hihat','ride','crash','hh')"
+                        ),
+                        {"d": d},
+                    ).first()
+                    cymbal_evidence_hits = int((row or (0,))[0] or 0)
+                except Exception:
+                    cymbal_evidence_hits = 0
 
                 rollup["confidence"] = self._compute_drummer_confidence(
                     songs=int(rollup.get("songs") or 0),
@@ -4538,7 +4606,10 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             """,
         ]
         with self._engine.begin() as conn:
+            skip_idx = str(os.getenv("DB_SKIP_INDEXES", "")).strip().lower() in ("1", "true", "yes", "y")
             for sql in stmts:
+                if skip_idx and sql.strip().upper().startswith("CREATE INDEX"):
+                    continue
                 conn.execute(text(sql))
         self._schema_cache.clear()
 
@@ -4931,6 +5002,52 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not isinstance(stem_files_used, dict):
                 stem_files_used = {}
 
+            # Resolve stem file paths against current song_folder if archived paths differ
+            resolved_stems: Dict[str, Any] = {}
+            try:
+                for stem_name, p in stem_files_used.items():
+                    p = str(p or "").strip()
+                    found = ""
+                    if p and os.path.exists(p):
+                        found = p
+                    else:
+                        base = os.path.basename(p) if p else ""
+                        cand1 = os.path.join(song_folder, base) if base else ""
+                        cand2 = os.path.join(song_folder, "drumsep_components", base) if base else ""
+                        if cand1 and os.path.exists(cand1):
+                            found = cand1
+                        elif cand2 and os.path.exists(cand2):
+                            found = cand2
+                    if found:
+                        resolved_stems[stem_name] = found
+            except Exception:
+                resolved_stems = {}
+            if not resolved_stems:
+                # Fallback: scan common locations under song_folder
+                try:
+                    for root in (song_folder, os.path.join(song_folder, "drumsep_components")):
+                        if not os.path.isdir(root):
+                            continue
+                        for fn in os.listdir(root):
+                            if not fn.lower().endswith(".wav"):
+                                continue
+                            name = os.path.splitext(fn)[0]
+                            resolved_stems[name] = os.path.join(root, fn)
+                except Exception:
+                    pass
+            try:
+                ds_dir = os.path.join(song_folder, "drumsep_components")
+                if os.path.isdir(ds_dir):
+                    for fn in os.listdir(ds_dir):
+                        if not fn.lower().endswith(".wav"):
+                            continue
+                        name = os.path.splitext(fn)[0]
+                        path = os.path.join(ds_dir, fn)
+                        if name not in resolved_stems and os.path.exists(path):
+                            resolved_stems[name] = path
+            except Exception:
+                pass
+
             analysis_id = str(uuid.uuid4())
             source_file = ""
             try:
@@ -4940,6 +5057,23 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             except Exception:
                 source_file = ""
 
+            song_title = os.path.basename(song_folder).strip()
+            try:
+                meta_path = os.path.join(song_folder, "song_meta.json")
+                if os.path.exists(meta_path):
+                    with open(meta_path, "r", encoding="utf-8") as mf:
+                        m = json.load(mf)
+                    t = (m.get("title") or m.get("song_name") or "").strip()
+                    if t:
+                        song_title = t
+            except Exception:
+                pass
+            try:
+                duration_val = analysis_json.get("duration") if isinstance(analysis_json, dict) else None
+                duration_val = float(duration_val) if isinstance(duration_val, (int, float)) else None
+            except Exception:
+                duration_val = None
+
             if getattr(self, "_engine", None) is not None:
                 ok = self.upsert_song_performance_analysis(
                     analysis_id=analysis_id,
@@ -4948,13 +5082,39 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     source_file=source_file,
                     mvsep_output_dir=song_folder,
                     analysis_json=analysis_json,
-                    stem_files_used=stem_files_used,
+                    stem_files_used=resolved_stems,
                     analysis_version=analysis_version,
                 )
                 if not ok:
                     return None
                 now_iso = datetime.utcnow().isoformat()
                 with self._engine.begin() as conn_pg:
+                    try:
+                        sid = str(uuid.uuid4())
+                        conn_pg.execute(
+                            text(
+                                """
+                                INSERT INTO public.songs (
+                                    id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at
+                                ) VALUES (
+                                    :id, :title, NULL, NULL, NULL, NULL, :duration, :file_path, :drummer_id, NOW(), NOW()
+                                ) ON CONFLICT (id) DO NOTHING
+                                """
+                            ),
+                            {
+                                "id": sid,
+                                "title": song_title or None,
+                                "duration": duration_val,
+                                "file_path": source_file or None,
+                                "drummer_id": drummer_id,
+                            },
+                        )
+                        conn_pg.execute(
+                            text("UPDATE public.song_performance_analysis SET song_id = :sid WHERE analysis_id = :aid"),
+                            {"sid": sid, "aid": analysis_id},
+                        )
+                    except Exception:
+                        pass
                     def _insert_artifact_pg(role: str, path: str, fmt: str = ""):
                         try:
                             if not path or not os.path.exists(path):
@@ -5004,7 +5164,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     prof = os.path.join(song_folder, "drummer_profile.json")
                     _insert_artifact_pg("drummer_profile_json", prof, "json")
 
-                    for stem_name, path in stem_files_used.items():
+                    for stem_name, path in resolved_stems.items():
                         try:
                             if not path or not os.path.exists(path):
                                 continue
@@ -5059,7 +5219,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 source_file=source_file,
                 mvsep_output_dir=song_folder,
                 analysis_json=analysis_json,
-                stem_files_used=stem_files_used,
+                stem_files_used=resolved_stems,
                 analysis_version=analysis_version,
             )
             if not ok:
@@ -5110,7 +5270,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             prof = os.path.join(song_folder, "drummer_profile.json")
             _insert_artifact("drummer_profile_json", prof, "json")
 
-            for stem_name, path in stem_files_used.items():
+            for stem_name, path in resolved_stems.items():
                 try:
                     if not path or not os.path.exists(path):
                         continue
@@ -5147,6 +5307,36 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 conn.commit()
 
             self._with_write_lock_retry(_commit_all)
+            try:
+                sid = str(uuid.uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO songs (
+                        id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                    """,
+                    (
+                        sid,
+                        song_title or None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        float(duration_val) if duration_val is not None else None,
+                        source_file or None,
+                        int(drummer_fk) if drummer_fk is not None else None,
+                        now,
+                        now,
+                    ),
+                )
+                cursor.execute(
+                    "UPDATE song_performance_analysis SET song_id = ? WHERE analysis_id = ?",
+                    (sid, analysis_id),
+                )
+                conn.commit()
+            except Exception:
+                pass
             self.data_changed.emit("analysis_artifacts", "insert")
             self.data_changed.emit("stem_artifacts", "insert")
             return analysis_id
