@@ -38,11 +38,20 @@ _HELPERS: Optional[Dict[str, Any]] = None
 
 
 def _load_helpers() -> Dict[str, Any]:
-    script_path = (
-        Path(__file__).resolve().parents[2] / "scripts" / "apply_drummers_to_base_groove.py"
-    )
-    if not script_path.is_file():
-        raise FileNotFoundError(f"Missing apply_drummers_to_base_groove at {script_path}")
+    root = Path(__file__).resolve().parents[2]
+    candidates = [
+        root / "scripts" / "apply_drummers_to_base_groove.py",
+        root / "__drumtrackai_frontend__" / "scripts" / "apply_drummers_to_base_groove.py",
+    ]
+    script_path = None
+    for p in candidates:
+        if p.is_file():
+            script_path = p
+            break
+    if script_path is None:
+        raise FileNotFoundError(
+            f"Missing apply_drummers_to_base_groove at any of: {', '.join(str(p) for p in candidates)}"
+        )
 
     spec = spec_from_file_location("_calibration_apply_drummers", script_path)
     if spec is None or spec.loader is None:
@@ -82,9 +91,14 @@ def _helpers() -> Dict[str, Any]:
 def _resolve_base_groove_path(base_groove_id: str) -> Path:
     root = Path(__file__).resolve().parents[2]
     candidates = [
+        # direct path provided
         Path(base_groove_id),
+        # repo-level test assets
         root / "tests" / "assets" / f"{base_groove_id}.json",
         root / "tests" / "assets" / "base_groove.json",
+        # frontend test assets (Netlify repo subtree)
+        root / "__drumtrackai_frontend__" / "tests" / "assets" / f"{base_groove_id}.json",
+        root / "__drumtrackai_frontend__" / "tests" / "assets" / "base_groove.json",
     ]
     for path in candidates:
         if path.is_file():
