@@ -1802,6 +1802,17 @@ async def generate_candidates(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base groove or drummer")
 
     try:
+        # Strict gating: require full assimilation readiness before any generation.
+        assimilation = _assimilation_status_for_slug(db, target_slug)
+        if not assimilation.get("ready_for_calibration"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Assimilation not ready for calibration",
+                    "assimilationStatus": assimilation,
+                },
+            )
+
         render_service = CalibrationRenderService(db)
         session_id: Optional[str] = None
         reviewer_id = (payload.reviewer_id or "").strip()
@@ -1823,23 +1834,27 @@ async def generate_candidates(
 
         if payload.include_baseline:
             baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
-            if baseline_source:
-                source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
-                if source_groove_path:
-                    effective_base_groove_id = source_groove_path
-                analysis_id = str(baseline_source.get("analysis_id") or "").strip()
-                if analysis_id:
-                    baseline_analysis_id = analysis_id
-                    item_base_groove_id = f"assimilation:{analysis_id}"
-                baseline_ref = _create_reference_baseline_run(
-                    db,
-                    drummer_slug=target_slug,
-                    baseline_source=baseline_source,
-                    base_groove_id=item_base_groove_id,
+            if not baseline_source:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No assimilated baseline available for target drummer",
                 )
-                if baseline_ref:
-                    baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
-                    reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
+            source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
+            if source_groove_path:
+                effective_base_groove_id = source_groove_path
+            analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+            if analysis_id:
+                baseline_analysis_id = analysis_id
+                item_base_groove_id = f"assimilation:{analysis_id}"
+            baseline_ref = _create_reference_baseline_run(
+                db,
+                drummer_slug=target_slug,
+                baseline_source=baseline_source,
+                base_groove_id=item_base_groove_id,
+            )
+            if baseline_ref:
+                baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
+                reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
 
         generate_baseline = bool(payload.include_baseline and not baseline_run_id)
         requested = payload.candidate_count + (1 if generate_baseline else 0)
