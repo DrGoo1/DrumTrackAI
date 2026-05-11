@@ -1995,28 +1995,82 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
     try:
-        drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+        try:
+            drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+        except Exception:
+            drummer_row = {"id": slug, "display_name": slug}
         display_name = _display_name_from_row(drummer_row, slug)
 
-        adjustments_record = db.get_calibration_adjustments(slug) or {}
-        adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
-        metadata = _safe_json_dict(adjustments_record.get("metadata"))
+        adjustments: Dict[str, Any] = {}
+        metadata: Dict[str, Any] = {}
+        try:
+            adjustments_record = db.get_calibration_adjustments(slug) or {}
+            adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
+            metadata = _safe_json_dict(adjustments_record.get("metadata"))
+        except Exception:
+            adjustments = {}
+            metadata = {}
 
-        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
-        rollup_targets = rollup_result.get("rollup")
-        if not isinstance(rollup_targets, dict):
+        rollup_targets: Dict[str, Any] = {}
+        try:
+            rollup_targets = db.get_drummer_profile_rollup(drummer_slug=slug) or {}
+            if not isinstance(rollup_targets, dict):
+                rollup_targets = {}
+        except Exception:
             rollup_targets = {}
 
-        latest_run = db.get_latest_calibration_run(drummer_slug=slug)
+        latest_run: Optional["CalibrationRun"] = None
+        try:
+            latest_run = db.get_latest_calibration_run(drummer_slug=slug)
+        except Exception:
+            latest_run = None
         metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
 
-        runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
-        run_history = [_serialize_run(run) for run in runs]
+        try:
+            runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
+        except Exception:
+            runs = []
+        run_history: List[CalibrationRunPayload] = []
+        for run in runs:
+            try:
+                run_history.append(_serialize_run(run))
+            except Exception:
+                continue
 
-        feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
-        feedback_samples = [_serialize_feedback(item) for item in feedback_entries]
+        try:
+            feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
+        except Exception:
+            feedback_entries = []
+        feedback_samples: List[FeedbackEntry] = []
+        for item in feedback_entries:
+            try:
+                feedback_samples.append(_serialize_feedback(item))
+            except Exception:
+                continue
 
         completion_status = _completion_from_run(latest_run)
+
+        try:
+            assimilation_status = _assimilation_status_for_slug(db, slug)
+        except Exception:
+            assimilation_status = {
+                "status": "unknown",
+                "ready_for_calibration": False,
+                "missing_steps": ["ingestion"],
+                "counts": {
+                    "songs": 0,
+                    "artifacts": 0,
+                    "stems": 0,
+                    "hit_events": 0,
+                    "fills": 0,
+                    "techniques": 0,
+                },
+                "metrics": {
+                    "phase4_enriched_analyses": 0,
+                    "phase5_rollups": 0,
+                    "phase6_presets": 0,
+                },
+            }
 
         return DrummerDetailPayload(
             slug=slug,
@@ -2025,7 +2079,7 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
             rollupTargets=rollup_targets,
             metrics=metrics,
             metadata=metadata,
-            assimilationStatus=_assimilation_status_for_slug(db, slug),
+            assimilationStatus=assimilation_status,
             runHistory=run_history,
             feedbackSamples=feedback_samples,
             completionStatus=completion_status,

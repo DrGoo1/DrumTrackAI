@@ -3040,6 +3040,59 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             self.database_error.emit(msg)
             return False
 
+    def get_drummer_profile_rollup(self, *, drummer_slug: str) -> Optional[Dict[str, Any]]:
+        """Fetch the last saved drummer_profile_rollups.rollup_json for a slug/id without recomputing.
+        Works for both Postgres and SQLite schemas. Returns a dict or None if not present.
+        """
+        try:
+            drummer_slug = (drummer_slug or "").strip()
+            if not drummer_slug:
+                return None
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT rollup_json FROM public.drummer_profile_rollups WHERE CAST(drummer_id AS TEXT) = CAST(:did AS TEXT) LIMIT 1"
+                        ),
+                        {"did": str(drummer_slug)},
+                    ).first()
+                if not row:
+                    return None
+                try:
+                    value = row[0]
+                except Exception:
+                    try:
+                        value = row["rollup_json"]  # type: ignore[index]
+                    except Exception:
+                        value = None
+                return self._json_loads(value, default={}) or {}
+            # SQLite path
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT rollup_json
+                FROM drummer_profile_rollups
+                WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+                LIMIT 1
+                """,
+                (drummer_slug,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            try:
+                value = row[0]
+            except Exception:
+                value = None
+            return self._json_loads(value, default={}) or {}
+        except sqlite3.OperationalError:
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching drummer_profile_rollup for {drummer_slug}: {str(e)}")
+            self.database_error.emit(f"Error fetching drummer_profile_rollup: {str(e)}")
+            return None
+
     def run_phase5_profile_rollup_for_drummer(self, *, drummer_slug: str) -> Dict[str, Any]:
         out: Dict[str, Any] = {"drummer_slug": drummer_slug, "saved": False, "rollup": {}}
         try:
@@ -7607,6 +7660,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             logger.error(f"Error getting calibration runs for {drummer_slug}: {str(e)}")
             self.database_error.emit(f"Error getting calibration runs: {str(e)}")
             return runs
+
+    def get_latest_calibration_run(self, *, drummer_slug: str) -> Optional[CalibrationRun]:
+        try:
+            items = self.get_calibration_runs(drummer_slug=drummer_slug, limit=1, include_metrics=True)
+            return items[0] if items else None
+        except Exception as e:
+            logger.error(f"Error fetching latest calibration run for {drummer_slug}: {str(e)}")
+            self.database_error.emit(f"Error fetching latest calibration run: {str(e)}")
+            return None
 
     def log_calibration_feedback(
         self,
