@@ -15,12 +15,17 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from admin.services.calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+
+try:
+    from admin.services.calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
+except Exception:
+    class CalibrationPhase4SampleMixin:  # type: ignore[too-few-public-methods]
+        pass
 
 try:  # pragma: no cover - optional Qt dependency
     from PySide6.QtCore import QObject, Signal
