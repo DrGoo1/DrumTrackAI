@@ -10,10 +10,13 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from admin.services.central_database_service import CentralDatabaseService
+from sqlalchemy import create_engine, text  # type: ignore
 
 import requests  # type: ignore
 from jose import jwt  # type: ignore
@@ -21,6 +24,9 @@ from jose import jwt  # type: ignore
 from backend.services.artifact_url_service import ArtifactUrlService
 from backend.services.calibration_render_service import CalibrationRenderService, RenderRequest
 from backend.services.calibration_candidate_generator import generate_candidate_run
+from backend.app.assimilation.api.routes_drummer_generation import (
+    router as assimilation_generation_router,
+)
 
 if TYPE_CHECKING:
     from admin.services.central_database_service import (
@@ -1223,6 +1229,41 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
         return sorted(results, key=lambda item: item.displayName.lower())
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+# ASGI application factory
+app = FastAPI(title="DrumTrackAI Calibration API")
+
+_allowed_origins = [
+    "https://drumtrackai.netlify.app",
+    "http://localhost:3000",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static artifacts mount
+_artifacts_root = (Path(__file__).resolve().parents[1] / "artifacts").resolve()
+try:
+    if _artifacts_root.exists():
+        app.mount(
+            "/artifacts",
+            StaticFiles(directory=str(_artifacts_root), html=False),
+            name="artifacts",
+        )
+        calib_dir = _artifacts_root / "calibration"
+        if calib_dir.exists():
+            app.mount(
+                "/static/calibration_artifacts",
+                StaticFiles(directory=str(calib_dir), html=False),
+                name="calibration_static",
+            )
+except Exception:
+    pass
+
+# Routers are registered at end of file after all routes are defined.
 
 
 @router.post("/storage/presign-upload", response_model=StoragePresignUploadResponse)
@@ -1422,7 +1463,7 @@ async def get_analysis_detail(analysis_id: str, db: CentralDatabaseService = Dep
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
-
+ 
 @router.post("/evaluation-items/{item_id}/judgment")
 async def submit_pairwise_judgment(
     item_id: str,
@@ -1452,10 +1493,12 @@ async def submit_pairwise_judgment(
 
 
 @router.get("/health", response_model=CalibrationHealthPayload)
-async def calibration_health(db: CentralDatabaseService = Depends(get_db_service)) -> CalibrationHealthPayload:
+async def calibration_health() -> CalibrationHealthPayload:
     db_path = None
+    svc = CentralDatabaseService.get_instance()
     try:
-        db_path = getattr(db, "_db_path", None)
+        _ = svc.initialize()
+        db_path = getattr(svc, "_db_path", None)
     except Exception:
         db_path = None
 
@@ -1470,9 +1513,22 @@ async def calibration_health(db: CentralDatabaseService = Depends(get_db_service
     }
     notes: List[str] = []
     try:
-        for table_name in calibration_tables.keys():
-            cols = db._table_columns(table_name)
-            calibration_tables[table_name] = bool(cols)
+        engine_active = bool(getattr(svc, "_engine", None) is not None)
+        backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+        db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+        url_scheme = db_url_env.split("://", 1)[0] if "://" in db_url_env else ""
+        notes.append(f"engine_active={engine_active}")
+        if backend_env:
+            notes.append(f"db_backend={backend_env}")
+        if url_scheme:
+            notes.append(f"db_url_scheme={url_scheme}")
+    except Exception:
+        pass
+    try:
+        if engine_active:
+            for table_name in calibration_tables.keys():
+                cols = svc._table_columns(table_name)
+                calibration_tables[table_name] = bool(cols)
     except Exception as exc:
         notes.append(f"schema_probe_failed: {exc}")
 
@@ -1481,20 +1537,72 @@ async def calibration_health(db: CentralDatabaseService = Depends(get_db_service
         notes.append("missing_tables=" + ",".join(missing_tables))
 
     db_exists = False
-    if db_path:
+    try:
+        is_pg = engine_active and ((backend_env in {"postgres", "postgresql"}) or url_scheme.startswith("postgres"))
+    except Exception:
+        is_pg = False
+    if is_pg:
+        db_exists = True
+    elif db_path:
         try:
             db_exists = bool(Path(str(db_path)).exists())
         except Exception:
             db_exists = False
 
+    masked_db_path = None
+    if db_path:
+        try:
+            s = str(db_path)
+            i = s.find('://')
+            if i != -1:
+                j = s.find('@', i + 3)
+                if j != -1:
+                    userpass = s[i + 3 : j]
+                    user = userpass.split(':', 1)[0] if ':' in userpass else userpass
+                    s = s[: i + 3] + user + ':***' + s[j:]
+            masked_db_path = s
+        except Exception:
+            masked_db_path = str(db_path)
+
     status_text = "ok" if db_exists and not missing_tables else "degraded"
     return CalibrationHealthPayload(
         status=status_text,
-        db_path=str(db_path) if db_path else None,
+        db_path=masked_db_path,
         db_exists=db_exists,
         calibration_tables=calibration_tables,
         notes=notes,
     )
+
+
+@router.get("/db-diagnostics")
+async def db_diagnostics() -> Dict[str, Any]:
+    backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+    db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+    out: Dict[str, Any] = {
+        "db_backend": backend_env or None,
+        "has_database_url": bool(db_url_env),
+    }
+    configured = (backend_env in {"postgres", "postgresql"}) or db_url_env.lower().startswith("postgres")
+    out["configured"] = configured
+    if not configured:
+        return out
+    try:
+        engine = create_engine(db_url_env, pool_pre_ping=True, future=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            try:
+                row = conn.execute(text("SELECT current_user, current_database()"))
+                info = row.first()
+                if info is not None:
+                    out["current_user"] = info[0]
+                    out["current_database"] = info[1]
+            except Exception:
+                pass
+        out["connect_ok"] = True
+    except Exception as e:
+        out["connect_ok"] = False
+        out["error"] = str(e)
+    return out
 
 
 @router.get("/training-export", response_model=CalibrationTrainingExportPayload)
@@ -1701,6 +1809,17 @@ async def generate_candidates(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base groove or drummer")
 
     try:
+        # Strict gating: require full assimilation readiness before any generation.
+        assimilation = _assimilation_status_for_slug(db, target_slug)
+        if not assimilation.get("ready_for_calibration"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Assimilation not ready for calibration",
+                    "assimilationStatus": assimilation,
+                },
+            )
+
         render_service = CalibrationRenderService(db)
         session_id: Optional[str] = None
         reviewer_id = (payload.reviewer_id or "").strip()
@@ -1722,23 +1841,27 @@ async def generate_candidates(
 
         if payload.include_baseline:
             baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
-            if baseline_source:
-                source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
-                if source_groove_path:
-                    effective_base_groove_id = source_groove_path
-                analysis_id = str(baseline_source.get("analysis_id") or "").strip()
-                if analysis_id:
-                    baseline_analysis_id = analysis_id
-                    item_base_groove_id = f"assimilation:{analysis_id}"
-                baseline_ref = _create_reference_baseline_run(
-                    db,
-                    drummer_slug=target_slug,
-                    baseline_source=baseline_source,
-                    base_groove_id=item_base_groove_id,
+            if not baseline_source:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No assimilated baseline available for target drummer",
                 )
-                if baseline_ref:
-                    baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
-                    reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
+            source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
+            if source_groove_path:
+                effective_base_groove_id = source_groove_path
+            analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+            if analysis_id:
+                baseline_analysis_id = analysis_id
+                item_base_groove_id = f"assimilation:{analysis_id}"
+            baseline_ref = _create_reference_baseline_run(
+                db,
+                drummer_slug=target_slug,
+                baseline_source=baseline_source,
+                base_groove_id=item_base_groove_id,
+            )
+            if baseline_ref:
+                baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
+                reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
 
         generate_baseline = bool(payload.include_baseline and not baseline_run_id)
         requested = payload.candidate_count + (1 if generate_baseline else 0)
@@ -1872,28 +1995,82 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
     try:
-        drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+        try:
+            drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+        except Exception:
+            drummer_row = {"id": slug, "display_name": slug}
         display_name = _display_name_from_row(drummer_row, slug)
 
-        adjustments_record = db.get_calibration_adjustments(slug) or {}
-        adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
-        metadata = _safe_json_dict(adjustments_record.get("metadata"))
+        adjustments: Dict[str, Any] = {}
+        metadata: Dict[str, Any] = {}
+        try:
+            adjustments_record = db.get_calibration_adjustments(slug) or {}
+            adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
+            metadata = _safe_json_dict(adjustments_record.get("metadata"))
+        except Exception:
+            adjustments = {}
+            metadata = {}
 
-        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
-        rollup_targets = rollup_result.get("rollup")
-        if not isinstance(rollup_targets, dict):
+        rollup_targets: Dict[str, Any] = {}
+        try:
+            rollup_targets = db.get_drummer_profile_rollup(drummer_slug=slug) or {}
+            if not isinstance(rollup_targets, dict):
+                rollup_targets = {}
+        except Exception:
             rollup_targets = {}
 
-        latest_run = db.get_latest_calibration_run(drummer_slug=slug)
+        latest_run: Optional["CalibrationRun"] = None
+        try:
+            latest_run = db.get_latest_calibration_run(drummer_slug=slug)
+        except Exception:
+            latest_run = None
         metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
 
-        runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
-        run_history = [_serialize_run(run) for run in runs]
+        try:
+            runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
+        except Exception:
+            runs = []
+        run_history: List[CalibrationRunPayload] = []
+        for run in runs:
+            try:
+                run_history.append(_serialize_run(run))
+            except Exception:
+                continue
 
-        feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
-        feedback_samples = [_serialize_feedback(item) for item in feedback_entries]
+        try:
+            feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
+        except Exception:
+            feedback_entries = []
+        feedback_samples: List[FeedbackEntry] = []
+        for item in feedback_entries:
+            try:
+                feedback_samples.append(_serialize_feedback(item))
+            except Exception:
+                continue
 
         completion_status = _completion_from_run(latest_run)
+
+        try:
+            assimilation_status = _assimilation_status_for_slug(db, slug)
+        except Exception:
+            assimilation_status = {
+                "status": "unknown",
+                "ready_for_calibration": False,
+                "missing_steps": ["ingestion"],
+                "counts": {
+                    "songs": 0,
+                    "artifacts": 0,
+                    "stems": 0,
+                    "hit_events": 0,
+                    "fills": 0,
+                    "techniques": 0,
+                },
+                "metrics": {
+                    "phase4_enriched_analyses": 0,
+                    "phase5_rollups": 0,
+                    "phase6_presets": 0,
+                },
+            }
 
         return DrummerDetailPayload(
             slug=slug,
@@ -1902,7 +2079,7 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
             rollupTargets=rollup_targets,
             metrics=metrics,
             metadata=metadata,
-            assimilationStatus=_assimilation_status_for_slug(db, slug),
+            assimilationStatus=assimilation_status,
             runHistory=run_history,
             feedbackSamples=feedback_samples,
             completionStatus=completion_status,
@@ -2035,3 +2212,6 @@ async def submit_feedback(
         raise
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+app.include_router(router)
+app.include_router(assimilation_generation_router)

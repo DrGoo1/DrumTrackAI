@@ -15,10 +15,17 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from .calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
+try:
+    from admin.services.calibration_phase4_sample_mixin import CalibrationPhase4SampleMixin
+except Exception:
+    class CalibrationPhase4SampleMixin:  # type: ignore[too-few-public-methods]
+        pass
 
 try:  # pragma: no cover - optional Qt dependency
     from PySide6.QtCore import QObject, Signal
@@ -226,6 +233,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         self._schema_cache: Dict[str, set] = {}
         self._write_lock = threading.RLock()
         self._last_ingest_error: str = ""
+        self._engine = None
         logger.info("CentralDatabaseService initialized")
 
     def _set_last_ingest_error(self, msg: str) -> None:
@@ -560,19 +568,33 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 self.database_error.emit(msg)
                 return 0
 
-            conn = self._get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT analysis_id, drummer_id, mvsep_output_dir, tempo_bpm, time_signature
-                FROM song_performance_analysis
-                WHERE analysis_id = ?
-                LIMIT 1
-                """,
-                (analysis_id,),
-            )
-            spa = cursor.fetchone()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    spa = conn_pg.execute(
+                        text(
+                            """
+                            SELECT analysis_id, drummer_id, mvsep_output_dir, tempo_bpm, time_signature
+                            FROM public.song_performance_analysis
+                            WHERE analysis_id = :aid
+                            LIMIT 1
+                            """
+                        ),
+                        {"aid": analysis_id},
+                    ).first()
+                cursor = None  # not used in PG path
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT analysis_id, drummer_id, mvsep_output_dir, tempo_bpm, time_signature
+                    FROM song_performance_analysis
+                    WHERE analysis_id = ?
+                    LIMIT 1
+                    """,
+                    (analysis_id,),
+                )
+                spa = cursor.fetchone()
             if not spa:
                 return 0
 
@@ -632,24 +654,55 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                         best_i = i
                 return labels[best_i]
 
-            cursor.execute(
-                "SELECT stem_name, file_path FROM stem_artifacts WHERE analysis_id = ?",
-                (analysis_id,),
-            )
-            stems = cursor.fetchall() or []
-            if not stems and mvsep_output_dir and os.path.isdir(str(mvsep_output_dir)):
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    stems = conn_pg.execute(
+                        text("SELECT stem_name, file_path FROM public.stem_artifacts WHERE analysis_id = :aid"),
+                        {"aid": analysis_id},
+                    ).fetchall() or []
+            else:
+                cursor.execute(
+                    "SELECT stem_name, file_path FROM stem_artifacts WHERE analysis_id = ?",
+                    (analysis_id,),
+                )
+                stems = cursor.fetchall() or []
+            # Filter to existing files
+            try:
+                stems = [(sn, fp) for (sn, fp) in stems if fp and os.path.exists(str(fp))]
+            except Exception:
+                pass
+            if (not stems) and mvsep_output_dir and os.path.isdir(str(mvsep_output_dir)):
                 try:
                     candidates = [p for p in os.listdir(str(mvsep_output_dir)) if p.lower().endswith(".wav")]
                     stems = [(os.path.splitext(p)[0], os.path.join(str(mvsep_output_dir), p)) for p in candidates]
                 except Exception:
                     stems = []
 
+            try:
+                inst_like = []
+                drums_mix = []
+                for sn, fp in stems:
+                    s = str(sn or "").lower()
+                    if any(k in s for k in ["bass", "vocal", "other", "residual", "track", "mix"]):
+                        # non-drum stems
+                        if any(k in s for k in ["drums", "drumsep_drums"]):
+                            drums_mix.append((sn, fp))
+                        continue
+                    inst_like.append((sn, fp))
+                if inst_like:
+                    stems = inst_like
+                elif drums_mix:
+                    stems = [drums_mix[0]]
+                else:
+                    # As a last resort, keep original list
+                    pass
+            except Exception:
+                pass
+
             now = datetime.utcnow().isoformat()
 
-            def _do_write() -> int:
-                # De-dupe: remove any previous extracted events for this analysis
+            def _do_write_sqlite() -> int:
                 cursor.execute("DELETE FROM drum_hit_events WHERE analysis_id = ?", (analysis_id,))
-
                 inserted = 0
                 for stem_name, wav_path in stems:
                     wav_path = str(wav_path or "")
@@ -747,8 +800,114 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
                 conn.commit()
                 return inserted
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(text("DELETE FROM public.drum_hit_events WHERE analysis_id = :aid"), {"aid": analysis_id})
+                    inserted = 0
+                    for stem_name, wav_path in stems:
+                        wav_path = str(wav_path or "")
+                        if not wav_path or not os.path.exists(wav_path):
+                            continue
+                        try:
+                            y, sr = librosa.load(wav_path, sr=22050, mono=True)
+                            if y is None or len(y) < 2048:
+                                continue
+                            hop_length = 512
+                            o_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+                            onset_frames = librosa.onset.onset_detect(
+                                onset_envelope=o_env,
+                                sr=sr,
+                                hop_length=hop_length,
+                                backtrack=False,
+                                units="frames",
+                            )
+                            if onset_frames is None:
+                                continue
+                            onset_frames = np.asarray(onset_frames, dtype=int)
+                            if onset_frames.size == 0:
+                                continue
+                            if int(max_events_per_stem) > 0 and onset_frames.size > int(max_events_per_stem):
+                                onset_frames = onset_frames[: int(max_events_per_stem)]
 
-            inserted = int(self._with_write_lock_retry(_do_write) or 0)
+                            onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop_length)
+                            onset_times = np.asarray(onset_times, dtype=float)
+
+                            o_env = np.asarray(o_env, dtype=float) if o_env is not None else np.asarray([], dtype=float)
+                            max_env = float(np.max(o_env)) if o_env.size else 0.0
+                            instrument = _map_stem_to_instrument(stem_name)
+
+                            for idx, t in enumerate(onset_times):
+                                frame = int(onset_frames[idx]) if idx < onset_frames.size else None
+                                strength = None
+                                vel = None
+                                try:
+                                    if frame is not None and o_env.size and 0 <= frame < int(o_env.size):
+                                        strength = float(o_env[frame])
+                                        if max_env > 0:
+                                            vel = float(strength / max_env)
+                                except Exception:
+                                    strength = None
+                                    vel = None
+
+                                beat_pos = float(t) / float(sec_per_beat) if sec_per_beat > 0 else 0.0
+                                beat_index = int(beat_pos) if beat_pos >= 0 else 0
+                                bar_index = int(beat_index // int(beats_per_bar)) if int(beats_per_bar) > 0 else 0
+                                frac = beat_pos - float(beat_index)
+                                subdiv = _subdivision_from_fraction(frac)
+
+                                grid_16 = round(beat_pos * 4.0) / 4.0
+                                grid_t = float(grid_16) * float(sec_per_beat)
+                                timing_offset_ms = (float(t) - float(grid_t)) * 1000.0
+
+                                conn_pg.execute(
+                                    text(
+                                        """
+                                        INSERT INTO public.drum_hit_events (
+                                            event_id, analysis_id, drummer_id, song_id,
+                                            instrument, component,
+                                            onset_time_sec, onset_strength, velocity_est,
+                                            beat_index, bar_index, subdivision, timing_offset_ms,
+                                            is_ghost, is_accent, is_flams_like, is_roll_like,
+                                            created_at
+                                        ) VALUES (
+                                            :event_id, :analysis_id, :drummer_id, :song_id,
+                                            :instrument, :component,
+                                            :onset_time_sec, :onset_strength, :velocity_est,
+                                            :beat_index, :bar_index, :subdivision, :timing_offset_ms,
+                                            :is_ghost, :is_accent, :is_flams_like, :is_roll_like,
+                                            NOW()
+                                        )
+                                        """
+                                    ),
+                                    {
+                                        "event_id": str(uuid.uuid4()),
+                                        "analysis_id": analysis_id,
+                                        "drummer_id": str(drummer_fk),
+                                        "song_id": None,
+                                        "instrument": instrument,
+                                        "component": None,
+                                        "onset_time_sec": float(t),
+                                        "onset_strength": strength,
+                                        "velocity_est": vel,
+                                        "beat_index": int(beat_index),
+                                        "bar_index": int(bar_index),
+                                        "subdivision": str(subdiv),
+                                        "timing_offset_ms": float(timing_offset_ms),
+                                        "is_ghost": None,
+                                        "is_accent": None,
+                                        "is_flams_like": None,
+                                        "is_roll_like": None,
+                                    },
+                                )
+                                inserted += 1
+                        except Exception:
+                            continue
+                if inserted > 0:
+                    self.data_changed.emit("drum_hit_events", "insert")
+                return inserted
+
+            # SQLite path
+            inserted = int(self._with_write_lock_retry(_do_write_sqlite) or 0)
             if inserted > 0:
                 self.data_changed.emit("drum_hit_events", "insert")
             return inserted
@@ -772,29 +931,40 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not drummer_slug:
                 return out
 
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                # Ensure row exists then look up again
-                self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text("SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d ORDER BY created_at DESC"),
+                        {"d": drummer_slug},
+                    ).fetchall() or []
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
-
-            cursor.execute(
-                "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
-                (drummer_fk,),
-            )
-            rows = cursor.fetchall() or []
+                if drummer_fk is None:
+                    # Ensure row exists then look up again
+                    self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
+                cursor.execute(
+                    "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
+                    (drummer_fk,),
+                )
+                rows = cursor.fetchall() or []
             out["analyses"] = len(rows)
             total_events = 0
             for r in rows:
-                aid = r[0]
-                total_events += int(
+                aid = r[0] if isinstance(r, (tuple, list)) else r.analysis_id
+                n = int(
                     self.extract_hit_events_for_analysis(analysis_id=aid, max_events_per_stem=max_events_per_stem) or 0
                 )
+                total_events += n
+                try:
+                    print(f"[Phase2] {drummer_slug} analysis={aid} events={n}", flush=True)
+                except Exception:
+                    pass
             out["events"] = total_events
             return out
         except Exception as e:
@@ -811,34 +981,56 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not analysis_id:
                 return out
 
-            conn = self._get_connection()
-            cur = conn.cursor()
-
-            cur.execute(
-                "SELECT drummer_id FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
-                (analysis_id,),
-            )
-            row = cur.fetchone()
-            drummer_fk = row[0] if row else None
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text("SELECT drummer_id FROM public.song_performance_analysis WHERE analysis_id = :aid LIMIT 1"),
+                        {"aid": analysis_id},
+                    ).first()
+                    drummer_fk = row[0] if row else None
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT drummer_id FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
+                    (analysis_id,),
+                )
+                row = cur.fetchone()
+                drummer_fk = row[0] if row else None
 
             rollup: Dict[str, Any] = {}
             try:
                 if drummer_fk is not None:
-                    rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
+                    rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
             except Exception:
                 rollup = {}
 
-            cur.execute(
-                """
-                SELECT onset_time_sec, instrument, timing_offset_ms, velocity_est, onset_strength,
-                       is_ghost, is_accent, component
-                FROM drum_hit_events
-                WHERE analysis_id = ?
-                ORDER BY onset_time_sec ASC
-                """,
-                (analysis_id,),
-            )
-            event_rows = cur.fetchall() or []
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    event_rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT onset_time_sec, instrument, timing_offset_ms, velocity_est, onset_strength,
+                                   is_ghost, is_accent, component
+                            FROM public.drum_hit_events
+                            WHERE analysis_id = :aid
+                            ORDER BY onset_time_sec ASC
+                            """
+                        ),
+                        {"aid": analysis_id},
+                    ).fetchall() or []
+            else:
+                cur.execute(
+                    """
+                    SELECT onset_time_sec, instrument, timing_offset_ms, velocity_est, onset_strength,
+                           is_ghost, is_accent, component
+                    FROM drum_hit_events
+                    WHERE analysis_id = ?
+                    ORDER BY onset_time_sec ASC
+                    """,
+                    (analysis_id,),
+                )
+                event_rows = cur.fetchall() or []
 
             from admin.services.phase32_42_feature_extractor import build_phase32_42_features_json
 
@@ -846,20 +1038,36 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             version = "phase32_42_offline_v1"
             now = datetime.utcnow().isoformat()
 
-            def _do_write() -> None:
-                cur.execute(
-                    """
-                    UPDATE song_performance_analysis
-                    SET phase32_42_features_json = ?,
-                        phase32_42_features_version = ?,
-                        updated_at = ?
-                    WHERE analysis_id = ?
-                    """,
-                    (payload_json, version, now, analysis_id),
-                )
-                conn.commit()
-
-            self._with_write_lock_retry(_do_write)
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            UPDATE public.song_performance_analysis
+                            SET phase32_42_features_json = :pj,
+                                phase32_42_features_version = :ver,
+                                updated_at = NOW()
+                            WHERE analysis_id = :aid
+                            """
+                        ),
+                        {"pj": payload_json, "ver": version, "aid": analysis_id},
+                    )
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
+                def _do_write() -> None:
+                    cur.execute(
+                        """
+                        UPDATE song_performance_analysis
+                        SET phase32_42_features_json = ?,
+                            phase32_42_features_version = ?,
+                            updated_at = ?
+                        WHERE analysis_id = ?
+                        """,
+                        (payload_json, version, now, analysis_id),
+                    )
+                    conn.commit()
+                self._with_write_lock_retry(_do_write)
             out["updated"] = True
             out["phase32_42_features_version"] = version
             self.data_changed.emit("song_performance_analysis", "update")
@@ -988,7 +1196,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
     def generate_preset_from_rollup(self, *, drummer_slug: str, rollup: Dict[str, Any], persona: Dict[str, Any]) -> Dict[str, Any]:
         deltas: Dict[str, Any] = {}
-        policies: Dict[str, Any] = {"source": "phase6", "persona": persona}
+        policies: Dict[str, Any] = {"source": "phase6", "persona": persona, "sentient_drummer": True}
 
         pocket = rollup.get("pocket_tightness")
         human = rollup.get("humanness")
@@ -1060,6 +1268,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             payload = {
                 "drummer_id": drummer_slug,
                 "generated_at": datetime.utcnow().isoformat(),
+                "sentient_drummer": True,
                 "persona": persona,
                 "preset": {
                     "preset_id": preset.get("preset_id"),
@@ -1191,7 +1400,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
     def compute_drummer_profile_rollup(self, *, drummer_fk: int) -> Dict[str, Any]:
         rollup: Dict[str, Any] = {
-            "drummer_id": int(drummer_fk),
+            "drummer_id": str(drummer_fk),
             "songs": 0,
             "hits": 0,
             "instrument_counts": {},
@@ -1207,6 +1416,188 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             "velocity_std": None,
             "confidence": {},
         }
+        if getattr(self, "_engine", None) is not None:
+            with self._engine.connect() as conn_pg:
+                d = str(drummer_fk)
+                try:
+                    row = conn_pg.execute(
+                        text("SELECT COUNT(DISTINCT analysis_id) FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).first()
+                    rollup["songs"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["songs"] = 0
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["hits"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["hits"] = 0
+
+                try:
+                    res = conn_pg.execute(
+                        text(
+                            "SELECT instrument, COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY instrument ORDER BY COUNT(1) DESC"
+                        ),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
+                inst_counts: Dict[str, int] = {}
+                for inst, n in res:
+                    inst_counts[str(inst or "")] = int(n or 0)
+                rollup["instrument_counts"] = inst_counts
+                total_inst = float(sum(inst_counts.values()) or 0)
+                if total_inst > 0:
+                    rollup["instrument_shares"] = {k: float(v) / total_inst for k, v in inst_counts.items()}
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.fill_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["fills"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["fills"] = 0
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    rollup["techniques"] = int((row or (0,))[0] or 0)
+                except Exception:
+                    rollup["techniques"] = 0
+
+                try:
+                    res = conn_pg.execute(
+                        text(
+                            "SELECT technique_name, COUNT(1) FROM public.technique_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) GROUP BY technique_name ORDER BY COUNT(1) DESC"
+                        ),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
+                tb: Dict[str, int] = {}
+                for name, n in res:
+                    tb[str(name or "")] = int(n or 0)
+                rollup["technique_breakdown"] = tb
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT AVG(groove_micro_timing_variance), AVG(groove_pocket_tightness), AVG(humanness_score) FROM public.song_performance_analysis WHERE drummer_id = :d"
+                        ),
+                        {"d": d},
+                    ).first() or (None, None, None)
+                except Exception:
+                    row = (None, None, None)
+                try:
+                    rollup["timing_std_ms"] = None if row[0] is None else float(row[0])
+                except Exception:
+                    rollup["timing_std_ms"] = None
+                try:
+                    rollup["pocket_tightness"] = None if row[1] is None else float(row[1])
+                except Exception:
+                    rollup["pocket_tightness"] = None
+                try:
+                    rollup["humanness"] = None if row[2] is None else float(row[2])
+                except Exception:
+                    rollup["humanness"] = None
+
+                try:
+                    res = conn_pg.execute(
+                        text("SELECT dynamics_json FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
+                vel_means: List[float] = []
+                vel_stds: List[float] = []
+                for (dj,) in res:
+                    try:
+                        dyn = json.loads(dj) if isinstance(dj, str) and dj.strip() else None
+                        if isinstance(dyn, dict):
+                            if dyn.get("velocity_mean") is not None:
+                                vel_means.append(float(dyn.get("velocity_mean")))
+                            if dyn.get("velocity_std") is not None:
+                                vel_stds.append(float(dyn.get("velocity_std")))
+                    except Exception:
+                        continue
+                if vel_means:
+                    rollup["velocity_mean"] = float(sum(vel_means) / float(len(vel_means)))
+                if vel_stds:
+                    rollup["velocity_std"] = float(sum(vel_stds) / float(len(vel_stds)))
+
+                try:
+                    res = conn_pg.execute(
+                        text("SELECT duration_sec FROM public.song_performance_analysis WHERE drummer_id = :d"),
+                        {"d": d},
+                    ).fetchall() or []
+                except Exception:
+                    res = []
+                total_min = 0.0
+                for (dur,) in res:
+                    try:
+                        if dur is not None and float(dur) > 0:
+                            total_min += float(dur) / 60.0
+                    except Exception:
+                        continue
+                if total_min > 0:
+                    rollup["fills_per_min"] = float(rollup["fills"]) / total_min
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(DISTINCT bar_index) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d)"
+                        ),
+                        {"d": d},
+                    ).first()
+                    bars = int((row or (0,))[0] or 0)
+                except Exception:
+                    bars = 0
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(DISTINCT section_label) FROM public.drummer_phrase_features WHERE drummer_id = :d AND COALESCE(section_label, '') <> ''"
+                        ),
+                        {"d": d},
+                    ).first()
+                    section_diversity = int((row or (0,))[0] or 0)
+                except Exception:
+                    section_diversity = 0
+
+                try:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id IN (SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d) AND instrument IN ('hihat','ride','crash','hh')"
+                        ),
+                        {"d": d},
+                    ).first()
+                    cymbal_evidence_hits = int((row or (0,))[0] or 0)
+                except Exception:
+                    cymbal_evidence_hits = 0
+
+                rollup["confidence"] = self._compute_drummer_confidence(
+                    songs=int(rollup.get("songs") or 0),
+                    hits=int(rollup.get("hits") or 0),
+                    bars=bars,
+                    section_diversity=section_diversity,
+                    fills=int(rollup.get("fills") or 0),
+                    cymbal_evidence_hits=cymbal_evidence_hits,
+                )
+                rollup["drummer_id"] = d
+            return rollup
         conn = self._get_connection()
         cur = conn.cursor()
 
@@ -1405,14 +1796,33 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 if isinstance(val, (dict, list)):
                     val = self._json_dumps(val)
                 values.append(val)
+            if getattr(self, "_engine", None) is not None:
+                col_list = ["id", "drummer_id"] + columns + ["created_at"]
+                updates = ", ".join([f"{col}=EXCLUDED.{col}" for col in columns] + ["drummer_id=EXCLUDED.drummer_id"])
+                params = {"id": profile_id, "drummer_id": str(drummer_fk)}
+                for i, col in enumerate(columns):
+                    params[col] = values[i]
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            f"""
+                            INSERT INTO public.{table_name} ({', '.join(col_list)})
+                            VALUES (:id, :drummer_id, {', '.join(':' + c for c in columns)}, NOW())
+                            ON CONFLICT (id) DO UPDATE SET {updates}
+                            """
+                        ),
+                        params,
+                    )
+                self.data_changed.emit(table_name, "upsert")
+                return True
 
             conn = self._get_connection()
             cur = conn.cursor()
             placeholders = ", ".join(["?"] * (3 + len(columns)))
-            col_list = ", ".join(["id", "drummer_id"] + columns + ["created_at"])
+            col_list_sql = ", ".join(["id", "drummer_id"] + columns + ["created_at"])
             updates = ", ".join([f"{col}=excluded.{col}" for col in columns])
             sql = f"""
-                INSERT INTO {table_name} ({col_list})
+                INSERT INTO {table_name} ({col_list_sql})
                 VALUES ({placeholders})
                 ON CONFLICT(id) DO UPDATE SET
                     drummer_id=excluded.drummer_id,
@@ -1462,7 +1872,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         return self._upsert_profile_row(
             table="drummer_personality_embeddings",
             profile_id=str(embedding_id or str(uuid.uuid4())),
-            drummer_fk=int(drummer_fk),
+            drummer_fk=drummer_fk,
             payload=payload,
         )
 
@@ -1794,116 +2204,248 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
+            if getattr(self, "_engine", None) is not None:
+                drummer_fk = drummer_slug
+                out["drummer_fk"] = drummer_fk
 
-            conn = self._get_connection()
-            cur = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
-                conn.commit()
-                drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
-            drummer_fk = int(drummer_fk)
-            out["drummer_fk"] = drummer_fk
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
+                conf = rollup.get("confidence") if isinstance(rollup.get("confidence"), dict) else {}
+                confidence_score = float(conf.get("score") or 0.0)
 
-            rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
-            conf = rollup.get("confidence") if isinstance(rollup.get("confidence"), dict) else {}
-            confidence_score = float(conf.get("score") or 0.0)
+                section_labels = ["intro", "verse", "prechorus", "chorus", "bridge", "solo", "outro"]
 
-            section_labels = ["intro", "verse", "prechorus", "chorus", "bridge", "solo", "outro"]
-
-            cur.execute(
-                """
-                SELECT analysis_id, song_id, tempo_bpm, time_signature, duration_sec
-                FROM song_performance_analysis
-                WHERE drummer_id = ?
-                ORDER BY created_at DESC
-                """,
-                (drummer_fk,),
-            )
-            analyses = cur.fetchall() or []
-            analysis_ids = [str(r["analysis_id"]).strip() for r in analyses if r["analysis_id"]]
-
-            def _ensure_song_id(analysis_id: str, current_song_id: Any) -> Optional[str]:
-                sid = str(current_song_id or "").strip()
-                if sid:
-                    return sid
-                synthetic_id = f"synthetic_{analysis_id}"
-                now = datetime.utcnow().isoformat()
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO songs (id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            title=excluded.title,
-                            duration=COALESCE(songs.duration, excluded.duration),
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            synthetic_id,
-                            f"Assimilation Source {analysis_id[:8]}",
-                            None,
-                            None,
-                            None,
-                            "unknown",
-                            None,
-                            None,
-                            drummer_fk,
-                            now,
-                            now,
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT analysis_id, song_id, tempo_bpm, time_signature, duration_sec
+                            FROM public.song_performance_analysis
+                            WHERE drummer_id = :d
+                            ORDER BY created_at DESC
+                            """
                         ),
-                    )
-                    cur.execute(
-                        "UPDATE song_performance_analysis SET song_id = ? WHERE analysis_id = ?",
-                        (synthetic_id, analysis_id),
-                    )
+                        {"d": drummer_fk},
+                    ).fetchall() or []
+                analyses = [
+                    {
+                        "analysis_id": r[0],
+                        "song_id": r[1],
+                        "tempo_bpm": r[2],
+                        "time_signature": r[3],
+                        "duration_sec": r[4],
+                    }
+                    for r in rows
+                ]
+
+                def _ensure_song_id(analysis_id: str, current_song_id: Any) -> Optional[str]:
+                    sid = str(current_song_id or "").strip()
+                    if sid:
+                        return sid
+                    synthetic_id = f"synthetic_{analysis_id}"
+                    try:
+                        with self._engine.begin() as conn_pg:
+                            conn_pg.execute(
+                                text(
+                                    """
+                                    INSERT INTO public.songs (
+                                        id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at
+                                    ) VALUES (
+                                        :id, :title, NULL, NULL, NULL, :genre, NULL, NULL, :drummer_id, NOW(), NOW()
+                                    )
+                                    ON CONFLICT (id) DO UPDATE SET
+                                        title = EXCLUDED.title,
+                                        duration = COALESCE(public.songs.duration, EXCLUDED.duration),
+                                        updated_at = NOW()
+                                    """
+                                ),
+                                {
+                                    "id": synthetic_id,
+                                    "title": f"Assimilation Source {analysis_id[:8]}",
+                                    "genre": "unknown",
+                                    "drummer_id": drummer_fk,
+                                },
+                            )
+                            conn_pg.execute(
+                                text("UPDATE public.song_performance_analysis SET song_id = :sid WHERE analysis_id = :aid"),
+                                {"sid": synthetic_id, "aid": analysis_id},
+                            )
+                        return synthetic_id
+                    except Exception:
+                        return None
+
+                with self._engine.begin() as conn_pg:
+                    for table in (
+                        "drummer_phrase_features",
+                        "drummer_microtiming_profiles",
+                        "drummer_dynamic_profiles",
+                        "drummer_cymbal_language",
+                        "drummer_limb_coordination",
+                        "drummer_fill_behavior",
+                    ):
+                        conn_pg.execute(text(f"DELETE FROM public.{table} WHERE drummer_id = :d"), {"d": drummer_fk})
+
+                with self._engine.connect() as conn_pg:
+                    hit_res = conn_pg.execute(
+                        text(
+                            """
+                            SELECT e.analysis_id, e.instrument, e.component, e.onset_time_sec, e.velocity_est,
+                                   e.timing_offset_ms, e.bar_index, e.subdivision, e.is_ghost, e.is_accent
+                            FROM public.drum_hit_events e
+                            JOIN public.song_performance_analysis s ON s.analysis_id = e.analysis_id
+                            WHERE s.drummer_id = :d
+                            ORDER BY e.analysis_id, e.onset_time_sec ASC
+                            """
+                        ),
+                        {"d": drummer_fk},
+                    ).fetchall() or []
+                    hit_rows: List[Dict[str, Any]] = [
+                        {
+                            "analysis_id": r[0],
+                            "instrument": r[1],
+                            "component": r[2],
+                            "onset_time_sec": r[3],
+                            "velocity_est": r[4],
+                            "timing_offset_ms": r[5],
+                            "bar_index": r[6],
+                            "subdivision": r[7],
+                            "is_ghost": r[8],
+                            "is_accent": r[9],
+                        }
+                        for r in hit_res
+                    ]
+                    fill_res = conn_pg.execute(
+                        text(
+                            """
+                            SELECT e.analysis_id, e.start_time_sec, e.end_time_sec, e.start_bar_index, e.hit_count, e.instruments_json
+                            FROM public.fill_events e
+                            JOIN public.song_performance_analysis s ON s.analysis_id = e.analysis_id
+                            WHERE s.drummer_id = :d
+                            ORDER BY e.analysis_id, e.start_time_sec ASC
+                            """
+                        ),
+                        {"d": drummer_fk},
+                    ).fetchall() or []
+                    fill_rows: List[Dict[str, Any]] = [
+                        {
+                            "analysis_id": r[0],
+                            "start_time_sec": r[1],
+                            "end_time_sec": r[2],
+                            "start_bar_index": r[3],
+                            "hit_count": r[4],
+                            "instruments_json": r[5],
+                        }
+                        for r in fill_res
+                    ]
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
+                drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
                     conn.commit()
-                    return synthetic_id
-                except Exception:
-                    return None
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
+                drummer_fk = int(drummer_fk)
+                out["drummer_fk"] = drummer_fk
 
-            for table in (
-                "drummer_phrase_features",
-                "drummer_microtiming_profiles",
-                "drummer_dynamic_profiles",
-                "drummer_cymbal_language",
-                "drummer_limb_coordination",
-                "drummer_fill_behavior",
-            ):
-                try:
-                    cur.execute(f"DELETE FROM {table} WHERE drummer_id = ?", (drummer_fk,))
-                except Exception:
-                    continue
-            conn.commit()
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_fk)
+                conf = rollup.get("confidence") if isinstance(rollup.get("confidence"), dict) else {}
+                confidence_score = float(conf.get("score") or 0.0)
 
-            hit_rows: List[Dict[str, Any]] = []
-            fill_rows: List[Dict[str, Any]] = []
-            if analysis_ids:
-                placeholders = ", ".join(["?"] * len(analysis_ids))
-                cur.execute(
-                    f"""
-                    SELECT analysis_id, instrument, component, onset_time_sec, velocity_est,
-                           timing_offset_ms, bar_index, subdivision, is_ghost, is_accent
-                    FROM drum_hit_events
-                    WHERE analysis_id IN ({placeholders})
-                    ORDER BY analysis_id, onset_time_sec ASC
-                    """,
-                    tuple(analysis_ids),
-                )
-                hit_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
+                section_labels = ["intro", "verse", "prechorus", "chorus", "bridge", "solo", "outro"]
 
                 cur.execute(
-                    f"""
-                    SELECT analysis_id, start_time_sec, end_time_sec, start_bar_index, hit_count, instruments_json
-                    FROM fill_events
-                    WHERE analysis_id IN ({placeholders})
-                    ORDER BY analysis_id, start_time_sec ASC
+                    """
+                    SELECT analysis_id, song_id, tempo_bpm, time_signature, duration_sec
+                    FROM song_performance_analysis
+                    WHERE drummer_id = ?
+                    ORDER BY created_at DESC
                     """,
-                    tuple(analysis_ids),
+                    (drummer_fk,),
                 )
-                fill_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
+                analyses = cur.fetchall() or []
+                analysis_ids = [str(r["analysis_id"]).strip() for r in analyses if r["analysis_id"]]
+
+                def _ensure_song_id(analysis_id: str, current_song_id: Any) -> Optional[str]:
+                    sid = str(current_song_id or "").strip()
+                    if sid:
+                        return sid
+                    synthetic_id = f"synthetic_{analysis_id}"
+                    now = datetime.utcnow().isoformat()
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO songs (id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                title=excluded.title,
+                                duration=COALESCE(songs.duration, excluded.duration),
+                                updated_at=excluded.updated_at
+                            """,
+                            (
+                                synthetic_id,
+                                f"Assimilation Source {analysis_id[:8]}",
+                                None,
+                                None,
+                                None,
+                                "unknown",
+                                None,
+                                None,
+                                drummer_fk,
+                                now,
+                                now,
+                            ),
+                        )
+                        cur.execute(
+                            "UPDATE song_performance_analysis SET song_id = ? WHERE analysis_id = ?",
+                            (synthetic_id, analysis_id),
+                        )
+                        conn.commit()
+                        return synthetic_id
+                    except Exception:
+                        return None
+
+                for table in (
+                    "drummer_phrase_features",
+                    "drummer_microtiming_profiles",
+                    "drummer_dynamic_profiles",
+                    "drummer_cymbal_language",
+                    "drummer_limb_coordination",
+                    "drummer_fill_behavior",
+                ):
+                    try:
+                        cur.execute(f"DELETE FROM {table} WHERE drummer_id = ?", (drummer_fk,))
+                    except Exception:
+                        continue
+                conn.commit()
+
+                hit_rows: List[Dict[str, Any]] = []
+                fill_rows: List[Dict[str, Any]] = []
+                if analysis_ids:
+                    placeholders = ", ".join(["?"] * len(analysis_ids))
+                    cur.execute(
+                        f"""
+                        SELECT analysis_id, instrument, component, onset_time_sec, velocity_est,
+                               timing_offset_ms, bar_index, subdivision, is_ghost, is_accent
+                        FROM drum_hit_events
+                        WHERE analysis_id IN ({placeholders})
+                        ORDER BY analysis_id, onset_time_sec ASC
+                        """,
+                        tuple(analysis_ids),
+                    )
+                    hit_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
+
+                    cur.execute(
+                        f"""
+                        SELECT analysis_id, start_time_sec, end_time_sec, start_bar_index, hit_count, instruments_json
+                        FROM fill_events
+                        WHERE analysis_id IN ({placeholders})
+                        ORDER BY analysis_id, start_time_sec ASC
+                        """,
+                        tuple(analysis_ids),
+                    )
+                    fill_rows = [self._row_to_dict(r) for r in (cur.fetchall() or [])]
 
             analysis_hits: Dict[str, List[Dict[str, Any]]] = {}
             for row in hit_rows:
@@ -2446,32 +2988,54 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
     ) -> bool:
         try:
             now = datetime.utcnow().isoformat()
-            conn = self._get_connection()
-            cur = conn.cursor()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.drummer_profile_rollups (
+                                rollup_id, drummer_id, rollup_version, rollup_json, created_at, updated_at
+                            ) VALUES (:rid, :did, :ver, :rjson, NOW(), NOW())
+                            ON CONFLICT (drummer_id) DO UPDATE SET
+                                rollup_version = EXCLUDED.rollup_version,
+                                rollup_json = EXCLUDED.rollup_json,
+                                updated_at = NOW()
+                            """
+                        ),
+                        {
+                            "rid": str(uuid.uuid4()),
+                            "did": str(drummer_fk),
+                            "ver": (rollup_version or "").strip() or None,
+                            "rjson": json.dumps(rollup or {}, default=str),
+                        },
+                    )
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
 
-            def _do_write() -> None:
-                cur.execute(
-                    """
-                    INSERT INTO drummer_profile_rollups (
-                        rollup_id, drummer_id, rollup_version, rollup_json, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(drummer_id) DO UPDATE SET
-                        rollup_version=excluded.rollup_version,
-                        rollup_json=excluded.rollup_json,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        str(uuid.uuid4()),
-                        int(drummer_fk),
-                        (rollup_version or "").strip() or None,
-                        json.dumps(rollup or {}, default=str),
-                        now,
-                        now,
-                    ),
-                )
-                conn.commit()
+                def _do_write() -> None:
+                    cur.execute(
+                        """
+                        INSERT INTO drummer_profile_rollups (
+                            rollup_id, drummer_id, rollup_version, rollup_json, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(drummer_id) DO UPDATE SET
+                            rollup_version=excluded.rollup_version,
+                            rollup_json=excluded.rollup_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            int(drummer_fk),
+                            (rollup_version or "").strip() or None,
+                            json.dumps(rollup or {}, default=str),
+                            now,
+                            now,
+                        ),
+                    )
+                    conn.commit()
 
-            self._with_write_lock_retry(_do_write)
+                self._with_write_lock_retry(_do_write)
             self.data_changed.emit("drummer_profile_rollups", "upsert")
             return True
         except Exception as e:
@@ -2481,25 +3045,81 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             self.database_error.emit(msg)
             return False
 
+    def get_drummer_profile_rollup(self, *, drummer_slug: str) -> Optional[Dict[str, Any]]:
+        """Fetch the last saved drummer_profile_rollups.rollup_json for a slug/id without recomputing.
+        Works for both Postgres and SQLite schemas. Returns a dict or None if not present.
+        """
+        try:
+            drummer_slug = (drummer_slug or "").strip()
+            if not drummer_slug:
+                return None
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            "SELECT rollup_json FROM public.drummer_profile_rollups WHERE CAST(drummer_id AS TEXT) = CAST(:did AS TEXT) LIMIT 1"
+                        ),
+                        {"did": str(drummer_slug)},
+                    ).first()
+                if not row:
+                    return None
+                try:
+                    value = row[0]
+                except Exception:
+                    try:
+                        value = row["rollup_json"]  # type: ignore[index]
+                    except Exception:
+                        value = None
+                return self._json_loads(value, default={}) or {}
+            # SQLite path
+            conn = self._get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT rollup_json
+                FROM drummer_profile_rollups
+                WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+                LIMIT 1
+                """,
+                (drummer_slug,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            try:
+                value = row[0]
+            except Exception:
+                value = None
+            return self._json_loads(value, default={}) or {}
+        except sqlite3.OperationalError:
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching drummer_profile_rollup for {drummer_slug}: {str(e)}")
+            self.database_error.emit(f"Error fetching drummer_profile_rollup: {str(e)}")
+            return None
+
     def run_phase5_profile_rollup_for_drummer(self, *, drummer_slug: str) -> Dict[str, Any]:
         out: Dict[str, Any] = {"drummer_slug": drummer_slug, "saved": False, "rollup": {}}
         try:
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
-
-            conn = self._get_connection()
-            cur = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_slug)
+                saved = self.upsert_drummer_profile_rollup(drummer_fk=drummer_slug, rollup=rollup)
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
 
-            rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
-            saved = self.upsert_drummer_profile_rollup(drummer_fk=int(drummer_fk), rollup=rollup)
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
+                saved = self.upsert_drummer_profile_rollup(drummer_fk=int(drummer_fk), rollup=rollup)
             phase7 = self.run_phase7_assimilation_profiles_for_drummer(drummer_slug=drummer_slug)
             out["saved"] = bool(saved)
             out["rollup"] = rollup
@@ -2530,14 +3150,23 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not analysis_id:
                 return out
 
-            conn = self._get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT analysis_id, drummer_id, tempo_bpm, time_signature FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
-                (analysis_id,),
-            )
-            spa = cursor.fetchone()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    spa = conn_pg.execute(
+                        text(
+                            "SELECT analysis_id, drummer_id, tempo_bpm, time_signature FROM public.song_performance_analysis WHERE analysis_id = :aid LIMIT 1"
+                        ),
+                        {"aid": analysis_id},
+                    ).first()
+                cursor = None
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT analysis_id, drummer_id, tempo_bpm, time_signature FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
+                    (analysis_id,),
+                )
+                spa = cursor.fetchone()
             if not spa:
                 return out
 
@@ -2559,16 +3188,30 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             except Exception:
                 beats_per_bar = 4
 
-            cursor.execute(
-                """
-                SELECT instrument, onset_time_sec, velocity_est
-                FROM drum_hit_events
-                WHERE analysis_id = ?
-                ORDER BY onset_time_sec ASC
-                """,
-                (analysis_id,),
-            )
-            rows = cursor.fetchall() or []
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT instrument, onset_time_sec, velocity_est
+                            FROM public.drum_hit_events
+                            WHERE analysis_id = :aid
+                            ORDER BY onset_time_sec ASC
+                            """
+                        ),
+                        {"aid": analysis_id},
+                    ).fetchall() or []
+            else:
+                cursor.execute(
+                    """
+                    SELECT instrument, onset_time_sec, velocity_est
+                    FROM drum_hit_events
+                    WHERE analysis_id = ?
+                    ORDER BY onset_time_sec ASC
+                    """,
+                    (analysis_id,),
+                )
+                rows = cursor.fetchall() or []
             if not rows:
                 return out
 
@@ -2595,6 +3238,182 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 song_len_sec = 0.0
 
             now = datetime.utcnow().isoformat()
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(text("DELETE FROM public.fill_events WHERE analysis_id = :aid"), {"aid": analysis_id})
+                    conn_pg.execute(text("DELETE FROM public.technique_events WHERE analysis_id = :aid"), {"aid": analysis_id})
+
+                    fills_inserted = 0
+                    tech_inserted = 0
+                    technique_breakdown: Dict[str, int] = {}
+
+                    n = len(hits)
+                    i = 0
+                    while i < n:
+                        t0 = hits[i][1]
+                        j = i
+                        tom_snare = 0
+                        insts = set()
+                        while j < n and (hits[j][1] - t0) <= float(fill_window_sec):
+                            inst = hits[j][0]
+                            insts.add(inst)
+                            if inst in ("tom", "snare"):
+                                tom_snare += 1
+                            j += 1
+
+                        window_hits = j - i
+                        looks_like_fill = window_hits >= int(fill_min_hits) and (tom_snare >= 3 or ("tom" in insts and tom_snare >= 2))
+                        if looks_like_fill:
+                            fs = float(t0)
+                            fe = float(hits[j - 1][1]) if j - 1 >= i else fs
+                            if (fe - fs) >= 0.25:
+                                beat_index = int(fs / sec_per_beat) if sec_per_beat > 0 else None
+                                bar_index = int((beat_index or 0) // int(beats_per_bar)) if beats_per_bar > 0 else None
+                                conn_pg.execute(
+                                    text(
+                                        """
+                                        INSERT INTO public.fill_events (
+                                            fill_id, analysis_id, drummer_id, song_id,
+                                            start_time_sec, end_time_sec,
+                                            start_bar_index, end_bar_index,
+                                            hit_count, instruments_json,
+                                            density_per_sec, classification,
+                                            created_at
+                                        ) VALUES (
+                                            :fill_id, :analysis_id, :drummer_id, :song_id,
+                                            :start_time_sec, :end_time_sec,
+                                            :start_bar_index, :end_bar_index,
+                                            :hit_count, :instruments_json,
+                                            :density_per_sec, :classification,
+                                            NOW()
+                                        )
+                                        """
+                                    ),
+                                    {
+                                        "fill_id": str(uuid.uuid4()),
+                                        "analysis_id": analysis_id,
+                                        "drummer_id": str(drummer_fk),
+                                        "song_id": None,
+                                        "start_time_sec": fs,
+                                        "end_time_sec": fe,
+                                        "start_bar_index": bar_index,
+                                        "end_bar_index": bar_index,
+                                        "hit_count": int(window_hits),
+                                        "instruments_json": json.dumps(sorted(list(insts))),
+                                        "density_per_sec": float(window_hits) / max(0.001, (fe - fs)),
+                                        "classification": "density_fill",
+                                    },
+                                )
+                                fills_inserted += 1
+                            i = max(i + 1, j)
+                        else:
+                            i += 1
+
+                    snare_times = [t for inst, t, _ in hits if inst == "snare"]
+                    snare_times.sort()
+
+                    for k in range(1, len(snare_times)):
+                        gap_ms = (float(snare_times[k]) - float(snare_times[k - 1])) * 1000.0
+                        if 0.0 < gap_ms <= float(flam_max_gap_ms):
+                            conn_pg.execute(
+                                text(
+                                    """
+                                    INSERT INTO public.technique_events (
+                                        technique_event_id, analysis_id, drummer_id, song_id,
+                                        start_time_sec, end_time_sec,
+                                        technique_type, technique_name,
+                                        confidence, details_json,
+                                        created_at
+                                    ) VALUES (
+                                        :technique_event_id, :analysis_id, :drummer_id, :song_id,
+                                        :start_time_sec, :end_time_sec,
+                                        :technique_type, :technique_name,
+                                        :confidence, :details_json,
+                                        NOW()
+                                    )
+                                    """
+                                ),
+                                {
+                                    "technique_event_id": str(uuid.uuid4()),
+                                    "analysis_id": analysis_id,
+                                    "drummer_id": str(drummer_fk),
+                                    "song_id": None,
+                                    "start_time_sec": float(snare_times[k - 1]),
+                                    "end_time_sec": float(snare_times[k]),
+                                    "technique_type": "rudiment",
+                                    "technique_name": "flam_like",
+                                    "confidence": 0.55,
+                                    "details_json": json.dumps({"gap_ms": gap_ms}),
+                                },
+                            )
+                            tech_inserted += 1
+                            technique_breakdown["flam_like"] = int(technique_breakdown.get("flam_like") or 0) + 1
+
+                    run_start = 0
+                    for k in range(1, len(snare_times) + 1):
+                        if k == len(snare_times):
+                            end_run = k
+                        else:
+                            gap_ms = (float(snare_times[k]) - float(snare_times[k - 1])) * 1000.0
+                            end_run = None if gap_ms <= float(roll_max_gap_ms) else k
+
+                        if end_run is not None:
+                            run_len = end_run - run_start
+                            if run_len >= int(roll_min_hits):
+                                s = float(snare_times[run_start])
+                                e = float(snare_times[end_run - 1])
+                                conn_pg.execute(
+                                    text(
+                                        """
+                                        INSERT INTO public.technique_events (
+                                            technique_event_id, analysis_id, drummer_id, song_id,
+                                            start_time_sec, end_time_sec,
+                                            technique_type, technique_name,
+                                            confidence, details_json,
+                                            created_at
+                                        ) VALUES (
+                                            :technique_event_id, :analysis_id, :drummer_id, :song_id,
+                                            :start_time_sec, :end_time_sec,
+                                            :technique_type, :technique_name,
+                                            :confidence, :details_json,
+                                            NOW()
+                                        )
+                                        """
+                                    ),
+                                    {
+                                        "technique_event_id": str(uuid.uuid4()),
+                                        "analysis_id": analysis_id,
+                                        "drummer_id": str(drummer_fk),
+                                        "song_id": None,
+                                        "start_time_sec": s,
+                                        "end_time_sec": e,
+                                        "technique_type": "rudiment",
+                                        "technique_name": "roll_like",
+                                        "confidence": 0.6,
+                                        "details_json": json.dumps({"hit_count": int(run_len)}),
+                                    },
+                                )
+                                tech_inserted += 1
+                                technique_breakdown["roll_like"] = int(technique_breakdown.get("roll_like") or 0) + 1
+                            run_start = end_run
+
+                    fills_per_min = 0.0
+                    try:
+                        denom = max(1e-6, float(song_len_sec) / 60.0)
+                        fills_per_min = float(fills_inserted) / denom
+                    except Exception:
+                        fills_per_min = 0.0
+
+                out["fills"] = int(fills_inserted)
+                out["techniques"] = int(tech_inserted)
+                out["fills_per_min"] = float(fills_per_min)
+                out["technique_breakdown"] = technique_breakdown
+                if out["fills"] > 0:
+                    self.data_changed.emit("fill_events", "insert")
+                if out["techniques"] > 0:
+                    self.data_changed.emit("technique_events", "insert")
+                return out
 
             def _do_write() -> Dict[str, Any]:
                 # De-dupe baseline extraction
@@ -2799,22 +3618,28 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
-
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text("SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d ORDER BY created_at DESC"),
+                        {"d": drummer_slug},
+                    ).fetchall() or []
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
 
-            cursor.execute(
-                "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
-                (drummer_fk,),
-            )
-            rows = cursor.fetchall() or []
+                cursor.execute(
+                    "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
+                    (drummer_fk,),
+                )
+                rows = cursor.fetchall() or []
             out["analyses"] = len(rows)
             fills = 0
             tech = 0
@@ -2892,13 +3717,20 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not analysis_id:
                 return out
 
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT tempo_bpm, duration_sec FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
-                (analysis_id,),
-            )
-            spa = cursor.fetchone()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    spa = conn_pg.execute(
+                        text("SELECT tempo_bpm, duration_sec FROM public.song_performance_analysis WHERE analysis_id = :aid LIMIT 1"),
+                        {"aid": analysis_id},
+                    ).first()
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT tempo_bpm, duration_sec FROM song_performance_analysis WHERE analysis_id = ? LIMIT 1",
+                    (analysis_id,),
+                )
+                spa = cursor.fetchone()
             if not spa:
                 return out
 
@@ -2913,16 +3745,30 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             except Exception:
                 duration_sec = None
 
-            cursor.execute(
-                """
-                SELECT instrument, onset_time_sec, timing_offset_ms, velocity_est
-                FROM drum_hit_events
-                WHERE analysis_id = ?
-                ORDER BY onset_time_sec ASC
-                """,
-                (analysis_id,),
-            )
-            rows = cursor.fetchall() or []
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT instrument, onset_time_sec, timing_offset_ms, velocity_est
+                            FROM public.drum_hit_events
+                            WHERE analysis_id = :aid
+                            ORDER BY onset_time_sec ASC
+                            """
+                        ),
+                        {"aid": analysis_id},
+                    ).fetchall() or []
+            else:
+                cursor.execute(
+                    """
+                    SELECT instrument, onset_time_sec, timing_offset_ms, velocity_est
+                    FROM drum_hit_events
+                    WHERE analysis_id = ?
+                    ORDER BY onset_time_sec ASC
+                    """,
+                    (analysis_id,),
+                )
+                rows = cursor.fetchall() or []
             if not rows:
                 return out
 
@@ -3041,52 +3887,97 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             now = datetime.utcnow().isoformat()
 
-            def _do_write() -> None:
-                cursor.execute(
-                    """
-                    UPDATE song_performance_analysis
-                    SET
-                        groove_swing_factor = COALESCE(groove_swing_factor, NULL),
-                        groove_pocket_tightness = ?,
-                        groove_micro_timing_variance = ?,
-                        humanness_score = ?,
-                        total_hits = ?,
-                        hit_counts_json = ?,
-                        hit_density_json = ?,
-                        dynamics_json = ?,
-                        updated_at = ?
-                    WHERE analysis_id = ?
-                    """,
-                    (
-                        float(pocket_tightness) if pocket_tightness is not None else None,
-                        float(micro_var) if micro_var is not None else None,
-                        float(humanness) if humanness is not None else None,
-                        int(total_hits),
-                        json.dumps(hit_counts, default=str),
-                        json.dumps(
-                            {
-                                "duration_sec": float(duration_sec) if isinstance(duration_sec, (int, float)) else None,
-                                "hits_per_sec": hits_per_sec,
-                                "hits_per_beat": hits_per_beat,
-                            },
-                            default=str,
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            UPDATE public.song_performance_analysis
+                            SET
+                                groove_swing_factor = COALESCE(groove_swing_factor, NULL),
+                                groove_pocket_tightness = :pocket,
+                                groove_micro_timing_variance = :microvar,
+                                humanness_score = :human,
+                                total_hits = :total_hits,
+                                hit_counts_json = :hit_counts,
+                                hit_density_json = :hit_density,
+                                dynamics_json = :dyn,
+                                updated_at = NOW()
+                            WHERE analysis_id = :aid
+                            """
                         ),
-                        json.dumps(
-                            {
-                                "velocity_mean": vel_mean,
-                                "velocity_std": vel_std,
-                                "timing_mean_ms": timing_mean_ms,
-                                "timing_std_ms": timing_std_ms,
-                            },
-                            default=str,
+                        {
+                            "pocket": float(pocket_tightness) if pocket_tightness is not None else None,
+                            "microvar": float(micro_var) if micro_var is not None else None,
+                            "human": float(humanness) if humanness is not None else None,
+                            "total_hits": int(total_hits),
+                            "hit_counts": json.dumps(hit_counts, default=str),
+                            "hit_density": json.dumps(
+                                {
+                                    "duration_sec": float(duration_sec) if isinstance(duration_sec, (int, float)) else None,
+                                    "hits_per_sec": hits_per_sec,
+                                    "hits_per_beat": hits_per_beat,
+                                },
+                                default=str,
+                            ),
+                            "dyn": json.dumps(
+                                {
+                                    "velocity_mean": vel_mean,
+                                    "velocity_std": vel_std,
+                                    "timing_mean_ms": timing_mean_ms,
+                                    "timing_std_ms": timing_std_ms,
+                                },
+                                default=str,
+                            ),
+                            "aid": analysis_id,
+                        },
+                    )
+            else:
+                def _do_write() -> None:
+                    cursor.execute(
+                        """
+                        UPDATE song_performance_analysis
+                        SET
+                            groove_swing_factor = COALESCE(groove_swing_factor, NULL),
+                            groove_pocket_tightness = ?,
+                            groove_micro_timing_variance = ?,
+                            humanness_score = ?,
+                            total_hits = ?,
+                            hit_counts_json = ?,
+                            hit_density_json = ?,
+                            dynamics_json = ?,
+                            updated_at = ?
+                        WHERE analysis_id = ?
+                        """,
+                        (
+                            float(pocket_tightness) if pocket_tightness is not None else None,
+                            float(micro_var) if micro_var is not None else None,
+                            float(humanness) if humanness is not None else None,
+                            int(total_hits),
+                            json.dumps(hit_counts, default=str),
+                            json.dumps(
+                                {
+                                    "duration_sec": float(duration_sec) if isinstance(duration_sec, (int, float)) else None,
+                                    "hits_per_sec": hits_per_sec,
+                                    "hits_per_beat": hits_per_beat,
+                                },
+                                default=str,
+                            ),
+                            json.dumps(
+                                {
+                                    "velocity_mean": vel_mean,
+                                    "velocity_std": vel_std,
+                                    "timing_mean_ms": timing_mean_ms,
+                                    "timing_std_ms": timing_std_ms,
+                                },
+                                default=str,
+                            ),
+                            now,
+                            analysis_id,
                         ),
-                        now,
-                        analysis_id,
-                    ),
-                )
-                conn.commit()
-
-            self._with_write_lock_retry(_do_write)
+                    )
+                    conn.commit()
+                self._with_write_lock_retry(_do_write)
             out["updated"] = True
             out["timing_std_ms"] = timing_std_ms
             out["timing_mean_ms"] = timing_mean_ms
@@ -3121,29 +4012,36 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
-
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text("SELECT analysis_id FROM public.song_performance_analysis WHERE drummer_id = :d ORDER BY created_at DESC"),
+                        {"d": drummer_slug},
+                    ).fetchall() or []
+            else:
+                conn = self._get_connection()
+                cursor = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
 
-            cursor.execute(
-                "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
-                (drummer_fk,),
-            )
-            rows = cursor.fetchall() or []
+                cursor.execute(
+                    "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
+                    (drummer_fk,),
+                )
+                rows = cursor.fetchall() or []
             out["analyses"] = len(rows)
 
             updated = 0
             stds: List[float] = []
             pockets: List[float] = []
             humans: List[float] = []
-            for (aid,) in rows:
+            for r in rows:
+                aid = r[0] if isinstance(r, (tuple, list)) else r.analysis_id
                 res = self.extract_microtiming_and_dynamics_for_analysis(analysis_id=aid)
                 if res.get("updated"):
                     updated += 1
@@ -3185,6 +4083,22 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         if table_name in self._schema_cache:
             return self._schema_cache[table_name]
         try:
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    res = conn_pg.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = :tbl
+                              AND table_schema IN ('public', 'drumtrackai')
+                            """
+                        ),
+                        {"tbl": table_name},
+                    )
+                    cols = {row[0] for row in res}
+                self._schema_cache[table_name] = cols
+                return cols
             conn = self._get_connection()
             cursor = conn.cursor()
             rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -3194,6 +4108,568 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         except Exception:
             self._schema_cache[table_name] = set()
             return set()
+
+    def _ensure_postgres_schema(self) -> None:
+        if getattr(self, "_engine", None) is None:
+            return
+        stmts = [
+            "CREATE SCHEMA IF NOT EXISTS drumtrackai",
+            """
+            CREATE TABLE IF NOT EXISTS public.drummers (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT UNIQUE,
+                slug TEXT UNIQUE,
+                display_name TEXT,
+                name TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.songs (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                artist TEXT,
+                album TEXT,
+                year INTEGER,
+                genre TEXT,
+                duration DOUBLE PRECISION,
+                file_path TEXT,
+                drummer_id TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.song_performance_analysis (
+                analysis_id TEXT PRIMARY KEY,
+                song_id TEXT,
+                drummer_id TEXT,
+                source_file TEXT,
+                mvsep_output_dir TEXT,
+                tempo_bpm DOUBLE PRECISION,
+                tempo_confidence DOUBLE PRECISION,
+                time_signature TEXT,
+                duration_sec DOUBLE PRECISION,
+                groove_swing_factor DOUBLE PRECISION,
+                groove_pocket_tightness DOUBLE PRECISION,
+                groove_micro_timing_variance DOUBLE PRECISION,
+                rhythmic_complexity DOUBLE PRECISION,
+                syncopation_level DOUBLE PRECISION,
+                humanness_score DOUBLE PRECISION,
+                total_hits INTEGER,
+                hit_counts_json TEXT,
+                hit_density_json TEXT,
+                dynamics_json TEXT,
+                fills_summary_json TEXT,
+                rudiments_summary_json TEXT,
+                techniques_json TEXT,
+                stem_files_used_json TEXT,
+                raw_analysis_json TEXT,
+                analysis_version TEXT,
+                phase32_42_features_json TEXT,
+                phase32_42_features_version TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (song_id) REFERENCES public.songs(id) ON DELETE SET NULL,
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drum_hit_events (
+                event_id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT,
+                song_id TEXT,
+                instrument TEXT NOT NULL,
+                component TEXT,
+                onset_time_sec DOUBLE PRECISION NOT NULL,
+                onset_strength DOUBLE PRECISION,
+                velocity_est DOUBLE PRECISION,
+                beat_index INTEGER,
+                bar_index INTEGER,
+                subdivision TEXT,
+                timing_offset_ms DOUBLE PRECISION,
+                is_ghost INTEGER,
+                is_accent INTEGER,
+                is_flams_like INTEGER,
+                is_roll_like INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.fill_events (
+                fill_id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT,
+                song_id TEXT,
+                start_time_sec DOUBLE PRECISION NOT NULL,
+                end_time_sec DOUBLE PRECISION NOT NULL,
+                start_bar_index INTEGER,
+                end_bar_index INTEGER,
+                hit_count INTEGER,
+                instruments_json TEXT,
+                density_per_sec DOUBLE PRECISION,
+                classification TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.technique_events (
+                technique_event_id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT,
+                song_id TEXT,
+                start_time_sec DOUBLE PRECISION,
+                end_time_sec DOUBLE PRECISION,
+                technique_type TEXT NOT NULL,
+                technique_name TEXT,
+                confidence DOUBLE PRECISION,
+                details_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.analysis_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT,
+                song_id TEXT,
+                artifact_role TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_format TEXT,
+                file_size_bytes BIGINT,
+                file_mtime_epoch DOUBLE PRECISION,
+                sha256 TEXT,
+                extractor_name TEXT,
+                extractor_version TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.stem_artifacts (
+                stem_id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT,
+                song_id TEXT,
+                stem_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size_bytes BIGINT,
+                file_mtime_epoch DOUBLE PRECISION,
+                sha256 TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_phrase_features (
+                id TEXT PRIMARY KEY,
+                analysis_id TEXT NOT NULL,
+                drummer_id TEXT NOT NULL,
+                song_id TEXT NOT NULL,
+                section_label TEXT,
+                phrase_index INTEGER,
+                phrase_length_bars INTEGER,
+                bar_position_in_phrase INTEGER,
+                energy_start DOUBLE PRECISION,
+                energy_end DOUBLE PRECISION,
+                energy_slope DOUBLE PRECISION,
+                pattern_repetition_score DOUBLE PRECISION,
+                pattern_mutation_rate DOUBLE PRECISION,
+                density_curve_json TEXT,
+                accent_curve_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (analysis_id) REFERENCES public.song_performance_analysis(analysis_id) ON DELETE CASCADE,
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE,
+                FOREIGN KEY (song_id) REFERENCES public.songs(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_microtiming_profiles (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                instrument TEXT,
+                subdivision TEXT,
+                mean_offset_ms DOUBLE PRECISION,
+                std_offset_ms DOUBLE PRECISION,
+                skew_offset_ms DOUBLE PRECISION,
+                early_hit_probability DOUBLE PRECISION,
+                late_hit_probability DOUBLE PRECISION,
+                pocket_bias TEXT,
+                context_label TEXT,
+                histogram_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_dynamic_profiles (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                instrument TEXT,
+                velocity_mean DOUBLE PRECISION,
+                velocity_std DOUBLE PRECISION,
+                velocity_skew DOUBLE PRECISION,
+                ghost_note_probability DOUBLE PRECISION,
+                accent_probability DOUBLE PRECISION,
+                ghost_to_accent_ratio DOUBLE PRECISION,
+                accent_grid_json TEXT,
+                velocity_histogram_json TEXT,
+                phrase_dynamic_curve_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_cymbal_language (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                hihat_closed_ratio DOUBLE PRECISION,
+                hihat_open_ratio DOUBLE PRECISION,
+                hihat_pedal_ratio DOUBLE PRECISION,
+                hihat_bark_probability DOUBLE PRECISION,
+                ride_usage_ratio DOUBLE PRECISION,
+                ride_bell_probability DOUBLE PRECISION,
+                crash_frequency_per_min DOUBLE PRECISION,
+                crash_on_downbeat_probability DOUBLE PRECISION,
+                crash_on_transition_probability DOUBLE PRECISION,
+                cymbal_decay_spacing_score DOUBLE PRECISION,
+                cymbal_density_curve_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_limb_coordination (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                simultaneous_hit_matrix_json TEXT,
+                kick_snare_dependency DOUBLE PRECISION,
+                kick_hat_dependency DOUBLE PRECISION,
+                snare_hat_dependency DOUBLE PRECISION,
+                independence_score DOUBLE PRECISION,
+                syncopation_score DOUBLE PRECISION,
+                limb_feasibility_violation_rate DOUBLE PRECISION,
+                common_limb_patterns_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_fill_behavior (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                section_label TEXT,
+                phrase_position TEXT,
+                fill_probability DOUBLE PRECISION,
+                fill_length_mean_beats DOUBLE PRECISION,
+                fill_length_std_beats DOUBLE PRECISION,
+                fill_density_mean DOUBLE PRECISION,
+                tom_usage_probability DOUBLE PRECISION,
+                snare_fill_probability DOUBLE PRECISION,
+                kick_fill_probability DOUBLE PRECISION,
+                cymbal_exit_probability DOUBLE PRECISION,
+                triplet_fill_probability DOUBLE PRECISION,
+                linear_fill_probability DOUBLE PRECISION,
+                rudimental_fill_probability DOUBLE PRECISION,
+                common_fill_shapes_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_personality_embeddings (
+                id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                embedding_vector_json TEXT NOT NULL,
+                source_song_count INTEGER,
+                source_hit_count INTEGER,
+                confidence_score DOUBLE PRECISION,
+                timing_weight DOUBLE PRECISION,
+                dynamics_weight DOUBLE PRECISION,
+                fill_weight DOUBLE PRECISION,
+                cymbal_weight DOUBLE PRECISION,
+                coordination_weight DOUBLE PRECISION,
+                phrase_weight DOUBLE PRECISION,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.drummer_profile_rollups (
+                rollup_id TEXT PRIMARY KEY,
+                drummer_id TEXT NOT NULL UNIQUE,
+                rollup_version TEXT,
+                rollup_json TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.source_videos (
+                url TEXT PRIMARY KEY,
+                platform TEXT DEFAULT 'youtube',
+                title TEXT,
+                channel TEXT,
+                duration_sec INTEGER,
+                drummer_id TEXT,
+                status TEXT,
+                downloaded_path TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                song_id TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (drummer_id) REFERENCES public.drummers(id) ON DELETE SET NULL,
+                FOREIGN KEY (song_id) REFERENCES public.songs(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.calibration_adjustments (
+                drummer_slug TEXT PRIMARY KEY,
+                adjustments_json TEXT NOT NULL,
+                metadata_json TEXT,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.calibration_runs (
+                run_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                started_at TIMESTAMPTZ DEFAULT NOW(),
+                completed_at TIMESTAMPTZ,
+                outcome TEXT NOT NULL,
+                within_tolerance_count INTEGER,
+                total_compared INTEGER,
+                delta_summary TEXT,
+                note_count INTEGER,
+                fills_per_minute DOUBLE PRECISION
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.calibration_feedback (
+                feedback_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                run_id TEXT,
+                author TEXT,
+                rating INTEGER NOT NULL,
+                comment TEXT,
+                metadata_json TEXT,
+                submitted_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.reviewer_profiles (
+                reviewer_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                expertise_level TEXT,
+                primary_styles_json TEXT NOT NULL DEFAULT '[]',
+                years_experience INTEGER,
+                weighting_factor DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.evaluation_sessions (
+                session_id TEXT PRIMARY KEY,
+                reviewer_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                assigned_at TIMESTAMPTZ,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                app_version TEXT,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (reviewer_id) REFERENCES public.reviewer_profiles(reviewer_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.evaluation_items (
+                item_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                target_drummer_slug TEXT NOT NULL,
+                base_groove_id TEXT NOT NULL,
+                reference_artifact_id TEXT,
+                baseline_run_id TEXT,
+                candidate_a_run_id TEXT,
+                candidate_b_run_id TEXT,
+                eval_mode TEXT,
+                ab_mapping_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.pairwise_judgments (
+                judgment_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                preferred_candidate TEXT,
+                closer_to_target TEXT,
+                better_feel TEXT,
+                more_musical TEXT,
+                confidence INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.attribute_ratings (
+                rating_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                candidate_label TEXT NOT NULL,
+                stylistic_authenticity INTEGER,
+                groove_feel INTEGER,
+                dynamics INTEGER,
+                phrasing INTEGER,
+                kit_balance INTEGER,
+                fill_behavior INTEGER,
+                human_realism INTEGER,
+                overall_usefulness INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.rubric_tags (
+                tag_id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                candidate_label TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                tag_value TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (item_id) REFERENCES public.evaluation_items(item_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.run_versions (
+                run_id TEXT PRIMARY KEY,
+                generator_version TEXT NOT NULL,
+                feature_version TEXT NOT NULL,
+                rollup_version TEXT NOT NULL,
+                sample_pack_version TEXT NOT NULL,
+                seed INTEGER NOT NULL,
+                commit_hash TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.audio_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                artifact_type TEXT NOT NULL,
+                storage_uri TEXT NOT NULL,
+                duration_sec DOUBLE PRECISION,
+                loudness_lufs DOUBLE PRECISION,
+                sample_pack_version TEXT,
+                render_recipe_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.learning_updates (
+                update_id TEXT PRIMARY KEY,
+                model_family TEXT NOT NULL,
+                previous_version TEXT,
+                new_version TEXT NOT NULL,
+                training_window TEXT,
+                summary_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.training_sessions (
+                session_id TEXT PRIMARY KEY,
+                session_data TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.model_versions (
+                version_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                model_path TEXT NOT NULL,
+                sophistication_score DOUBLE PRECISION NOT NULL,
+                capabilities TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (session_id) REFERENCES public.training_sessions(session_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.performance_benchmarks (
+                benchmark_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                test_name TEXT NOT NULL,
+                test_results TEXT NOT NULL,
+                score DOUBLE PRECISION NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (session_id) REFERENCES public.training_sessions(session_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_spa_drummer ON public.song_performance_analysis(drummer_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_hits_analysis ON public.drum_hit_events(analysis_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_hits_drummer_instrument ON public.drum_hit_events(drummer_id, instrument)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_fills_analysis ON public.fill_events(analysis_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_tech_analysis ON public.technique_events(analysis_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_phrase_features_drummer ON public.drummer_phrase_features(drummer_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_microtiming_drummer_context ON public.drummer_microtiming_profiles(drummer_id, instrument, context_label)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_dynamics_drummer_instrument ON public.drummer_dynamic_profiles(drummer_id, instrument)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_cymbal_language_drummer ON public.drummer_cymbal_language(drummer_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_limb_coordination_drummer ON public.drummer_limb_coordination(drummer_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_fill_behavior_drummer_section ON public.drummer_fill_behavior(drummer_id, section_label, phrase_position)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_embeddings_drummer_version ON public.drummer_personality_embeddings(drummer_id, model_version)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_source_videos_drummer_status ON public.source_videos(drummer_id, status)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_eval_sessions_reviewer ON public.evaluation_sessions(reviewer_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_eval_items_session ON public.evaluation_items(session_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_pairwise_item ON public.pairwise_judgments(item_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_attr_item ON public.attribute_ratings(item_id)
+            """,
+        ]
+        with self._engine.begin() as conn:
+            skip_idx = str(os.getenv("DB_SKIP_INDEXES", "")).strip().lower() in ("1", "true", "yes", "y")
+            for sql in stmts:
+                if skip_idx and sql.strip().upper().startswith("CREATE INDEX"):
+                    continue
+                conn.execute(text(sql))
+        self._schema_cache.clear()
 
     @classmethod
     def get_instance(cls):
@@ -3218,7 +4694,59 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if self._initialized:
                 logger.warning("Database already initialized")
                 return True
-                
+            
+            db_backend = str(os.getenv("DB_BACKEND", "")).strip().lower()
+            db_url = str(os.getenv("DATABASE_URL", "")).strip()
+            if db_backend in {"postgres", "postgresql"} or db_url.lower().startswith("postgres"):
+                try:
+                    max_overflow = int(str(os.getenv("DB_MAX_OVERFLOW", "5")).strip() or "5")
+                except Exception:
+                    max_overflow = 5
+                try:
+                    self._engine = create_engine(
+                        db_url,
+                        pool_pre_ping=True,
+                        pool_size=5,
+                        max_overflow=max_overflow,
+                        future=True,
+                    )
+                    with self._engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                        try:
+                            info_row = conn.execute(
+                                text(
+                                    "SELECT current_user, current_database(), version()"
+                                )
+                            ).first()
+                            sp_row = conn.execute(text("SHOW search_path")).first()
+                            logger.info(
+                                f"DB connected: user={info_row[0]} db={info_row[1]} search_path={sp_row[0]}"
+                            )
+                        except Exception as _:
+                            pass
+                except Exception as e:
+                    logger.error(f"Failed to initialize Postgres engine: {str(e)}")
+                    try:
+                        self.database_error.emit(f"Failed to initialize Postgres engine: {str(e)}")
+                    except Exception:
+                        pass
+                    return False
+                else:
+                    # Ensure required schema/tables exist in Postgres
+                    try:
+                        self._ensure_postgres_schema()
+                    except Exception as se:
+                        logger.warning(f"Postgres schema ensure failed (continuing): {se}")
+                        try:
+                            self.database_error.emit(f"Postgres schema ensure failed: {se}")
+                        except Exception:
+                            pass
+                    self._db_path = db_url or "postgres"
+                    self._initialized = True
+                    self.database_connected.emit(self._db_path)
+                    logger.info(f"Database initialized successfully at {self._db_path}")
+                    return True
+
             # Set default path if not provided
             if db_path is None:
                 # First, honor an explicit environment override so backend
@@ -3338,13 +4866,87 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             raw_analysis_json = json.dumps(analysis_json, default=str)
             stem_files_used_json = json.dumps(stem_files_used, default=str)
 
+            if getattr(self, "_engine", None) is not None:
+                params = {
+                    "analysis_id": analysis_id,
+                    "song_id": song_id,
+                    "drummer_pk": drummer_id,
+                    "source_file": source_file,
+                    "mvsep_output_dir": mvsep_output_dir,
+                    "tempo_bpm": float(tempo_bpm) if isinstance(tempo_bpm, (int, float)) else None,
+                    "tempo_confidence": float(tempo_confidence) if isinstance(tempo_confidence, (int, float)) else None,
+                    "time_signature": (analysis_json.get("time_signature") if isinstance(analysis_json.get("time_signature"), str) else None),
+                    "duration_sec": float(duration_sec) if isinstance(duration_sec, (int, float)) else None,
+                    "groove_swing_factor": float(swing_factor) if isinstance(swing_factor, (int, float)) else None,
+                    "groove_pocket_tightness": float(pocket_tightness) if isinstance(pocket_tightness, (int, float)) else None,
+                    "groove_micro_timing_variance": float(micro_var) if isinstance(micro_var, (int, float)) else None,
+                    "rhythmic_complexity": float(rhythmic_complexity) if isinstance(rhythmic_complexity, (int, float)) else None,
+                    "syncopation_level": float(syncopation_level) if isinstance(syncopation_level, (int, float)) else None,
+                    "humanness_score": float(humanness_score) if isinstance(humanness_score, (int, float)) else None,
+                    "total_hits": int(total_hits) if isinstance(total_hits, int) else None,
+                    "stem_files_used_json": stem_files_used_json,
+                    "raw_analysis_json": raw_analysis_json,
+                    "analysis_version": (analysis_version or "").strip() or None,
+                }
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.drummers (id, drummer_id, slug, display_name, name)
+                            VALUES (:drummer_pk, :drummer_pk, :drummer_pk, :drummer_pk, :drummer_pk)
+                            ON CONFLICT (id) DO NOTHING
+                            """
+                        ),
+                        {"drummer_pk": drummer_id},
+                    )
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.song_performance_analysis (
+                                analysis_id, song_id, drummer_id, source_file, mvsep_output_dir,
+                                tempo_bpm, tempo_confidence, time_signature, duration_sec,
+                                groove_swing_factor, groove_pocket_tightness, groove_micro_timing_variance,
+                                rhythmic_complexity, syncopation_level, humanness_score,
+                                total_hits, stem_files_used_json, raw_analysis_json, analysis_version, created_at, updated_at
+                            ) VALUES (
+                                :analysis_id, :song_id, :drummer_pk, :source_file, :mvsep_output_dir,
+                                :tempo_bpm, :tempo_confidence, :time_signature, :duration_sec,
+                                :groove_swing_factor, :groove_pocket_tightness, :groove_micro_timing_variance,
+                                :rhythmic_complexity, :syncopation_level, :humanness_score,
+                                :total_hits, :stem_files_used_json, :raw_analysis_json, :analysis_version, NOW(), NOW()
+                            )
+                            ON CONFLICT (analysis_id) DO UPDATE SET
+                                song_id=EXCLUDED.song_id,
+                                drummer_id=EXCLUDED.drummer_id,
+                                source_file=EXCLUDED.source_file,
+                                mvsep_output_dir=EXCLUDED.mvsep_output_dir,
+                                tempo_bpm=EXCLUDED.tempo_bpm,
+                                tempo_confidence=EXCLUDED.tempo_confidence,
+                                time_signature=EXCLUDED.time_signature,
+                                duration_sec=EXCLUDED.duration_sec,
+                                groove_swing_factor=EXCLUDED.groove_swing_factor,
+                                groove_pocket_tightness=EXCLUDED.groove_pocket_tightness,
+                                groove_micro_timing_variance=EXCLUDED.groove_micro_timing_variance,
+                                rhythmic_complexity=EXCLUDED.rhythmic_complexity,
+                                syncopation_level=EXCLUDED.syncopation_level,
+                                humanness_score=EXCLUDED.humanness_score,
+                                total_hits=EXCLUDED.total_hits,
+                                stem_files_used_json=EXCLUDED.stem_files_used_json,
+                                raw_analysis_json=EXCLUDED.raw_analysis_json,
+                                analysis_version=EXCLUDED.analysis_version,
+                                updated_at=NOW()
+                            """
+                        ),
+                        params,
+                    )
+                self.data_changed.emit("song_performance_analysis", "upsert")
+                return True
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
             def _do_write():
-                # Ensure FK target exists (song_performance_analysis.drummer_id -> drummers.*)
                 drummer_fk = self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_id)
-
                 cursor.execute(
                     """
                 INSERT INTO song_performance_analysis (
@@ -3458,6 +5060,52 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not isinstance(stem_files_used, dict):
                 stem_files_used = {}
 
+            # Resolve stem file paths against current song_folder if archived paths differ
+            resolved_stems: Dict[str, Any] = {}
+            try:
+                for stem_name, p in stem_files_used.items():
+                    p = str(p or "").strip()
+                    found = ""
+                    if p and os.path.exists(p):
+                        found = p
+                    else:
+                        base = os.path.basename(p) if p else ""
+                        cand1 = os.path.join(song_folder, base) if base else ""
+                        cand2 = os.path.join(song_folder, "drumsep_components", base) if base else ""
+                        if cand1 and os.path.exists(cand1):
+                            found = cand1
+                        elif cand2 and os.path.exists(cand2):
+                            found = cand2
+                    if found:
+                        resolved_stems[stem_name] = found
+            except Exception:
+                resolved_stems = {}
+            if not resolved_stems:
+                # Fallback: scan common locations under song_folder
+                try:
+                    for root in (song_folder, os.path.join(song_folder, "drumsep_components")):
+                        if not os.path.isdir(root):
+                            continue
+                        for fn in os.listdir(root):
+                            if not fn.lower().endswith(".wav"):
+                                continue
+                            name = os.path.splitext(fn)[0]
+                            resolved_stems[name] = os.path.join(root, fn)
+                except Exception:
+                    pass
+            try:
+                ds_dir = os.path.join(song_folder, "drumsep_components")
+                if os.path.isdir(ds_dir):
+                    for fn in os.listdir(ds_dir):
+                        if not fn.lower().endswith(".wav"):
+                            continue
+                        name = os.path.splitext(fn)[0]
+                        path = os.path.join(ds_dir, fn)
+                        if name not in resolved_stems and os.path.exists(path):
+                            resolved_stems[name] = path
+            except Exception:
+                pass
+
             analysis_id = str(uuid.uuid4())
             source_file = ""
             try:
@@ -3467,7 +5115,156 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             except Exception:
                 source_file = ""
 
-            # Pre-ensure drummer and get FK value (INTEGER id in the admin DB)
+            song_title = os.path.basename(song_folder).strip()
+            try:
+                meta_path = os.path.join(song_folder, "song_meta.json")
+                if os.path.exists(meta_path):
+                    with open(meta_path, "r", encoding="utf-8") as mf:
+                        m = json.load(mf)
+                    t = (m.get("title") or m.get("song_name") or "").strip()
+                    if t:
+                        song_title = t
+            except Exception:
+                pass
+            try:
+                duration_val = analysis_json.get("duration") if isinstance(analysis_json, dict) else None
+                duration_val = float(duration_val) if isinstance(duration_val, (int, float)) else None
+            except Exception:
+                duration_val = None
+
+            if getattr(self, "_engine", None) is not None:
+                ok = self.upsert_song_performance_analysis(
+                    analysis_id=analysis_id,
+                    drummer_id=drummer_id,
+                    song_id=None,
+                    source_file=source_file,
+                    mvsep_output_dir=song_folder,
+                    analysis_json=analysis_json,
+                    stem_files_used=resolved_stems,
+                    analysis_version=analysis_version,
+                )
+                if not ok:
+                    return None
+                now_iso = datetime.utcnow().isoformat()
+                with self._engine.begin() as conn_pg:
+                    try:
+                        sid = str(uuid.uuid4())
+                        conn_pg.execute(
+                            text(
+                                """
+                                INSERT INTO public.songs (
+                                    id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at
+                                ) VALUES (
+                                    :id, :title, NULL, NULL, NULL, NULL, :duration, :file_path, :drummer_id, NOW(), NOW()
+                                ) ON CONFLICT (id) DO NOTHING
+                                """
+                            ),
+                            {
+                                "id": sid,
+                                "title": song_title or None,
+                                "duration": duration_val,
+                                "file_path": source_file or None,
+                                "drummer_id": drummer_id,
+                            },
+                        )
+                        conn_pg.execute(
+                            text("UPDATE public.song_performance_analysis SET song_id = :sid WHERE analysis_id = :aid"),
+                            {"sid": sid, "aid": analysis_id},
+                        )
+                    except Exception:
+                        pass
+                    def _insert_artifact_pg(role: str, path: str, fmt: str = ""):
+                        try:
+                            if not path or not os.path.exists(path):
+                                return
+                            stat = os.stat(path)
+                            sha = ""
+                            if compute_hashes:
+                                sha = self._sha256_file(path, max_bytes=hash_max_bytes)
+                            conn_pg.execute(
+                                text(
+                                    """
+                                    INSERT INTO public.analysis_artifacts (
+                                        artifact_id, analysis_id, drummer_id, song_id,
+                                        artifact_role, file_path, file_format,
+                                        file_size_bytes, file_mtime_epoch, sha256,
+                                        extractor_name, extractor_version,
+                                        created_at
+                                    ) VALUES (
+                                        :artifact_id, :analysis_id, :drummer_id, :song_id,
+                                        :artifact_role, :file_path, :file_format,
+                                        :file_size_bytes, :file_mtime_epoch, :sha256,
+                                        :extractor_name, :extractor_version,
+                                        :created_at
+                                    )
+                                    """
+                                ),
+                                {
+                                    "artifact_id": str(uuid.uuid4()),
+                                    "analysis_id": analysis_id,
+                                    "drummer_id": drummer_id,
+                                    "song_id": None,
+                                    "artifact_role": role,
+                                    "file_path": str(path),
+                                    "file_format": (fmt or "").strip() or None,
+                                    "file_size_bytes": int(stat.st_size),
+                                    "file_mtime_epoch": float(stat.st_mtime),
+                                    "sha256": sha or None,
+                                    "extractor_name": "processed_stems_ingest",
+                                    "extractor_version": (analysis_version or "").strip() or None,
+                                    "created_at": now_iso,
+                                },
+                            )
+                        except Exception:
+                            return
+
+                    _insert_artifact_pg("drum_analysis_json", drum_analysis_path, "json")
+                    prof = os.path.join(song_folder, "drummer_profile.json")
+                    _insert_artifact_pg("drummer_profile_json", prof, "json")
+
+                    for stem_name, path in resolved_stems.items():
+                        try:
+                            if not path or not os.path.exists(path):
+                                continue
+                            stat = os.stat(path)
+                            sha = ""
+                            if compute_hashes:
+                                sha = self._sha256_file(path, max_bytes=hash_max_bytes)
+                            conn_pg.execute(
+                                text(
+                                    """
+                                    INSERT INTO public.stem_artifacts (
+                                        stem_id, analysis_id, drummer_id, song_id,
+                                        stem_name, file_path,
+                                        file_size_bytes, file_mtime_epoch, sha256,
+                                        created_at
+                                    ) VALUES (
+                                        :stem_id, :analysis_id, :drummer_id, :song_id,
+                                        :stem_name, :file_path,
+                                        :file_size_bytes, :file_mtime_epoch, :sha256,
+                                        :created_at
+                                    )
+                                    """
+                                ),
+                                {
+                                    "stem_id": str(uuid.uuid4()),
+                                    "analysis_id": analysis_id,
+                                    "drummer_id": drummer_id,
+                                    "song_id": None,
+                                    "stem_name": str(stem_name),
+                                    "file_path": str(path),
+                                    "file_size_bytes": int(stat.st_size),
+                                    "file_mtime_epoch": float(stat.st_mtime),
+                                    "sha256": sha or None,
+                                    "created_at": now_iso,
+                                },
+                            )
+                        except Exception:
+                            continue
+                self.data_changed.emit("analysis_artifacts", "insert")
+                self.data_changed.emit("stem_artifacts", "insert")
+                return analysis_id
+
             conn = self._get_connection()
             cursor = conn.cursor()
             drummer_fk = self._ensure_drummer_exists(cursor=cursor, drummer_id=drummer_id)
@@ -3480,7 +5277,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 source_file=source_file,
                 mvsep_output_dir=song_folder,
                 analysis_json=analysis_json,
-                stem_files_used=stem_files_used,
+                stem_files_used=resolved_stems,
                 analysis_version=analysis_version,
             )
             if not ok:
@@ -3531,7 +5328,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             prof = os.path.join(song_folder, "drummer_profile.json")
             _insert_artifact("drummer_profile_json", prof, "json")
 
-            for stem_name, path in stem_files_used.items():
+            for stem_name, path in resolved_stems.items():
                 try:
                     if not path or not os.path.exists(path):
                         continue
@@ -3568,6 +5365,36 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 conn.commit()
 
             self._with_write_lock_retry(_commit_all)
+            try:
+                sid = str(uuid.uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO songs (
+                        id, title, artist, album, year, genre, duration, file_path, drummer_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                    """,
+                    (
+                        sid,
+                        song_title or None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        float(duration_val) if duration_val is not None else None,
+                        source_file or None,
+                        int(drummer_fk) if drummer_fk is not None else None,
+                        now,
+                        now,
+                    ),
+                )
+                cursor.execute(
+                    "UPDATE song_performance_analysis SET song_id = ? WHERE analysis_id = ?",
+                    (sid, analysis_id),
+                )
+                conn.commit()
+            except Exception:
+                pass
             self.data_changed.emit("analysis_artifacts", "insert")
             self.data_changed.emit("stem_artifacts", "insert")
             return analysis_id
@@ -3759,6 +5586,68 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         except Exception as e:
             logger.error(f"Error upserting drummer preset: {str(e)}")
             self.database_error.emit(f"Error upserting drummer preset: {str(e)}")
+            return False
+
+    def upsert_source_video(
+        self,
+        *,
+        drummer_id: Optional[str],
+        url: str,
+        title: Optional[str] = None,
+        channel: Optional[str] = None,
+        duration_sec: Optional[int] = None,
+        status: Optional[str] = None,
+        downloaded_path: Optional[str] = None,
+        tags: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        song_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            if getattr(self, "_engine", None) is None:
+                return False
+            params = {
+                "url": (url or "").strip(),
+                "title": (title or None),
+                "channel": (channel or None),
+                "duration_sec": int(duration_sec) if isinstance(duration_sec, int) else None,
+                "drummer_id": (drummer_id or None),
+                "status": (status or None),
+                "downloaded_path": (downloaded_path or None),
+                "tags": json.dumps(tags or {}),
+                "metadata": json.dumps(metadata or {}),
+                "song_id": (song_id or None),
+            }
+            if not params["url"]:
+                return False
+            stmt = text(
+                """
+                INSERT INTO public.source_videos (
+                    url, platform, title, channel, duration_sec, drummer_id, status,
+                    downloaded_path, tags_json, metadata_json, song_id, created_at, updated_at
+                ) VALUES (
+                    :url, 'youtube', :title, :channel, :duration_sec, :drummer_id, :status,
+                    :downloaded_path, :tags, :metadata, :song_id, NOW(), NOW()
+                )
+                ON CONFLICT (url) DO UPDATE SET
+                    title=EXCLUDED.title,
+                    channel=EXCLUDED.channel,
+                    duration_sec=EXCLUDED.duration_sec,
+                    drummer_id=EXCLUDED.drummer_id,
+                    status=EXCLUDED.status,
+                    downloaded_path=EXCLUDED.downloaded_path,
+                    tags_json=EXCLUDED.tags_json,
+                    metadata_json=EXCLUDED.metadata_json,
+                    song_id=COALESCE(EXCLUDED.song_id, public.source_videos.song_id),
+                    updated_at=NOW()
+                """
+            )
+            with self._engine.begin() as conn:
+                conn.execute(stmt, params)
+            return True
+        except Exception as e:
+            msg = f"Error upserting source video: {str(e)}"
+            logger.error(msg)
+            self.database_error.emit(msg)
             return False
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -4493,17 +6382,29 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             List[Dict]: List of drummer records
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
             cols = self._table_columns("drummers")
-            if "display_name" in cols:
-                cursor.execute('SELECT * FROM drummers ORDER BY display_name')
-            elif "name" in cols:
-                cursor.execute('SELECT * FROM drummers ORDER BY name')
-            else:
-                cursor.execute('SELECT * FROM drummers ORDER BY id')
-            rows = cursor.fetchall()
-            results = [dict(row) for row in rows]
+            results: List[Dict] = []
+            if getattr(self, "_engine", None) is not None and cols:
+                if "display_name" in cols:
+                    q = text('SELECT * FROM public.drummers ORDER BY display_name')
+                elif "name" in cols:
+                    q = text('SELECT * FROM public.drummers ORDER BY name')
+                else:
+                    q = text('SELECT * FROM public.drummers ORDER BY id')
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(q).mappings().all()
+                results = [dict(row) for row in rows]
+            elif getattr(self, "_engine", None) is None and cols:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                if "display_name" in cols:
+                    cursor.execute('SELECT * FROM drummers ORDER BY display_name')
+                elif "name" in cols:
+                    cursor.execute('SELECT * FROM drummers ORDER BY name')
+                else:
+                    cursor.execute('SELECT * FROM drummers ORDER BY id')
+                rows = cursor.fetchall()
+                results = [dict(row) for row in rows]
             if results:
                 return results
 
@@ -4512,12 +6413,25 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 vec_cols = self._table_columns("drummer_style_vectors")
                 if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
-                    cursor.execute(
-                        'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors '
-                        'WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) != "" '
-                        'ORDER BY drummer_name'
-                    )
-                    vec_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(
+                                text(
+                                    "SELECT DISTINCT drummer_id, drummer_name FROM public.drummer_style_vectors "
+                                    "WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) <> '' "
+                                    "ORDER BY drummer_name"
+                                )
+                            )
+                            vec_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors '
+                            'WHERE drummer_name IS NOT NULL AND TRIM(drummer_name) != "" '
+                            'ORDER BY drummer_name'
+                        )
+                        vec_rows = cursor.fetchall()
                     if vec_rows:
                         return [
                             {
@@ -4537,8 +6451,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 persona_cols = self._table_columns("drummer_personas")
                 if persona_cols:
-                    cursor.execute('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name')
-                    persona_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM public.drummer_personas ORDER BY display_name'))
+                            persona_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas ORDER BY display_name')
+                        persona_rows = cursor.fetchall()
                     return [
                         {
                             "id": row[0],
@@ -4559,8 +6480,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             try:
                 profile_cols = self._table_columns("drummer_profiles")
                 if profile_cols:
-                    cursor.execute('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name')
-                    profile_rows = cursor.fetchall()
+                    if getattr(self, "_engine", None) is not None:
+                        with self._engine.connect() as conn:
+                            res = conn.execute(text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM public.drummer_profiles ORDER BY display_name'))
+                            profile_rows = res.all()
+                    else:
+                        conn = self._get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era FROM drummer_profiles ORDER BY display_name')
+                        profile_rows = cursor.fetchall()
                     return [
                         {
                             "id": row[0],
@@ -4593,24 +6521,42 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             Dict or None: Drummer record or None if not found
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
             cols = self._table_columns("drummers")
-            if "drummer_id" in cols:
-                cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
-            else:
-                cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
+            if cols:
+                if getattr(self, "_engine", None) is not None:
+                    q = text('SELECT * FROM public.drummers WHERE drummer_id = :id') if "drummer_id" in cols else text('SELECT * FROM public.drummers WHERE id = :id')
+                    with self._engine.connect() as conn_pg:
+                        row = conn_pg.execute(q, {"id": drummer_id}).mappings().first()
+                    if row:
+                        return dict(row)
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    if "drummer_id" in cols:
+                        cursor.execute('SELECT * FROM drummers WHERE drummer_id = ?', (drummer_id,))
+                    else:
+                        cursor.execute('SELECT * FROM drummers WHERE id = ?', (drummer_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
 
             vec_cols = self._table_columns("drummer_style_vectors")
             if vec_cols and "drummer_id" in vec_cols and "drummer_name" in vec_cols:
-                cursor.execute(
-                    'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = ? LIMIT 1',
-                    (drummer_id,),
-                )
-                vrow = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT DISTINCT drummer_id, drummer_name FROM public.drummer_style_vectors WHERE drummer_id = :id LIMIT 1'),
+                            {"id": drummer_id},
+                        )
+                        vrow = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT DISTINCT drummer_id, drummer_name FROM drummer_style_vectors WHERE drummer_id = ? LIMIT 1',
+                        (drummer_id,),
+                    )
+                    vrow = cursor.fetchone()
                 if vrow:
                     return {
                         "id": vrow[0],
@@ -4622,11 +6568,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             persona_cols = self._table_columns("drummer_personas")
             if persona_cols:
-                cursor.execute(
-                    'SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = ?',
-                    (drummer_id,),
-                )
-                prow = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM public.drummer_personas WHERE persona_id = :id'),
+                            {"id": drummer_id},
+                        )
+                        prow = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT persona_id, display_name, archetypes_json, style_json, created_at, updated_at FROM drummer_personas WHERE persona_id = ?',
+                        (drummer_id,),
+                    )
+                    prow = cursor.fetchone()
                 if prow:
                     return {
                         "id": prow[0],
@@ -4642,11 +6598,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             profile_cols = self._table_columns("drummer_profiles")
             if profile_cols:
-                cursor.execute(
-                    'SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = ?',
-                    (drummer_id,),
-                )
-                pr = cursor.fetchone()
+                if getattr(self, "_engine", None) is not None:
+                    with self._engine.connect() as conn:
+                        res = conn.execute(
+                            text('SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM public.drummer_profiles WHERE drummer_id = :id'),
+                            {"id": drummer_id},
+                        )
+                        pr = res.first()
+                else:
+                    conn = self._get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'SELECT drummer_id, COALESCE(display_name, name) as display_name, category, era, styles FROM drummer_profiles WHERE drummer_id = ?',
+                        (drummer_id,),
+                    )
+                    pr = cursor.fetchone()
                 if pr:
                     return {
                         "id": pr[0],
@@ -5699,6 +7665,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             logger.error(f"Error getting calibration runs for {drummer_slug}: {str(e)}")
             self.database_error.emit(f"Error getting calibration runs: {str(e)}")
             return runs
+
+    def get_latest_calibration_run(self, *, drummer_slug: str) -> Optional[CalibrationRun]:
+        try:
+            items = self.get_calibration_runs(drummer_slug=drummer_slug, limit=1, include_metrics=True)
+            return items[0] if items else None
+        except Exception as e:
+            logger.error(f"Error fetching latest calibration run for {drummer_slug}: {str(e)}")
+            self.database_error.emit(f"Error fetching latest calibration run: {str(e)}")
+            return None
 
     def log_calibration_feedback(
         self,
