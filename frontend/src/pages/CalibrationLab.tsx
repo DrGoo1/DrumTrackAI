@@ -313,6 +313,27 @@ const asShareMap = (shares: unknown): Record<string, number> => {
   return {};
 };
 
+const extractApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (axios.isAxiosError(error)) {
+    const axiosError = error as any;
+    const detail = axiosError?.response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail;
+    }
+    if (detail && typeof detail === 'object') {
+      const message = (detail as any).message;
+      if (typeof message === 'string' && message.trim()) {
+        return message;
+      }
+    }
+    const message = axiosError?.message;
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+  return fallback;
+};
+
 const CalibrationLab: React.FC = () => {
   const [drummers, setDrummers] = useState<DrummerListItem[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -513,6 +534,10 @@ const CalibrationLab: React.FC = () => {
   const completion = detail?.completionStatus ?? detail?.metrics?.completion_status;
   const assimilation = detail?.assimilationStatus;
   const missingSteps = assimilation?.missing_steps ?? [];
+  const assimilationReady = Boolean(assimilation?.ready_for_calibration);
+  const readinessHint = missingSteps.length
+    ? `Assimilation not ready (${missingSteps.map(slugToTitle).join(', ')}).`
+    : 'Assimilation not ready for calibration yet.';
 
   const handleSelectDrummer = (slug: string) => {
     setSelectedSlug(slug);
@@ -547,6 +572,10 @@ const CalibrationLab: React.FC = () => {
 
   const handleQueueListeningItem = async () => {
     if (!selectedSlug) return;
+    if (!assimilationReady) {
+      setItemError(`${readinessHint} Complete ingestion before queuing listening audio.`);
+      return;
+    }
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
@@ -567,7 +596,7 @@ const CalibrationLab: React.FC = () => {
         setPairwiseMessage('Candidates queued, but no evaluation item was created.');
       }
     } catch (error) {
-      setItemError('Unable to queue listening item. Check backend logs and retry.');
+      setItemError(extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.'));
     } finally {
       setListeningBusy(false);
     }
@@ -617,6 +646,10 @@ const CalibrationLab: React.FC = () => {
 
   const handleGenerate = async () => {
     if (!selectedSlug) return;
+    if (!assimilationReady) {
+      setStatusMessage(`${readinessHint} Calibration launch is blocked until ready.`);
+      return;
+    }
     setGenerating(true);
     setStatusMessage('Launching calibration run�');
     try {
@@ -624,7 +657,7 @@ const CalibrationLab: React.FC = () => {
       setStatusMessage('Generation triggered. Refresh for updated metrics once the run completes.');
       await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
     } catch (error) {
-      setStatusMessage('Failed to trigger generation. Check backend logs for details.');
+      setStatusMessage(extractApiErrorMessage(error, 'Failed to trigger generation. Check backend logs for details.'));
     } finally {
       setGenerating(false);
     }
@@ -970,18 +1003,20 @@ const CalibrationLab: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleGenerate}
-                      disabled={generating}
+                      disabled={generating || !assimilationReady}
                       className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
                     >
-                      <RefreshCcw className="h-4 w-4" /> {generating ? 'Launching�' : 'Run Calibration'}
+                      <RefreshCcw className="h-4 w-4" />
+                      {generating ? 'Launching�' : assimilationReady ? 'Run Calibration' : 'Run Blocked'}
                     </button>
                     <button
                       type="button"
                       onClick={handleQueueListeningItem}
-                      disabled={listeningBusy || !selectedSlug}
+                      disabled={listeningBusy || !selectedSlug || !assimilationReady}
                       className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
                     >
-                      <Headphones className="h-4 w-4" /> {listeningBusy ? 'Queuing�' : 'Queue Listening Item'}
+                      <Headphones className="h-4 w-4" />
+                      {listeningBusy ? 'Queuing�' : assimilationReady ? 'Queue Listening Item' : 'Listening Blocked'}
                     </button>
                     <button
                       type="button"
