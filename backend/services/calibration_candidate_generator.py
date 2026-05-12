@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from admin.services.central_database_service import CentralDatabaseService
-from backend.app.assimilation.models.performance_transformer import apply_personality_transform
+
+try:
+    from backend.app.assimilation.models.performance_transformer import apply_personality_transform
+except Exception:
+    def apply_personality_transform(events: List[Dict[str, Any]], controls: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return events
 
 logger = logging.getLogger(__name__)
 
