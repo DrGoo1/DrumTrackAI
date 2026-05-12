@@ -6,7 +6,7 @@ export function resolveApiBase(): string {
     const win = window as any;
     const hostLower = String(win?.location?.hostname || "localhost").toLowerCase();
     if (hostLower.endsWith("netlify.app") || hostLower === "drumtrackai.netlify.app") {
-      return "https://drumtrackai-calibration-api.onrender.com";
+      return "https://drumtrackai-calibration-api2.onrender.com";
     }
     // Prefer explicit environment variable configured at build-time (e.g., Netlify UI)
     const explicitBase = process.env.REACT_APP_API_BASE;
@@ -33,7 +33,7 @@ export function resolveApiBase(): string {
   if (envBase) {
     const lower = envBase.toLowerCase();
     if (lower.includes('netlify.app')) {
-      return 'https://drumtrackai-calibration-api.onrender.com';
+      return 'https://drumtrackai-calibration-api2.onrender.com';
     }
     return envBase;
   }
