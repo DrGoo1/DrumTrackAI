@@ -5574,6 +5574,48 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             policies_json = json.dumps(policies or {})
 
             now = datetime.utcnow().isoformat()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.drummer_presets (
+                                preset_id, profile_type, name, tier,
+                                deltas_json, policies_json,
+                                source_type, source_song_name, source_ref,
+                                created_at, updated_at
+                            ) VALUES (
+                                :preset_id, :profile_type, :name, :tier,
+                                :deltas_json, :policies_json,
+                                :source_type, :source_song_name, :source_ref,
+                                NOW(), NOW()
+                            )
+                            ON CONFLICT (preset_id) DO UPDATE SET
+                                profile_type = EXCLUDED.profile_type,
+                                name = EXCLUDED.name,
+                                tier = EXCLUDED.tier,
+                                deltas_json = EXCLUDED.deltas_json,
+                                policies_json = EXCLUDED.policies_json,
+                                source_type = EXCLUDED.source_type,
+                                source_song_name = EXCLUDED.source_song_name,
+                                source_ref = EXCLUDED.source_ref,
+                                updated_at = NOW()
+                            """
+                        ),
+                        {
+                            "preset_id": preset_id,
+                            "profile_type": profile_type,
+                            "name": name,
+                            "tier": tier,
+                            "deltas_json": deltas_json,
+                            "policies_json": policies_json,
+                            "source_type": source_type,
+                            "source_song_name": source_song_name,
+                            "source_ref": source_ref,
+                        },
+                    )
+                return True
+
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
