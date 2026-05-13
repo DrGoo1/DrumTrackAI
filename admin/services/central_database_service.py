@@ -831,77 +831,77 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
                             onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop_length)
                             onset_times = np.asarray(onset_times, dtype=float)
-
-                            o_env = np.asarray(o_env, dtype=float) if o_env is not None else np.asarray([], dtype=float)
-                            max_env = float(np.max(o_env)) if o_env.size else 0.0
-                            instrument = _map_stem_to_instrument(stem_name)
-
-                            for idx, t in enumerate(onset_times):
-                                frame = int(onset_frames[idx]) if idx < onset_frames.size else None
-                                strength = None
-                                vel = None
-                                try:
-                                    if frame is not None and o_env.size and 0 <= frame < int(o_env.size):
-                                        strength = float(o_env[frame])
-                                        if max_env > 0:
-                                            vel = float(strength / max_env)
-                                except Exception:
-                                    strength = None
-                                    vel = None
-
-                                beat_pos = float(t) / float(sec_per_beat) if sec_per_beat > 0 else 0.0
-                                beat_index = int(beat_pos) if beat_pos >= 0 else 0
-                                bar_index = int(beat_index // int(beats_per_bar)) if int(beats_per_bar) > 0 else 0
-                                frac = beat_pos - float(beat_index)
-                                subdiv = _subdivision_from_fraction(frac)
-
-                                grid_16 = round(beat_pos * 4.0) / 4.0
-                                grid_t = float(grid_16) * float(sec_per_beat)
-                                timing_offset_ms = (float(t) - float(grid_t)) * 1000.0
-
-                                conn_pg.execute(
-                                    text(
-                                        """
-                                        INSERT INTO public.drum_hit_events (
-                                            event_id, analysis_id, drummer_id, song_id,
-                                            instrument, component,
-                                            onset_time_sec, onset_strength, velocity_est,
-                                            beat_index, bar_index, subdivision, timing_offset_ms,
-                                            is_ghost, is_accent, is_flams_like, is_roll_like,
-                                            created_at
-                                        ) VALUES (
-                                            :event_id, :analysis_id, :drummer_id, :song_id,
-                                            :instrument, :component,
-                                            :onset_time_sec, :onset_strength, :velocity_est,
-                                            :beat_index, :bar_index, :subdivision, :timing_offset_ms,
-                                            :is_ghost, :is_accent, :is_flams_like, :is_roll_like,
-                                            NOW()
-                                        )
-                                        """
-                                    ),
-                                    {
-                                        "event_id": str(uuid.uuid4()),
-                                        "analysis_id": analysis_id,
-                                        "drummer_id": str(drummer_fk),
-                                        "song_id": None,
-                                        "instrument": instrument,
-                                        "component": None,
-                                        "onset_time_sec": float(t),
-                                        "onset_strength": strength,
-                                        "velocity_est": vel,
-                                        "beat_index": int(beat_index),
-                                        "bar_index": int(bar_index),
-                                        "subdivision": str(subdiv),
-                                        "timing_offset_ms": float(timing_offset_ms),
-                                        "is_ghost": None,
-                                        "is_accent": None,
-                                        "is_flams_like": None,
-                                        "is_roll_like": None,
-                                    },
-                                )
-                                inserted += 1
                         except Exception:
                             continue
+
+                        o_env = np.asarray(o_env, dtype=float) if o_env is not None else np.asarray([], dtype=float)
+                        max_env = float(np.max(o_env)) if o_env.size else 0.0
+                        instrument = _map_stem_to_instrument(stem_name)
+
+                        for idx, t in enumerate(onset_times):
+                            frame = int(onset_frames[idx]) if idx < onset_frames.size else None
+                            strength = None
+                            vel = None
+                            try:
+                                if frame is not None and o_env.size and 0 <= frame < int(o_env.size):
+                                    strength = float(o_env[frame])
+                                    if max_env > 0:
+                                        vel = float(strength / max_env)
+                            except Exception:
+                                strength = None
+                                vel = None
+
+                            beat_pos = float(t) / float(sec_per_beat) if sec_per_beat > 0 else 0.0
+                            beat_index = int(beat_pos) if beat_pos >= 0 else 0
+                            bar_index = int(beat_index // int(beats_per_bar)) if int(beats_per_bar) > 0 else 0
+                            frac = beat_pos - float(beat_index)
+                            subdiv = _subdivision_from_fraction(frac)
+
+                            grid_16 = round(beat_pos * 4.0) / 4.0
+                            grid_t = float(grid_16) * float(sec_per_beat)
+                            timing_offset_ms = (float(t) - float(grid_t)) * 1000.0
+
+                            conn_pg.execute(
+                                text(
+                                    """
+                                    INSERT INTO public.drum_hit_events (
+                                        event_id, analysis_id, drummer_id, song_id,
+                                        instrument, component,
+                                        onset_time_sec, onset_strength, velocity_est,
+                                        beat_index, bar_index, subdivision, timing_offset_ms,
+                                        is_ghost, is_accent, is_flams_like, is_roll_like,
+                                        created_at
+                                    ) VALUES (
+                                        :event_id, :analysis_id, :drummer_id, :song_id,
+                                        :instrument, :component,
+                                        :onset_time_sec, :onset_strength, :velocity_est,
+                                        :beat_index, :bar_index, :subdivision, :timing_offset_ms,
+                                        :is_ghost, :is_accent, :is_flams_like, :is_roll_like,
+                                        NOW()
+                                    )
+                                    """
+                                ),
+                                {
+                                    "event_id": str(uuid.uuid4()),
+                                    "analysis_id": analysis_id,
+                                    "drummer_id": str(drummer_fk),
+                                    "song_id": None,
+                                    "instrument": instrument,
+                                    "component": None,
+                                    "onset_time_sec": float(t),
+                                    "onset_strength": strength,
+                                    "velocity_est": vel,
+                                    "beat_index": int(beat_index),
+                                    "bar_index": int(bar_index),
+                                    "subdivision": str(subdiv),
+                                    "timing_offset_ms": float(timing_offset_ms),
+                                    "is_ghost": None,
+                                    "is_accent": None,
+                                    "is_flams_like": None,
+                                    "is_roll_like": None,
+                                },
+                            )
+                            inserted += 1
                 if inserted > 0:
                     self.data_changed.emit("drum_hit_events", "insert")
                 return inserted
@@ -925,8 +925,9 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         max_events_per_stem: int = 5000,
     ) -> Dict[str, Any]:
         """Run Phase 2 for all ingested analyses of a drummer identified by folder slug (e.g., stewart_copeland)."""
-        out = {"drummer_slug": drummer_slug, "analyses": 0, "events": 0}
+        out = {"drummer_slug": drummer_slug, "analyses": 0, "events": 0, "analysis_errors": 0, "failed_analyses": []}
         try:
+            self._set_last_ingest_error("")
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
@@ -955,17 +956,26 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 rows = cursor.fetchall() or []
             out["analyses"] = len(rows)
             total_events = 0
+            failed_analyses: List[Dict[str, Any]] = []
             for r in rows:
                 aid = r[0] if isinstance(r, (tuple, list)) else r.analysis_id
                 n = int(
                     self.extract_hit_events_for_analysis(analysis_id=aid, max_events_per_stem=max_events_per_stem) or 0
                 )
+                err = self.get_last_ingest_error()
+                if err:
+                    failed_analyses.append({"analysis_id": str(aid), "error": err})
+                    self._set_last_ingest_error("")
                 total_events += n
                 try:
                     print(f"[Phase2] {drummer_slug} analysis={aid} events={n}", flush=True)
                 except Exception:
                     pass
             out["events"] = total_events
+            out["analysis_errors"] = len(failed_analyses)
+            out["failed_analyses"] = failed_analyses
+            if failed_analyses:
+                self._set_last_ingest_error(f"Phase 2 run had {len(failed_analyses)} analysis failures")
             return out
         except Exception as e:
             msg = f"Phase 2 run failed: {e}"
@@ -1080,7 +1090,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             return out
 
     def run_phase32_42_features_for_drummer(self, *, drummer_slug: str) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"drummer_slug": drummer_slug, "analyses": 0, "updated": 0}
+        out: Dict[str, Any] = {"drummer_slug": drummer_slug, "analyses": 0, "updated": 0, "analysis_errors": 0, "failed_analyses": []}
         try:
             self._set_last_ingest_error("")
             drummer_slug = (drummer_slug or "").strip()
@@ -1119,12 +1129,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             out["analyses"] = len(rows)
 
             updated = 0
+            failed_analyses: List[Dict[str, Any]] = []
             for (aid,) in rows:
                 res = self.compute_phase32_42_features_for_analysis(analysis_id=str(aid))
                 if res.get("updated"):
                     updated += 1
+                err = self.get_last_ingest_error()
+                if err:
+                    failed_analyses.append({"analysis_id": str(aid), "error": err})
+                    self._set_last_ingest_error("")
 
             out["updated"] = int(updated)
+            out["analysis_errors"] = len(failed_analyses)
+            out["failed_analyses"] = failed_analyses
+            if failed_analyses:
+                self._set_last_ingest_error(f"Phase32-42 run had {len(failed_analyses)} analysis failures")
             return out
         except Exception as e:
             msg = f"Phase32-42 run failed: {e}"

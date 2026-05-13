@@ -23,12 +23,29 @@ def log(level: str, message: str) -> None:
     print(f"[{_now()}] [{level}] {message}", flush=True)
 
 
+def _result_failure_reason(step_name: str, result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    if result.get("error"):
+        return str(result.get("error"))
+    analysis_errors = result.get("analysis_errors")
+    if isinstance(analysis_errors, int) and analysis_errors > 0:
+        return f"{analysis_errors} analysis errors"
+    if "Phase 6" in step_name and result.get("preset_saved") is False:
+        return "preset_saved=False"
+    return ""
+
+
 def run_step(step_name: str, action: Callable[[], Any]) -> Dict[str, Any]:
     started = time.perf_counter()
     log("STEP", f"{step_name} started")
     try:
         result = action()
         elapsed = round(time.perf_counter() - started, 3)
+        failure_reason = _result_failure_reason(step_name, result)
+        if failure_reason:
+            log("ERROR", f"{step_name} reported failure in {elapsed}s: {failure_reason}")
+            return {"ok": False, "duration_sec": elapsed, "error": failure_reason, "result": result}
         log("OK", f"{step_name} completed in {elapsed}s")
         return {"ok": True, "duration_sec": elapsed, "result": result}
     except Exception as exc:
