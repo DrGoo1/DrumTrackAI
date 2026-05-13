@@ -4589,6 +4589,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS public.drummer_presets (
+                preset_id TEXT PRIMARY KEY,
+                profile_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                deltas_json TEXT,
+                policies_json TEXT,
+                source_type TEXT,
+                source_song_name TEXT,
+                source_ref TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS public.audio_artifacts (
                 artifact_id TEXT PRIMARY KEY,
                 run_id TEXT,
@@ -5448,6 +5463,49 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not profile_type:
                 return []
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT preset_id, profile_type, name, tier,
+                                   deltas_json, policies_json,
+                                   source_type, source_song_name, source_ref
+                            FROM public.drummer_presets
+                            WHERE profile_type = :profile_type
+                            ORDER BY tier DESC, name
+                            """
+                        ),
+                        {"profile_type": profile_type},
+                    ).mappings().all()
+
+                out: List[Dict[str, Any]] = []
+                for row in rows:
+                    deltas = {}
+                    policies = {}
+                    try:
+                        deltas = json.loads(row.get("deltas_json")) if row.get("deltas_json") else {}
+                    except Exception:
+                        deltas = {}
+                    try:
+                        policies = json.loads(row.get("policies_json")) if row.get("policies_json") else {}
+                    except Exception:
+                        policies = {}
+                    out.append(
+                        {
+                            "preset_id": row.get("preset_id"),
+                            "profile_type": row.get("profile_type"),
+                            "name": row.get("name"),
+                            "tier": row.get("tier"),
+                            "deltas": deltas,
+                            "policies": policies,
+                            "source_type": row.get("source_type"),
+                            "source_song_name": row.get("source_song_name"),
+                            "source_ref": row.get("source_ref"),
+                        }
+                    )
+                return out
+
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
@@ -5501,6 +5559,48 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             preset_id = (preset_id or "").strip()
             if not preset_id:
                 return None
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            """
+                            SELECT preset_id, profile_type, name, tier,
+                                   deltas_json, policies_json,
+                                   source_type, source_song_name, source_ref
+                            FROM public.drummer_presets
+                            WHERE preset_id = :preset_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"preset_id": preset_id},
+                    ).mappings().first()
+
+                if not row:
+                    return None
+
+                deltas = {}
+                policies = {}
+                try:
+                    deltas = json.loads(row.get("deltas_json")) if row.get("deltas_json") else {}
+                except Exception:
+                    deltas = {}
+                try:
+                    policies = json.loads(row.get("policies_json")) if row.get("policies_json") else {}
+                except Exception:
+                    policies = {}
+
+                return {
+                    "preset_id": row.get("preset_id"),
+                    "profile_type": row.get("profile_type"),
+                    "name": row.get("name"),
+                    "tier": row.get("tier"),
+                    "deltas": deltas,
+                    "policies": policies,
+                    "source_type": row.get("source_type"),
+                    "source_song_name": row.get("source_song_name"),
+                    "source_ref": row.get("source_ref"),
+                }
 
             conn = self._get_connection()
             cursor = conn.cursor()
