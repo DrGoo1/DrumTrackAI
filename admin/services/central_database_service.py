@@ -1082,25 +1082,40 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
     def run_phase32_42_features_for_drummer(self, *, drummer_slug: str) -> Dict[str, Any]:
         out: Dict[str, Any] = {"drummer_slug": drummer_slug, "analyses": 0, "updated": 0}
         try:
+            self._set_last_ingest_error("")
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
 
-            conn = self._get_connection()
-            cur = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT analysis_id
+                            FROM public.song_performance_analysis
+                            WHERE CAST(drummer_id AS TEXT) = CAST(:did AS TEXT)
+                            ORDER BY created_at DESC
+                            """
+                        ),
+                        {"did": drummer_slug},
+                    ).fetchall() or []
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
 
-            cur.execute(
-                "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
-                (drummer_fk,),
-            )
-            rows = cur.fetchall() or []
+                cur.execute(
+                    "SELECT analysis_id FROM song_performance_analysis WHERE drummer_id = ? ORDER BY created_at DESC",
+                    (drummer_fk,),
+                )
+                rows = cur.fetchall() or []
             out["analyses"] = len(rows)
 
             updated = 0
@@ -1295,21 +1310,26 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             "export_path": "",
         }
         try:
+            self._set_last_ingest_error("")
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
                 return out
 
-            conn = self._get_connection()
-            cur = conn.cursor()
-            drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
-                conn.commit()
+            if getattr(self, "_engine", None) is not None:
+                drummer_fk = drummer_slug
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=drummer_slug)
+            else:
+                conn = self._get_connection()
+                cur = conn.cursor()
                 drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
-            if drummer_fk is None:
-                return out
+                if drummer_fk is None:
+                    self._ensure_drummer_exists(cursor=cur, drummer_id=drummer_slug)
+                    conn.commit()
+                    drummer_fk = self._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)
+                if drummer_fk is None:
+                    return out
+                rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
 
-            rollup = self.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
             persona = self.infer_persona_from_rollup(rollup=rollup)
             preset = self.generate_preset_from_rollup(drummer_slug=drummer_slug, rollup=rollup, persona=persona)
 
@@ -1336,7 +1356,18 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             rollup["persona"] = persona
             rollup["preset_id"] = preset.get("preset_id")
             rollup["export_path"] = export_path
-            rollup_saved = self.upsert_drummer_profile_rollup(drummer_fk=int(drummer_fk), rollup=rollup, rollup_version="phase6_v1")
+            if getattr(self, "_engine", None) is not None:
+                rollup_saved = self.upsert_drummer_profile_rollup(
+                    drummer_fk=drummer_slug,
+                    rollup=rollup,
+                    rollup_version="phase6_v1",
+                )
+            else:
+                rollup_saved = self.upsert_drummer_profile_rollup(
+                    drummer_fk=int(drummer_fk),
+                    rollup=rollup,
+                    rollup_version="phase6_v1",
+                )
 
             out["saved_rollup"] = bool(rollup_saved)
             out["persona"] = persona
