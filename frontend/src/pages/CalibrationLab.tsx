@@ -220,8 +220,8 @@ const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null =>
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
 
-  const normalized = trimmed.replace(/\\/g, '/');
-  const marker = '/artifacts/calibration/';
+  const normalized = trimmed.replace(/\\/g, '/').replace(/^\.?\//, '');
+  const marker = 'artifacts/calibration/';
   const markerIndex = normalized.toLowerCase().indexOf(marker);
   if (markerIndex !== -1) {
     const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
@@ -777,13 +777,13 @@ const CalibrationLab: React.FC = () => {
         </div>
         <div className="relative mx-auto flex max-w-6xl flex-col gap-6 px-6 py-14 md:flex-row md:items-center md:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs uppercase tracking-[0.6em] text-purple-200/80">Drummer Calibration Lab</p>
-            <h1 className="mt-4 text-4xl font-black leading-tight md:text-6xl">
-              Harmonize human feel with <span className="text-amber-300">AI precision</span>
-            </h1>
+            <h1 className="text-5xl font-black leading-tight md:text-7xl">Drummer Calibration Lab</h1>
+            <p className="mt-4 text-2xl font-bold leading-tight md:text-4xl">
+              <span className="text-amber-300">Human feel</span> with <span className="text-amber-300">AI precision</span>
+            </p>
             <p className="mt-4 text-base text-purple-100/70 md:text-lg">
-              Tune assimilation knobs, re-run the generator, and capture pro drummer feedback. The purple/gold lab keeps
-              everyone aligned on what each control does and how close we are to target rollups.
+              Review the drum tracks created with assimilated data to the original baseline track and tune the
+              assimilation knobs to indicate how the assimilation needs to be modified to improve the model.
             </p>
             <div className="mt-6 flex flex-wrap gap-3 text-xs text-purple-100/70">
               <span className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1">
