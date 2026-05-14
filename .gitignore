@@ -94,3 +94,13 @@ admin/drumtrackai.db*
 ChatGPT_Gap_Analysis/
 _BACKUPS/
 admin/models/checkpoints/
+
+admin/data/test_download/
+admin/data/test_download/videoplayback.wav
+
+# Local Netlify folder
+.netlify
+
+# Local runtime/artifact output
+artifacts/
+
