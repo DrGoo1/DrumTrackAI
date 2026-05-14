@@ -441,6 +441,125 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
     if not slug:
         return status
 
+    if getattr(db, "_engine", None) is not None:
+        def _safe_count_pg(sql, params: Dict[str, Any]) -> int:
+            try:
+                with db._engine.connect() as conn_pg:
+                    row = conn_pg.execute(text(sql), params).first()
+                return int(row[0] or 0) if row else 0
+            except Exception:
+                return 0
+
+        songs = _safe_count_pg(
+            """
+            SELECT COUNT(DISTINCT analysis_id)
+            FROM public.song_performance_analysis
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        artifacts = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.analysis_artifacts
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        stems = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.stem_artifacts
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        hit_events = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.drum_hit_events
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        fills = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.fill_events
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        techniques = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.technique_events
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        phase4_enriched = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.song_performance_analysis
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+              AND groove_micro_timing_variance IS NOT NULL
+              AND groove_pocket_tightness IS NOT NULL
+              AND humanness_score IS NOT NULL
+            """,
+            {"slug": slug},
+        )
+        rollup_count = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.drummer_profile_rollups
+            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+            """,
+            {"slug": slug},
+        )
+        preset_count = _safe_count_pg(
+            """
+            SELECT COUNT(1)
+            FROM public.drummer_presets
+            WHERE (profile_type = 'drummer' AND CAST(source_ref AS TEXT) = CAST(:slug AS TEXT))
+               OR CAST(preset_id AS TEXT) = CAST(:preset_id AS TEXT)
+            """,
+            {"slug": slug, "preset_id": f"phase6_{slug}"},
+        )
+
+        missing_steps: List[str] = []
+        if songs <= 0:
+            missing_steps.append("ingestion")
+        if hit_events <= 0:
+            missing_steps.append("phase2_hit_events")
+        if fills <= 0 or techniques <= 0:
+            missing_steps.append("phase3_fills_techniques")
+        if phase4_enriched <= 0:
+            missing_steps.append("phase4_microtiming_dynamics")
+        if rollup_count <= 0:
+            missing_steps.append("phase5_rollup")
+        if preset_count <= 0:
+            missing_steps.append("phase6_persona_preset")
+
+        ready = len(missing_steps) == 0
+        status["status"] = "ready_for_calibration" if ready else "needs_processing"
+        status["ready_for_calibration"] = ready
+        status["missing_steps"] = missing_steps
+        status["counts"] = {
+            "songs": songs,
+            "artifacts": artifacts,
+            "stems": stems,
+            "hit_events": hit_events,
+            "fills": fills,
+            "techniques": techniques,
+        }
+        status["metrics"] = {
+            "phase4_enriched_analyses": phase4_enriched,
+            "phase5_rollups": rollup_count,
+            "phase6_presets": preset_count,
+        }
+        return status
+
     try:
         conn = db._get_connection()
         cursor = conn.cursor()
