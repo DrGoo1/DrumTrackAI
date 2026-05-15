@@ -6831,6 +6831,29 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not drummer_slug:
                 return None
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            """
+                            SELECT drummer_slug, adjustments_json, metadata_json, created_at, updated_at
+                            FROM public.calibration_adjustments
+                            WHERE drummer_slug = :drummer_slug
+                            LIMIT 1
+                            """
+                        ),
+                        {"drummer_slug": drummer_slug},
+                    ).mappings().first()
+                if not row:
+                    return None
+                return {
+                    "drummer_slug": row.get("drummer_slug"),
+                    "adjustments": self._json_loads(row.get("adjustments_json"), default={}) or {},
+                    "metadata": self._json_loads(row.get("metadata_json"), default={}),
+                    "created_at": self._parse_datetime(row.get("created_at")),
+                    "updated_at": self._parse_datetime(row.get("updated_at")),
+                }
+
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
@@ -6873,11 +6896,39 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not drummer_slug:
                 return False
 
-            conn = self._get_connection()
-            cursor = conn.cursor()
             now = datetime.utcnow().isoformat()
             adjustments_json = self._json_dumps(adjustments or {}) or "{}"
             metadata_json = self._json_dumps(metadata or {})
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.calibration_adjustments (
+                                drummer_slug, adjustments_json, metadata_json, created_at, updated_at
+                            ) VALUES (
+                                :drummer_slug, :adjustments_json, :metadata_json, :created_at, :updated_at
+                            )
+                            ON CONFLICT (drummer_slug) DO UPDATE SET
+                                adjustments_json = EXCLUDED.adjustments_json,
+                                metadata_json = EXCLUDED.metadata_json,
+                                updated_at = EXCLUDED.updated_at
+                            """
+                        ),
+                        {
+                            "drummer_slug": drummer_slug,
+                            "adjustments_json": adjustments_json,
+                            "metadata_json": metadata_json,
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+                self.data_changed.emit("calibration_adjustments", "upsert")
+                return True
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
 
             def _do_write() -> bool:
                 cursor.execute(
@@ -7772,6 +7823,58 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             started_at = started_at or datetime.utcnow()
             completed_iso = completed_at.isoformat() if completed_at else None
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.calibration_runs (
+                                run_id, drummer_slug, started_at, completed_at, outcome,
+                                note_count, fills_per_minute, within_tolerance_count,
+                                total_compared, delta_summary, metadata_json, metrics_json,
+                                comparison_json, log_path
+                            ) VALUES (
+                                :run_id, :drummer_slug, :started_at, :completed_at, :outcome,
+                                :note_count, :fills_per_minute, :within_tolerance_count,
+                                :total_compared, :delta_summary, :metadata_json, :metrics_json,
+                                :comparison_json, :log_path
+                            )
+                            ON CONFLICT (run_id) DO UPDATE SET
+                                drummer_slug = EXCLUDED.drummer_slug,
+                                started_at = EXCLUDED.started_at,
+                                completed_at = EXCLUDED.completed_at,
+                                outcome = EXCLUDED.outcome,
+                                note_count = EXCLUDED.note_count,
+                                fills_per_minute = EXCLUDED.fills_per_minute,
+                                within_tolerance_count = EXCLUDED.within_tolerance_count,
+                                total_compared = EXCLUDED.total_compared,
+                                delta_summary = EXCLUDED.delta_summary,
+                                metadata_json = EXCLUDED.metadata_json,
+                                metrics_json = EXCLUDED.metrics_json,
+                                comparison_json = EXCLUDED.comparison_json,
+                                log_path = EXCLUDED.log_path
+                            """
+                        ),
+                        {
+                            "run_id": run_id,
+                            "drummer_slug": drummer_slug,
+                            "started_at": started_at.isoformat(),
+                            "completed_at": completed_iso,
+                            "outcome": outcome,
+                            "note_count": note_count,
+                            "fills_per_minute": fills_per_minute,
+                            "within_tolerance_count": within_tolerance_count,
+                            "total_compared": total_compared,
+                            "delta_summary": delta_summary,
+                            "metadata_json": self._json_dumps(metadata),
+                            "metrics_json": self._json_dumps(metrics),
+                            "comparison_json": self._json_dumps(comparison),
+                            "log_path": log_path,
+                        },
+                    )
+                self.data_changed.emit("calibration_runs", "upsert")
+                return run_id
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
@@ -7836,6 +7939,24 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not run_id:
                 return None
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            """
+                            SELECT run_id, drummer_slug, started_at, completed_at, outcome,
+                                   note_count, fills_per_minute, within_tolerance_count,
+                                   total_compared, delta_summary, metadata_json,
+                                   metrics_json, comparison_json, log_path
+                            FROM public.calibration_runs
+                            WHERE run_id = :run_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"run_id": run_id},
+                    ).mappings().first()
+                return self._row_to_calibration_run(row) if row else None
+
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
@@ -7871,6 +7992,42 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         try:
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
+                return runs
+
+            if getattr(self, "_engine", None) is not None:
+                select_columns = [
+                    "run_id",
+                    "drummer_slug",
+                    "started_at",
+                    "completed_at",
+                    "outcome",
+                    "note_count",
+                    "fills_per_minute",
+                    "within_tolerance_count",
+                    "total_compared",
+                    "delta_summary",
+                    "log_path",
+                ]
+                if include_metrics:
+                    select_columns.extend(["metadata_json", "metrics_json", "comparison_json"])
+
+                query = f"""
+                SELECT {', '.join(select_columns)}
+                FROM public.calibration_runs
+                WHERE drummer_slug = :drummer_slug
+                ORDER BY started_at DESC
+                LIMIT :limit
+                """
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(query),
+                        {"drummer_slug": drummer_slug, "limit": max(1, int(limit))},
+                    ).mappings().all()
+
+                for row in rows:
+                    run = self._row_to_calibration_run(row)
+                    if run:
+                        runs.append(run)
                 return runs
 
             conn = self._get_connection()
@@ -7953,6 +8110,40 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             submitted_at = submitted_at or datetime.utcnow()
             metadata_json = self._json_dumps(metadata) if metadata else None
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.calibration_feedback (
+                                feedback_id, drummer_slug, rating, comment, author,
+                                submitted_at, metadata_json
+                            ) VALUES (
+                                :feedback_id, :drummer_slug, :rating, :comment, :author,
+                                :submitted_at, :metadata_json
+                            )
+                            ON CONFLICT (feedback_id) DO UPDATE SET
+                                drummer_slug = EXCLUDED.drummer_slug,
+                                rating = EXCLUDED.rating,
+                                comment = EXCLUDED.comment,
+                                author = EXCLUDED.author,
+                                submitted_at = EXCLUDED.submitted_at,
+                                metadata_json = EXCLUDED.metadata_json
+                            """
+                        ),
+                        {
+                            "feedback_id": feedback_id,
+                            "drummer_slug": drummer_slug,
+                            "rating": rating_value,
+                            "comment": comment,
+                            "author": author,
+                            "submitted_at": submitted_at.isoformat(),
+                            "metadata_json": metadata_json,
+                        },
+                    )
+                self.data_changed.emit("calibration_feedback", "upsert")
+                return feedback_id
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
@@ -8005,6 +8196,27 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         try:
             drummer_slug = (drummer_slug or "").strip()
             if not drummer_slug:
+                return feedback
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            """
+                            SELECT feedback_id, drummer_slug, rating, comment, author,
+                                   submitted_at, metadata_json
+                            FROM public.calibration_feedback
+                            WHERE drummer_slug = :drummer_slug
+                            ORDER BY submitted_at DESC
+                            LIMIT :limit
+                            """
+                        ),
+                        {"drummer_slug": drummer_slug, "limit": max(1, int(limit))},
+                    ).mappings().all()
+                for row in rows:
+                    item = self._row_to_calibration_feedback(row)
+                    if item:
+                        feedback.append(item)
                 return feedback
 
             conn = self._get_connection()
