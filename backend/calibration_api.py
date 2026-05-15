@@ -72,13 +72,30 @@ def _extract_rollup_parts(rollup_result: Any) -> Dict[str, Any]:
 def _complete_generation_run(*, slug: str, run_id: str) -> None:
     started_at = datetime.utcnow()
     db: Optional[CentralDatabaseService] = None
+    rollup_result: Dict[str, Any] = {}
     try:
         db = get_db_service()
-        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
+        raw_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
+        if not isinstance(raw_result, dict):
+            raise RuntimeError("Phase 5 rollup returned an invalid response")
+        rollup_result = raw_result
+
+        if not bool(rollup_result.get("saved")):
+            phase7 = rollup_result.get("phase7") if isinstance(rollup_result.get("phase7"), dict) else {}
+            failure_detail = (
+                rollup_result.get("error")
+                or phase7.get("error")
+                or "Phase 5 rollup did not save any calibration data"
+            )
+            raise RuntimeError(str(failure_detail))
+
         parts = _extract_rollup_parts(rollup_result)
         rollup_payload = parts["rollup_payload"]
         comparison = parts["comparison"]
         metrics = parts["metrics"]
+
+        if not rollup_payload:
+            raise RuntimeError("Phase 5 rollup returned an empty payload")
 
         db.log_calibration_run(
             run_id=run_id,
@@ -109,7 +126,10 @@ def _complete_generation_run(*, slug: str, run_id: str) -> None:
                     outcome="failure",
                     started_at=started_at,
                     completed_at=datetime.utcnow(),
-                    metadata={"error": str(exc)},
+                    metadata={
+                        "error": str(exc),
+                        "saved": bool(rollup_result.get("saved")),
+                    },
                 )
             except Exception:
                 logger.exception("Failed to persist calibration failure run for %s", slug)
@@ -149,6 +169,7 @@ class CalibrationRunPayload(BaseModel):
     delta_summary: Optional[str] = None
     metrics_within: Optional[int] = None
     metrics_compared: Optional[int] = None
+    error_message: Optional[str] = None
 
 
 class FeedbackEntry(BaseModel):
@@ -786,6 +807,11 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
 
 
 def _serialize_run(run: "CalibrationRun") -> CalibrationRunPayload:
+    metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    error_message = metadata.get("error") if isinstance(metadata, dict) else None
+    if not error_message and run.outcome == "failure":
+        error_message = run.delta_summary
+
     return CalibrationRunPayload(
         id=run.run_id,
         started_at=run.started_at,
@@ -796,6 +822,7 @@ def _serialize_run(run: "CalibrationRun") -> CalibrationRunPayload:
         delta_summary=run.delta_summary,
         metrics_within=run.within_tolerance_count,
         metrics_compared=run.total_compared,
+        error_message=str(error_message) if error_message else None,
     )
 
 

@@ -50,6 +50,7 @@ interface CalibrationRun {
   note_count?: number;
   fills_per_minute?: number | null;
   delta_summary?: string;
+  error_message?: string | null;
 }
 
 interface FeedbackEntry {
@@ -118,6 +119,11 @@ interface GenerateCandidatesResponse {
   run_ids: string[];
   session_id?: string | null;
   item_id?: string | null;
+}
+
+interface GenerateRunResponse {
+  status: string;
+  run_id?: string;
 }
 
 type JudgmentChoice = '' | 'A' | 'B' | 'tie';
@@ -675,8 +681,36 @@ const CalibrationLab: React.FC = () => {
     setGenerating(true);
     setStatusMessage('Launching calibration run�');
     try {
-      await api.post(`drummers/${selectedSlug}/generate`);
-      setStatusMessage('Generation triggered. Refresh for updated metrics once the run completes.');
+      const response = await api.post<GenerateRunResponse>(`drummers/${selectedSlug}/generate`);
+      const runId = (response.data?.run_id || '').trim();
+
+      setStatusMessage('Generation queued. Waiting for backend completion...');
+      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+
+      if (runId) {
+        let terminalRun: CalibrationRun | null = null;
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          await sleep(2000);
+          const detailResponse = await api.get<DrummerDetailPayload>(`drummers/${selectedSlug}`);
+          const runs = detailResponse.data.runHistory ?? [];
+          const candidate = runs.find((run) => run.id === runId);
+          if (candidate && candidate.outcome !== 'pending') {
+            terminalRun = candidate;
+            break;
+          }
+        }
+
+        if (terminalRun?.outcome === 'failure') {
+          setStatusMessage(terminalRun.error_message || 'Calibration run failed. Check backend logs and retry.');
+        } else if (terminalRun?.outcome === 'success') {
+          setStatusMessage('Calibration run completed successfully.');
+        } else {
+          setStatusMessage('Generation queued. Still processing in background; use Refresh Detail in a few seconds.');
+        }
+      } else {
+        setStatusMessage('Generation queued. Refresh for updated metrics once the run completes.');
+      }
+
       await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
     } catch (error) {
       setStatusMessage(extractApiErrorMessage(error, 'Failed to trigger generation. Check backend logs for details.'));
@@ -1230,14 +1264,14 @@ const CalibrationLab: React.FC = () => {
                             >
                               <div className="space-y-1 text-xs text-purple-100/80">
                                 <div className="flex items-center gap-2">
-                                  <span className="rounded-full px-2 py-0.5 text-[11px]">
+                                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${RUN_BADGE_STYLE[run.outcome]}`}>
                                     {describeRunOutcome(run)}
                                   </span>
                                   <span>{formatDate(run.started_at)}</span>
                                 </div>
                                 <div>
                                   <span className="font-semibold text-purple-100">Notes:</span>{' '}
-                                  {run.delta_summary || 'Not provided'}
+                                  {run.error_message || run.delta_summary || 'Not provided'}
                                 </div>
                                 <div className="flex flex-wrap gap-3 text-purple-100/70">
                                   <span>Notes: {run.note_count ?? '�'}</span>
