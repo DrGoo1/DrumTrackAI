@@ -448,7 +448,7 @@ const CalibrationLab: React.FC = () => {
   }, []);
 
   const loadDetail = useCallback(
-    async (slug: string | null) => {
+    async (slug: string | null, options?: { preserveStatusMessage?: boolean }) => {
       if (!slug) {
         setDetail(null);
         setPendingAdjustments(null);
@@ -456,7 +456,9 @@ const CalibrationLab: React.FC = () => {
       }
       setDetailLoading(true);
       setDetailError(null);
-      setStatusMessage(null);
+      if (!options?.preserveStatusMessage) {
+        setStatusMessage(null);
+      }
       try {
         const response = await api.get<DrummerDetailPayload>(`drummers/${slug}`);
         const payload = response.data;
@@ -664,7 +666,7 @@ const CalibrationLab: React.FC = () => {
         adjustments: pendingAdjustments,
       });
       setStatusMessage('Adjustments saved. Regenerate to validate the new feel.');
-      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+      await Promise.all([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
     } catch (error) {
       setStatusMessage('Failed to save adjustments. Review your changes and retry.');
     } finally {
@@ -685,7 +687,7 @@ const CalibrationLab: React.FC = () => {
       const runId = (response.data?.run_id || '').trim();
 
       setStatusMessage('Generation queued. Waiting for backend completion...');
-      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+      await Promise.all([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
 
       if (runId) {
         let terminalRun: CalibrationRun | null = null;
@@ -1059,7 +1061,7 @@ const CalibrationLab: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleGenerate}
-                      disabled={generating || !assimilationReady}
+                      disabled={generating}
                       className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
                     >
                       <RefreshCcw className="h-4 w-4" />
@@ -1068,7 +1070,7 @@ const CalibrationLab: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleQueueListeningItem}
-                      disabled={listeningBusy || !selectedSlug || !assimilationReady}
+                      disabled={listeningBusy || !selectedSlug}
                       className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
                     >
                       <Headphones className="h-4 w-4" />
