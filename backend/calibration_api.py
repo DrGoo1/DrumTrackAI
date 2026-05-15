@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import logging
 from datetime import datetime
 import os
 import base64
@@ -10,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -41,6 +42,77 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/calibration", tags=["calibration"])
 
 _artifact_url_service = ArtifactUrlService()
+logger = logging.getLogger(__name__)
+
+
+def _extract_rollup_parts(rollup_result: Any) -> Dict[str, Any]:
+    rollup_payload = rollup_result.get("rollup") if isinstance(rollup_result, dict) else {}
+    if not isinstance(rollup_payload, dict):
+        rollup_payload = {}
+
+    comparison = rollup_result.get("comparison") if isinstance(rollup_result, dict) else None
+    if not isinstance(comparison, dict):
+        comparison = rollup_payload.get("comparison") if isinstance(rollup_payload, dict) else None
+    if not isinstance(comparison, dict):
+        comparison = None
+
+    metrics = rollup_result.get("metrics") if isinstance(rollup_result, dict) else None
+    if not isinstance(metrics, dict):
+        metrics = rollup_payload.get("metrics") if isinstance(rollup_payload, dict) else None
+    if not isinstance(metrics, dict):
+        metrics = None
+
+    return {
+        "rollup_payload": rollup_payload,
+        "comparison": comparison,
+        "metrics": metrics,
+    }
+
+
+def _complete_generation_run(*, slug: str, run_id: str) -> None:
+    started_at = datetime.utcnow()
+    db: Optional[CentralDatabaseService] = None
+    try:
+        db = get_db_service()
+        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
+        parts = _extract_rollup_parts(rollup_result)
+        rollup_payload = parts["rollup_payload"]
+        comparison = parts["comparison"]
+        metrics = parts["metrics"]
+
+        db.log_calibration_run(
+            run_id=run_id,
+            drummer_slug=slug,
+            outcome="success",
+            started_at=started_at,
+            completed_at=datetime.utcnow(),
+            metadata=rollup_payload,
+            metrics=metrics,
+            comparison=comparison,
+            note_count=rollup_payload.get("note_count") if isinstance(rollup_payload, dict) else None,
+            fills_per_minute=rollup_payload.get("fills_per_min") if isinstance(rollup_payload, dict) else None,
+            within_tolerance_count=(comparison.get("within_tolerance_count") if isinstance(comparison, dict) else None),
+            total_compared=(comparison.get("total_compared") if isinstance(comparison, dict) else None),
+        )
+    except Exception as exc:
+        logger.exception("Calibration generation failed for %s", slug)
+        if db is None:
+            try:
+                db = get_db_service()
+            except Exception:
+                db = None
+        if db is not None:
+            try:
+                db.log_calibration_run(
+                    run_id=run_id,
+                    drummer_slug=slug,
+                    outcome="failure",
+                    started_at=started_at,
+                    completed_at=datetime.utcnow(),
+                    metadata={"error": str(exc)},
+                )
+            except Exception:
+                logger.exception("Failed to persist calibration failure run for %s", slug)
 
 
 def get_db_service() -> CentralDatabaseService:
@@ -2261,45 +2333,37 @@ async def update_adjustments(
 
 
 @router.post("/drummers/{slug}/generate")
-async def trigger_generation(slug: str, db: CentralDatabaseService = Depends(get_db_service)) -> Dict[str, Any]:
+async def trigger_generation(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    db: CentralDatabaseService = Depends(get_db_service),
+) -> Dict[str, Any]:
     slug = (slug or "").strip()
     if not slug:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
     try:
-        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
-        rollup_payload = rollup_result.get("rollup") if isinstance(rollup_result, dict) else {}
-        if not isinstance(rollup_payload, dict):
-            rollup_payload = {}
-
-        comparison = rollup_result.get("comparison") if isinstance(rollup_result, dict) else None
-        if not isinstance(comparison, dict):
-            comparison = rollup_payload.get("comparison") if isinstance(rollup_payload, dict) else None
-        if not isinstance(comparison, dict):
-            comparison = None
-
-        metrics = rollup_result.get("metrics") if isinstance(rollup_result, dict) else None
-        if not isinstance(metrics, dict):
-            metrics = rollup_payload.get("metrics") if isinstance(rollup_payload, dict) else None
-        if not isinstance(metrics, dict):
-            metrics = None
+        run_id_seed = str(uuid.uuid4())
+        queue_metadata = {
+            "queued": True,
+            "queued_at": datetime.utcnow().isoformat(),
+        }
 
         run_id = db.log_calibration_run(
+            run_id=run_id_seed,
             drummer_slug=slug,
             outcome="pending",
-            metadata=rollup_payload,
-            metrics=metrics,
-            comparison=comparison,
-            note_count=rollup_payload.get("note_count") if isinstance(rollup_payload, dict) else None,
-            fills_per_minute=rollup_payload.get("fills_per_min") if isinstance(rollup_payload, dict) else None,
-            within_tolerance_count=(comparison.get("within_tolerance_count") if isinstance(comparison, dict) else None),
-            total_compared=(comparison.get("total_compared") if isinstance(comparison, dict) else None),
+            metadata=queue_metadata,
         )
+        if not run_id:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to queue calibration run")
+
+        background_tasks.add_task(_complete_generation_run, slug=slug, run_id=run_id)
 
         return {
             "status": "queued",
             "run_id": run_id,
-            "rollupSaved": bool(rollup_result.get("saved")) if isinstance(rollup_result, dict) else False,
+            "rollupSaved": False,
         }
     except HTTPException:
         raise

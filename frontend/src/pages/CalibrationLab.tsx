@@ -202,6 +202,7 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration` });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
+const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
   if (!value) return value;
@@ -384,7 +385,22 @@ const CalibrationLab: React.FC = () => {
     setListLoading(true);
     setListError(null);
     try {
-      const response = await api.get<DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] }>('drummers');
+      let response: { data: DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] } } | null = null;
+      let lastError: any = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await api.get<DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] }>('drummers');
+          break;
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < 3) {
+            await sleep(1200 * attempt);
+          }
+        }
+      }
+      if (!response) {
+        throw lastError ?? new Error('Network Error');
+      }
       const raw: any = response.data;
       const items: DrummerListItem[] = Array.isArray(raw)
         ? raw
@@ -397,8 +413,14 @@ const CalibrationLab: React.FC = () => {
       if (items.length && !selectedSlug) {
         setSelectedSlug(items[0].slug);
       }
-    } catch (error) {
-      setListError('Unable to load drummer roster. Confirm the calibration API is available.');
+    } catch (error: any) {
+      const statusCode = error?.response?.status;
+      const detail = error?.response?.data?.detail ?? error?.message ?? 'Network Error';
+      if (statusCode) {
+        setListError(`Unable to load drummer roster (HTTP ${statusCode}): ${String(detail)}`);
+      } else {
+        setListError(`Unable to load drummer roster: ${String(detail)}. If the backend just woke up, retry in a few seconds.`);
+      }
     } finally {
       setListLoading(false);
     }
