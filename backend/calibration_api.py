@@ -1300,51 +1300,65 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
         rows = db.get_drummers() or []
         results: List[DrummerListItem] = []
         for row in rows:
-            slug = _slug_from_row(row)
-            if not slug:
-                continue
-            display_name = _display_name_from_row(row, slug)
-
-            completion_info: Optional[CompletionStatusInfo] = None
-            within = row.get("metrics_within") or row.get("metrics_within_tolerance")
-            total = row.get("metrics_compared") or row.get("metrics_total")
-            if within is not None or total is not None:
-                try:
-                    completion_info = _completion_from_counts(
-                        int(within) if within is not None else None,
-                        int(total) if total is not None else None,
-                    )
-                except Exception:
-                    completion_info = None
-
-            latest_run: Optional["CalibrationRun"] = None
             try:
-                latest_run = db.get_latest_calibration_run(drummer_slug=slug)
-            except Exception:
-                latest_run = None
+                slug = _slug_from_row(row)
+                if not slug:
+                    continue
+                display_name = _display_name_from_row(row, slug)
 
-            if completion_info is None:
-                completion_info = _completion_from_run(latest_run)
+                completion_info: Optional[CompletionStatusInfo] = None
+                within = row.get("metrics_within") or row.get("metrics_within_tolerance")
+                total = row.get("metrics_compared") or row.get("metrics_total")
+                if within is not None or total is not None:
+                    try:
+                        completion_info = _completion_from_counts(
+                            int(within) if within is not None else None,
+                            int(total) if total is not None else None,
+                        )
+                    except Exception:
+                        completion_info = None
 
-            latest_run_at = None
-            metrics_within_int: Optional[int] = None
-            metrics_total_int: Optional[int] = None
-            if latest_run:
-                latest_run_at = latest_run.completed_at or latest_run.started_at
-                metrics_within_int = latest_run.within_tolerance_count
-                metrics_total_int = latest_run.total_compared
+                latest_run: Optional["CalibrationRun"] = None
+                try:
+                    latest_run = db.get_latest_calibration_run(drummer_slug=slug)
+                except Exception:
+                    latest_run = None
 
-            results.append(
-                DrummerListItem(
-                    slug=slug,
-                    displayName=display_name,
-                    completionStatus=completion_info,
-                    assimilationStatus=_assimilation_status_for_slug(db, slug),
-                    latestRunAt=latest_run_at,
-                    metricsWithin=metrics_within_int,
-                    metricsCompared=metrics_total_int,
+                if completion_info is None:
+                    completion_info = _completion_from_run(latest_run)
+
+                latest_run_at = None
+                metrics_within_int: Optional[int] = None
+                metrics_total_int: Optional[int] = None
+                if latest_run:
+                    latest_run_at = latest_run.completed_at or latest_run.started_at
+                    metrics_within_int = latest_run.within_tolerance_count
+                    metrics_total_int = latest_run.total_compared
+
+                assimilation_status: Dict[str, Any]
+                try:
+                    assimilation_status = _assimilation_status_for_slug(db, slug)
+                except Exception:
+                    assimilation_status = {
+                        "status": "unknown",
+                        "ready_for_calibration": False,
+                        "missing_steps": ["status_check_failed"],
+                    }
+
+                results.append(
+                    DrummerListItem(
+                        slug=slug,
+                        displayName=display_name,
+                        completionStatus=completion_info,
+                        assimilationStatus=assimilation_status,
+                        latestRunAt=latest_run_at,
+                        metricsWithin=metrics_within_int,
+                        metricsCompared=metrics_total_int,
+                    )
                 )
-            )
+            except Exception as row_exc:
+                logger.warning(f"Skipping drummer row due to roster serialization error: {row_exc}")
+                continue
         return sorted(results, key=lambda item: item.displayName.lower())
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
