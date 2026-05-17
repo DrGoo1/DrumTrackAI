@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import logging
+import threading
 from datetime import datetime
 import os
 import base64
@@ -43,6 +44,160 @@ router = APIRouter(prefix="/calibration", tags=["calibration"])
 
 _artifact_url_service = ArtifactUrlService()
 logger = logging.getLogger(__name__)
+
+_AUTO_ASSIMILATION_LOCK = threading.Lock()
+_AUTO_ASSIMILATION_STATE: Dict[str, Any] = {
+    "running": False,
+    "last_started_at": None,
+    "last_completed_at": None,
+    "last_error": None,
+    "last_summary": None,
+}
+
+
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _discover_processed_stems(base_dir: Path) -> Dict[str, List[Path]]:
+    found: Dict[str, List[Path]] = {}
+    if not base_dir.exists() or not base_dir.is_dir():
+        return found
+
+    for slug_dir in sorted(item for item in base_dir.iterdir() if item.is_dir()):
+        song_dirs: List[Path] = []
+        try:
+            for song_dir in sorted(item for item in slug_dir.iterdir() if item.is_dir()):
+                if (song_dir / "drum_analysis.json").exists():
+                    song_dirs.append(song_dir)
+        except Exception:
+            continue
+        if song_dirs:
+            found[slug_dir.name] = song_dirs
+    return found
+
+
+def _run_auto_assimilation_population(
+    *,
+    base_dir: str,
+    max_events_per_stem: int = 5000,
+    compute_hashes: bool = False,
+    hash_max_bytes: int = 0,
+) -> None:
+    started_at = datetime.utcnow().isoformat()
+    with _AUTO_ASSIMILATION_LOCK:
+        _AUTO_ASSIMILATION_STATE["running"] = True
+        _AUTO_ASSIMILATION_STATE["last_started_at"] = started_at
+        _AUTO_ASSIMILATION_STATE["last_error"] = None
+
+    summary: Dict[str, Any] = {
+        "base_dir": base_dir,
+        "processed_slugs": [],
+        "total_ingested": 0,
+        "failed_phases": {},
+    }
+
+    try:
+        root = Path(base_dir).expanduser().resolve()
+        discovered = _discover_processed_stems(root)
+        if not discovered:
+            raise RuntimeError(f"No song folders with drum_analysis.json found under: {root}")
+
+        effective_slugs = sorted(discovered.keys())
+
+        db = get_db_service()
+
+        for slug in effective_slugs:
+            song_dirs = discovered.get(slug) or []
+            ingested = 0
+            for song_dir in song_dirs:
+                try:
+                    analysis_id = db.ingest_processed_stems_song_folder(
+                        drummer_id=slug,
+                        song_folder=str(song_dir),
+                        compute_hashes=bool(compute_hashes),
+                        hash_max_bytes=int(hash_max_bytes or 0),
+                        analysis_version="baseline_v1",
+                    )
+                    if analysis_id:
+                        ingested += 1
+                except Exception as exc:
+                    logger.warning("Auto-assimilation ingest failed for %s (%s): %s", slug, song_dir, exc)
+
+            summary["total_ingested"] += ingested
+
+            phase_results = {
+                "phase2": db.run_phase2_hit_event_extraction_for_drummer(
+                    drummer_slug=slug,
+                    max_events_per_stem=int(max_events_per_stem),
+                ),
+                "phase3": db.run_phase3_fills_and_techniques_for_drummer(drummer_slug=slug),
+                "phase4": db.run_phase4_microtiming_and_dynamics_for_drummer(drummer_slug=slug),
+                "phase5": db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug),
+                "phase6": db.run_phase6_persona_preset_export_for_drummer(drummer_slug=slug),
+                "phase7": db.run_phase7_assimilation_profiles_for_drummer(drummer_slug=slug),
+                "phase32_42": db.run_phase32_42_features_for_drummer(drummer_slug=slug),
+            }
+
+            failures: Dict[str, str] = {}
+            for phase_name, result in phase_results.items():
+                if isinstance(result, dict):
+                    if result.get("error"):
+                        failures[phase_name] = str(result.get("error"))
+                    elif "saved" in result and not bool(result.get("saved")):
+                        failures[phase_name] = "saved=False"
+            if failures:
+                summary["failed_phases"][slug] = failures
+
+            summary["processed_slugs"].append(
+                {
+                    "slug": slug,
+                    "song_dirs": len(song_dirs),
+                    "ingested": ingested,
+                }
+            )
+
+    except Exception as exc:
+        logger.exception("Automatic assimilation population failed")
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["last_error"] = str(exc)
+            _AUTO_ASSIMILATION_STATE["last_summary"] = summary
+    else:
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["last_summary"] = summary
+    finally:
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["running"] = False
+            _AUTO_ASSIMILATION_STATE["last_completed_at"] = datetime.utcnow().isoformat()
+
+
+def _start_auto_assimilation_population(
+    *,
+    base_dir: str,
+    max_events_per_stem: int = 5000,
+    compute_hashes: bool = False,
+    hash_max_bytes: int = 0,
+) -> bool:
+    with _AUTO_ASSIMILATION_LOCK:
+        if bool(_AUTO_ASSIMILATION_STATE.get("running")):
+            return False
+
+    worker = threading.Thread(
+        target=_run_auto_assimilation_population,
+        kwargs={
+            "base_dir": base_dir,
+            "max_events_per_stem": max_events_per_stem,
+            "compute_hashes": compute_hashes,
+            "hash_max_bytes": hash_max_bytes,
+        },
+        daemon=True,
+        name="auto-assimilation-populate",
+    )
+    worker.start()
+    return True
 
 
 def _extract_rollup_parts(rollup_result: Any) -> Dict[str, Any]:
@@ -196,6 +351,13 @@ class GenerateCandidatesRequest(BaseModel):
     reviewer_id: Optional[str] = None
     seed: Optional[int] = None
     generation_controls: Optional[Dict[str, Any]] = None
+
+
+class AutoAssimilationPopulateRequest(BaseModel):
+    base_dir: Optional[str] = None
+    max_events_per_stem: int = Field(default=5000, ge=100, le=50000)
+    compute_hashes: bool = False
+    hash_max_bytes: int = 0
 
 
 class DrummerGenerationControlsPayload(BaseModel):
@@ -1479,6 +1641,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _auto_populate_on_startup() -> None:
+    if not _parse_env_bool("ASSIMILATION_AUTO_POPULATE_ON_STARTUP", default=False):
+        return
+
+    base_dir = (
+        str(os.getenv("ASSIMILATION_AUTO_POPULATE_BASE_DIR", "")).strip()
+        or str(os.getenv("PROCESSED_STEMS_BASE_DIR", "")).strip()
+    )
+    if not base_dir:
+        logger.warning("ASSIMILATION_AUTO_POPULATE_ON_STARTUP enabled but no base dir configured")
+        return
+
+    drummers_raw = str(os.getenv("ASSIMILATION_AUTO_POPULATE_DRUMMERS", "")).strip()
+    if drummers_raw:
+        logger.info("ASSIMILATION_AUTO_POPULATE_DRUMMERS is set but ignored; auto-populate processes all discovered drummers")
+    max_events_per_stem = int(str(os.getenv("ASSIMILATION_AUTO_MAX_EVENTS_PER_STEM", "5000")).strip() or "5000")
+    compute_hashes = _parse_env_bool("ASSIMILATION_AUTO_COMPUTE_HASHES", default=False)
+    hash_max_bytes = int(str(os.getenv("ASSIMILATION_AUTO_HASH_MAX_BYTES", "0")).strip() or "0")
+
+    started = _start_auto_assimilation_population(
+        base_dir=base_dir,
+        max_events_per_stem=max_events_per_stem,
+        compute_hashes=compute_hashes,
+        hash_max_bytes=hash_max_bytes,
+    )
+    if started:
+        logger.info("Started automatic assimilation population on startup")
+    else:
+        logger.info("Skipped startup auto-population; job already running")
+
 # Static artifacts mount
 _artifacts_root = (Path(__file__).resolve().parents[1] / "artifacts").resolve()
 try:
@@ -1838,6 +2032,49 @@ async def db_diagnostics() -> Dict[str, Any]:
         out["connect_ok"] = False
         out["error"] = str(e)
     return out
+
+
+@router.get("/assimilation/auto-populate-status")
+async def auto_populate_status() -> Dict[str, Any]:
+    with _AUTO_ASSIMILATION_LOCK:
+        return {
+            "running": bool(_AUTO_ASSIMILATION_STATE.get("running")),
+            "last_started_at": _AUTO_ASSIMILATION_STATE.get("last_started_at"),
+            "last_completed_at": _AUTO_ASSIMILATION_STATE.get("last_completed_at"),
+            "last_error": _AUTO_ASSIMILATION_STATE.get("last_error"),
+            "last_summary": _AUTO_ASSIMILATION_STATE.get("last_summary"),
+        }
+
+
+@router.post("/assimilation/auto-populate")
+async def trigger_auto_populate(payload: AutoAssimilationPopulateRequest) -> Dict[str, Any]:
+    base_dir = (payload.base_dir or "").strip()
+    if not base_dir:
+        base_dir = (
+            str(os.getenv("ASSIMILATION_AUTO_POPULATE_BASE_DIR", "")).strip()
+            or str(os.getenv("PROCESSED_STEMS_BASE_DIR", "")).strip()
+        )
+    if not base_dir:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base_dir")
+
+    base_path = Path(base_dir).expanduser().resolve()
+    if not base_path.exists() or not base_path.is_dir():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base_dir: {base_path}")
+
+    started = _start_auto_assimilation_population(
+        base_dir=str(base_path),
+        max_events_per_stem=payload.max_events_per_stem,
+        compute_hashes=payload.compute_hashes,
+        hash_max_bytes=payload.hash_max_bytes,
+    )
+    if not started:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Auto-population job already running")
+
+    return {
+        "status": "queued",
+        "base_dir": str(base_path),
+        "scope": "all_discovered_drummers",
+    }
 
 
 @router.get("/training-export", response_model=CalibrationTrainingExportPayload)
