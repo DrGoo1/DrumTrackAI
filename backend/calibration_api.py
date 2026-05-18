@@ -2353,27 +2353,47 @@ async def generate_candidates(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base groove or drummer")
 
     try:
+        stage = "assimilation_status"
+
+        def _raise_stage_error(message: str, *, status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR) -> None:
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "stage": stage,
+                    "message": message,
+                },
+            )
+
         # Strict gating: require full assimilation readiness before any generation.
         assimilation = _assimilation_status_for_slug(db, target_slug)
         if not assimilation.get("ready_for_calibration"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
+                    "stage": stage,
                     "message": "Assimilation not ready for calibration",
                     "assimilationStatus": assimilation,
                 },
             )
 
+        stage = "render_service_init"
         render_service = CalibrationRenderService(db)
         session_id: Optional[str] = None
         reviewer_id = (payload.reviewer_id or "").strip()
         if reviewer_id:
-            db.upsert_reviewer_profile(reviewer_id=reviewer_id, display_name=reviewer_id)
+            stage = "reviewer_profile_upsert"
+            reviewer_ok = db.upsert_reviewer_profile(reviewer_id=reviewer_id, display_name=reviewer_id)
+            if not reviewer_ok:
+                _raise_stage_error("Failed to upsert reviewer profile")
+
+            stage = "evaluation_session_create"
             session_id = db.create_evaluation_session(
                 reviewer_id=reviewer_id,
                 target_drummer_slug=target_slug,
                 app_version="calibration_phase2",
             )
+            if not session_id:
+                _raise_stage_error("Failed to create evaluation session")
 
         created_run_ids: List[str] = []
         generation_controls = payload.generation_controls if isinstance(payload.generation_controls, dict) else {}
@@ -2384,11 +2404,15 @@ async def generate_candidates(
         reference_artifact_id: Optional[str] = None
 
         if payload.include_baseline:
+            stage = "baseline_source_select"
             baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
             if not baseline_source:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="No assimilated baseline available for target drummer",
+                    detail={
+                        "stage": stage,
+                        "message": "No assimilated baseline available for target drummer",
+                    },
                 )
 
             source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
@@ -2399,6 +2423,7 @@ async def generate_candidates(
                 baseline_analysis_id = analysis_id
                 item_base_groove_id = f"assimilation:{analysis_id}"
 
+            stage = "baseline_reference_run_create"
             baseline_ref = _create_reference_baseline_run(
                 db,
                 drummer_slug=target_slug,
@@ -2415,6 +2440,7 @@ async def generate_candidates(
         for idx in range(requested):
             seed_offset = idx + (1 if baseline_run_id else 0)
             seed_value = payload.seed if payload.seed is not None else (1000 + seed_offset)
+            stage = "candidate_generate"
             run_data = generate_candidate_run(
                 db=db,
                 base_groove_id=effective_base_groove_id,
@@ -2439,6 +2465,7 @@ async def generate_candidates(
                 **run_data.metadata,
             }
 
+            stage = "calibration_run_log"
             run_id = db.log_calibration_run(
                 drummer_slug=target_slug,
                 outcome="queued",
@@ -2448,9 +2475,11 @@ async def generate_candidates(
                 comparison={},
             )
             if not run_id:
-                continue
+                _raise_stage_error("Failed to log calibration run")
             created_run_ids.append(run_id)
-            db.upsert_run_version(
+
+            stage = "run_version_upsert"
+            version_ok = db.upsert_run_version(
                 run_id=run_id,
                 generator_version="candidate_generator_v1",
                 feature_version="metrics_v1",
@@ -2459,9 +2488,12 @@ async def generate_candidates(
                 seed=int(seed_value),
                 commit_hash=None,
             )
+            if not version_ok:
+                _raise_stage_error("Failed to upsert run version")
 
             # Store event stream placeholder so render pipeline has context.
-            db.upsert_calibration_run_events(
+            stage = "run_events_upsert"
+            events_ok = db.upsert_calibration_run_events(
                 run_id=run_id,
                 drummer_slug=target_slug,
                 event_stream=run_data.event_stream,
@@ -2470,6 +2502,8 @@ async def generate_candidates(
                 bars=run_data.bars,
                 source_type="generate_candidates_autogen",
             )
+            if not events_ok:
+                _raise_stage_error("Failed to upsert calibration run events")
 
             # Trigger render pipeline immediately.
             render_request = RenderRequest(
@@ -2490,16 +2524,21 @@ async def generate_candidates(
                     "tempo_bpm": run_data.tempo_bpm,
                 },
             )
+            stage = "render_start"
             try:
                 render_service.render_run(render_request)
             except Exception as render_exc:
-                db.log_calibration_render_job(
-                    run_id=run_id,
-                    render_profile_id=payload.render_profile_id,
-                    sample_pack_version=payload.sample_pack_version,
-                    status="failed",
-                    error_text=str(render_exc),
-                )
+                try:
+                    db.log_calibration_render_job(
+                        run_id=run_id,
+                        render_profile_id=payload.render_profile_id,
+                        sample_pack_version=payload.sample_pack_version,
+                        status="failed",
+                        error_text=str(render_exc),
+                    )
+                except Exception:
+                    pass
+                _raise_stage_error(f"Failed to start render: {render_exc}")
 
         item_id: Optional[str] = None
         if session_id and (created_run_ids or baseline_run_id):
@@ -2512,6 +2551,7 @@ async def generate_candidates(
             if not reference_artifact_id:
                 reference_artifact_id = _pick_reference_artifact_id(db, baseline_run_id=baseline_run_id)
 
+            stage = "evaluation_item_create"
             item_id = db.create_evaluation_item(
                 session_id=session_id,
                 base_groove_id=item_base_groove_id,
@@ -2523,6 +2563,8 @@ async def generate_candidates(
                 eval_mode="AB",
                 ab_mapping={"A": candidate_a_run_id, "B": candidate_b_run_id},
             )
+            if not item_id:
+                _raise_stage_error("Failed to create evaluation item")
 
         return {
             "status": "queued",
@@ -2533,7 +2575,13 @@ async def generate_candidates(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "stage": stage,
+                "message": str(exc),
+            },
+        )
 
 @router.get("/drummers/{slug}", response_model=DrummerDetailPayload)
 async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_service)) -> DrummerDetailPayload:
