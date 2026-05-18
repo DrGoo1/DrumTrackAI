@@ -1176,18 +1176,53 @@ def _build_assimilation_base_groove(
     drummer_slug: str,
     analysis_id: str,
 ) -> Optional[Path]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT tempo_bpm, time_signature
-        FROM song_performance_analysis
-        WHERE analysis_id = ?
-        LIMIT 1
-        """,
-        (analysis_id,),
-    )
-    spa = cursor.fetchone()
+    if getattr(db, "_engine", None) is not None:
+        with db._engine.connect() as conn_pg:
+            spa = conn_pg.execute(
+                text(
+                    """
+                    SELECT tempo_bpm, time_signature
+                    FROM public.song_performance_analysis
+                    WHERE analysis_id = :analysis_id
+                    LIMIT 1
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().first()
+            rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT instrument, component, onset_time_sec, velocity_est, bar_index
+                    FROM public.drum_hit_events
+                    WHERE analysis_id = :analysis_id
+                    ORDER BY onset_time_sec ASC
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
+    else:
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT tempo_bpm, time_signature
+            FROM song_performance_analysis
+            WHERE analysis_id = ?
+            LIMIT 1
+            """,
+            (analysis_id,),
+        )
+        spa = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT instrument, component, onset_time_sec, velocity_est, bar_index
+            FROM drum_hit_events
+            WHERE analysis_id = ?
+            ORDER BY onset_time_sec ASC
+            """,
+            (analysis_id,),
+        )
+        rows = cursor.fetchall() or []
     if not spa:
         return None
 
@@ -1202,16 +1237,6 @@ def _build_assimilation_base_groove(
         beats_per_bar = 4
     sec_per_bar = (60.0 / max(1e-6, tempo_bpm)) * max(1, beats_per_bar)
 
-    cursor.execute(
-        """
-        SELECT instrument, component, onset_time_sec, velocity_est, bar_index
-        FROM drum_hit_events
-        WHERE analysis_id = ?
-        ORDER BY onset_time_sec ASC
-        """,
-        (analysis_id,),
-    )
-    rows = cursor.fetchall() or []
     if not rows:
         return None
 
@@ -1296,24 +1321,40 @@ def _select_assimilation_baseline_source(
     *,
     drummer_slug: str,
 ) -> Optional[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    drummer_fk = db._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-    if drummer_fk is None:
-        return None
+    if getattr(db, "_engine", None) is not None:
+        with db._engine.connect() as conn_pg:
+            analyses = conn_pg.execute(
+                text(
+                    """
+                    SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
+                    FROM public.song_performance_analysis spa
+                    LEFT JOIN public.songs s ON s.id = spa.song_id
+                    WHERE CAST(spa.drummer_id AS TEXT) = CAST(:slug AS TEXT)
+                    ORDER BY spa.created_at DESC
+                    LIMIT 50
+                    """
+                ),
+                {"slug": drummer_slug},
+            ).mappings().all()
+    else:
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        drummer_fk = db._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
+        if drummer_fk is None:
+            return None
 
-    cursor.execute(
-        """
-        SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
-        FROM song_performance_analysis spa
-        LEFT JOIN songs s ON s.id = spa.song_id
-        WHERE spa.drummer_id = ?
-        ORDER BY spa.created_at DESC
-        LIMIT 50
-        """,
-        (int(drummer_fk),),
-    )
-    analyses = cursor.fetchall() or []
+        cursor.execute(
+            """
+            SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
+            FROM song_performance_analysis spa
+            LEFT JOIN songs s ON s.id = spa.song_id
+            WHERE spa.drummer_id = ?
+            ORDER BY spa.created_at DESC
+            LIMIT 50
+            """,
+            (int(drummer_fk),),
+        )
+        analyses = cursor.fetchall() or []
     if not analyses:
         return None
 
@@ -1326,15 +1367,28 @@ def _select_assimilation_baseline_source(
         source_path: Optional[Path] = None
         source_song_name: Optional[str] = None
 
-        cursor.execute(
-            """
-            SELECT stem_name, file_path
-            FROM stem_artifacts
-            WHERE analysis_id = ?
-            """,
-            (analysis_id,),
-        )
-        stem_rows = cursor.fetchall() or []
+        if getattr(db, "_engine", None) is not None:
+            with db._engine.connect() as conn_pg:
+                stem_rows = conn_pg.execute(
+                    text(
+                        """
+                        SELECT stem_name, file_path
+                        FROM public.stem_artifacts
+                        WHERE analysis_id = :analysis_id
+                        """
+                    ),
+                    {"analysis_id": analysis_id},
+                ).mappings().all()
+        else:
+            cursor.execute(
+                """
+                SELECT stem_name, file_path
+                FROM stem_artifacts
+                WHERE analysis_id = ?
+                """,
+                (analysis_id,),
+            )
+            stem_rows = cursor.fetchall() or []
         best_stem: Optional[Path] = None
         fallback_stem: Optional[Path] = None
         for stem in stem_rows:
