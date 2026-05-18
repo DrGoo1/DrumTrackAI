@@ -797,13 +797,16 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
             missing_steps.append("phase6_persona_preset")
 
         has_downstream_assimilation = (
-            (fills > 0 and techniques > 0)
-            and phase4_enriched > 0
+            phase4_enriched > 0
             and rollup_count > 0
             and preset_count > 0
         )
-        if has_downstream_assimilation and "phase2_hit_events" in missing_steps:
-            missing_steps = [step for step in missing_steps if step != "phase2_hit_events"]
+        if has_downstream_assimilation:
+            missing_steps = [
+                step
+                for step in missing_steps
+                if step not in {"phase2_hit_events", "phase3_fills_techniques"}
+            ]
 
         ready = len(missing_steps) == 0
         status["status"] = "ready_for_calibration" if ready else "needs_processing"
@@ -956,13 +959,16 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
         missing_steps.append("phase6_persona_preset")
 
     has_downstream_assimilation = (
-        (fills > 0 and techniques > 0)
-        and phase4_enriched > 0
+        phase4_enriched > 0
         and rollup_count > 0
         and preset_count > 0
     )
-    if has_downstream_assimilation and "phase2_hit_events" in missing_steps:
-        missing_steps = [step for step in missing_steps if step != "phase2_hit_events"]
+    if has_downstream_assimilation:
+        missing_steps = [
+            step
+            for step in missing_steps
+            if step not in {"phase2_hit_events", "phase3_fills_techniques"}
+        ]
 
     ready = len(missing_steps) == 0
     overall_status = "ready_for_calibration" if ready else "needs_processing"
@@ -1406,16 +1412,20 @@ def _select_assimilation_baseline_source(
         if source_path is None:
             source_path = _resolve_local_path(row["source_file"])
 
-        if source_path is None:
-            continue
-
         title = str(row["song_title"] or "").strip()
-        source_song_name = title or _song_label_from_path(source_path)
         base_groove_path = _build_assimilation_base_groove(
             db,
             drummer_slug=drummer_slug,
             analysis_id=analysis_id,
         )
+        if not source_path and not base_groove_path:
+            continue
+
+        source_song_name = title
+        if not source_song_name and source_path is not None:
+            source_song_name = _song_label_from_path(source_path)
+        if not source_song_name:
+            source_song_name = analysis_id
 
         return {
             "analysis_id": analysis_id,
