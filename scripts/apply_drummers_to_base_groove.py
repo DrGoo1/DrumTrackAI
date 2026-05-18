@@ -232,12 +232,7 @@ def build_sections(total_bars: int) -> List[Dict[str, Any]]:
 
 
 def fetch_rollup(service: CentralDatabaseService, drummer_slug: str) -> Dict[str, Any]:
-    conn = service._get_connection()  # pylint: disable=protected-access
-    cur = conn.cursor()
-    drummer_fk = service._get_drummer_fk_by_slug(cursor=cur, drummer_slug=drummer_slug)  # pylint: disable=protected-access
-    if drummer_fk is None:
-        raise ValueError(f"Unknown drummer slug: {drummer_slug}")
-    rollup = service.compute_drummer_profile_rollup(drummer_fk=int(drummer_fk))
+    rollup = service.get_drummer_profile_rollup(drummer_slug=drummer_slug)
     if not rollup:
         raise RuntimeError(f"No assimilation rollup found for drummer '{drummer_slug}'")
     return rollup

@@ -4762,6 +4762,14 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             
             db_backend = str(os.getenv("DB_BACKEND", "")).strip().lower()
             db_url = str(os.getenv("DATABASE_URL", "")).strip()
+            if db_backend in {"postgres", "postgresql"} and not db_url.lower().startswith("postgres"):
+                msg = "DB_BACKEND is postgres but DATABASE_URL is missing or not a postgres URL"
+                logger.error(msg)
+                try:
+                    self.database_error.emit(msg)
+                except Exception:
+                    pass
+                return False
             if db_backend in {"postgres", "postgresql"} or db_url.lower().startswith("postgres"):
                 try:
                     max_overflow = int(str(os.getenv("DB_MAX_OVERFLOW", "5")).strip() or "5")
@@ -7145,6 +7153,41 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 return False
 
             now = datetime.utcnow().isoformat()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.run_versions (
+                                run_id, generator_version, feature_version, rollup_version,
+                                sample_pack_version, seed, commit_hash, created_at
+                            ) VALUES (
+                                :run_id, :generator_version, :feature_version, :rollup_version,
+                                :sample_pack_version, :seed, :commit_hash, NOW()
+                            )
+                            ON CONFLICT (run_id) DO UPDATE SET
+                                generator_version = EXCLUDED.generator_version,
+                                feature_version = EXCLUDED.feature_version,
+                                rollup_version = EXCLUDED.rollup_version,
+                                sample_pack_version = EXCLUDED.sample_pack_version,
+                                seed = EXCLUDED.seed,
+                                commit_hash = EXCLUDED.commit_hash,
+                                created_at = NOW()
+                            """
+                        ),
+                        {
+                            "run_id": run_id,
+                            "generator_version": generator_version,
+                            "feature_version": feature_version,
+                            "rollup_version": rollup_version,
+                            "sample_pack_version": sample_pack_version,
+                            "seed": int(seed),
+                            "commit_hash": commit_hash,
+                        },
+                    )
+                self.data_changed.emit("run_versions", "upsert")
+                return True
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
@@ -7395,6 +7438,40 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 return False
 
             now = datetime.utcnow().isoformat()
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.reviewer_profiles (
+                                reviewer_id, display_name, expertise_level,
+                                primary_styles_json, years_experience,
+                                weighting_factor, created_at
+                            ) VALUES (
+                                :reviewer_id, :display_name, :expertise_level,
+                                :primary_styles_json, :years_experience,
+                                :weighting_factor, NOW()
+                            )
+                            ON CONFLICT (reviewer_id) DO UPDATE SET
+                                display_name = EXCLUDED.display_name,
+                                expertise_level = EXCLUDED.expertise_level,
+                                primary_styles_json = EXCLUDED.primary_styles_json,
+                                years_experience = EXCLUDED.years_experience,
+                                weighting_factor = EXCLUDED.weighting_factor
+                            """
+                        ),
+                        {
+                            "reviewer_id": reviewer_id,
+                            "display_name": display_name,
+                            "expertise_level": expertise_level,
+                            "primary_styles_json": self._json_dumps(primary_styles or []) or "[]",
+                            "years_experience": self._safe_int(years_experience),
+                            "weighting_factor": float(weighting_factor),
+                        },
+                    )
+                self.data_changed.emit("reviewer_profiles", "upsert")
+                return True
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
@@ -7456,6 +7533,34 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             session_id = f"sess_{uuid.uuid4().hex[:12]}"
             assigned_iso = (assigned_at or datetime.utcnow()).isoformat()
             now = datetime.utcnow().isoformat()
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.evaluation_sessions (
+                                session_id, reviewer_id, target_drummer_slug,
+                                assigned_at, started_at, completed_at,
+                                app_version, notes, created_at
+                            ) VALUES (
+                                :session_id, :reviewer_id, :target_drummer_slug,
+                                :assigned_at, NULL, NULL,
+                                :app_version, :notes, NOW()
+                            )
+                            """
+                        ),
+                        {
+                            "session_id": session_id,
+                            "reviewer_id": reviewer_id,
+                            "target_drummer_slug": target_drummer_slug,
+                            "assigned_at": assigned_iso,
+                            "app_version": app_version,
+                            "notes": notes,
+                        },
+                    )
+                self.data_changed.emit("evaluation_sessions", "insert")
+                return session_id
 
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -7610,6 +7715,38 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             item_id = f"item_{uuid.uuid4().hex[:12]}"
             now = datetime.utcnow().isoformat()
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.evaluation_items (
+                                item_id, session_id, base_groove_id, target_drummer_slug,
+                                reference_artifact_id, baseline_run_id, candidate_a_run_id,
+                                candidate_b_run_id, ab_mapping_json, eval_mode, created_at
+                            ) VALUES (
+                                :item_id, :session_id, :base_groove_id, :target_drummer_slug,
+                                :reference_artifact_id, :baseline_run_id, :candidate_a_run_id,
+                                :candidate_b_run_id, :ab_mapping_json, :eval_mode, NOW()
+                            )
+                            """
+                        ),
+                        {
+                            "item_id": item_id,
+                            "session_id": session_id,
+                            "base_groove_id": base_groove_id,
+                            "target_drummer_slug": target_drummer_slug,
+                            "reference_artifact_id": reference_artifact_id,
+                            "baseline_run_id": baseline_run_id,
+                            "candidate_a_run_id": candidate_a_run_id,
+                            "candidate_b_run_id": candidate_b_run_id,
+                            "ab_mapping_json": self._json_dumps(ab_mapping or {}) or "{}",
+                            "eval_mode": eval_mode or "AB",
+                        },
+                    )
+                self.data_changed.emit("evaluation_items", "insert")
+                return item_id
+
             conn = self._get_connection()
             cursor = conn.cursor()
 
@@ -7649,6 +7786,215 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         except Exception as e:
             logger.error(f"Error creating evaluation item for session {session_id}: {str(e)}")
             self.database_error.emit(f"Error creating evaluation item: {str(e)}")
+            return None
+
+    def upsert_calibration_run_events(
+        self,
+        *,
+        run_id: str,
+        drummer_slug: str,
+        event_stream: List[Dict[str, Any]],
+        source_type: str = "dcsm_json",
+        tempo_bpm: Optional[float] = None,
+        time_signature: Optional[Dict[str, Any]] = None,
+        bars: Optional[int] = None,
+    ) -> bool:
+        try:
+            run_id = (run_id or "").strip()
+            drummer_slug = (drummer_slug or "").strip()
+            if not run_id or not drummer_slug:
+                return False
+
+            event_stream_json = self._json_dumps(event_stream or []) or "[]"
+            time_signature_json = self._json_dumps(time_signature or {}) or "{}"
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.calibration_run_events (
+                                run_id, drummer_slug, source_type,
+                                event_stream_json, tempo_bpm, time_signature_json, bars,
+                                created_at, updated_at
+                            ) VALUES (
+                                :run_id, :drummer_slug, :source_type,
+                                :event_stream_json, :tempo_bpm, :time_signature_json, :bars,
+                                NOW(), NOW()
+                            )
+                            ON CONFLICT (run_id) DO UPDATE SET
+                                drummer_slug = EXCLUDED.drummer_slug,
+                                source_type = EXCLUDED.source_type,
+                                event_stream_json = EXCLUDED.event_stream_json,
+                                tempo_bpm = EXCLUDED.tempo_bpm,
+                                time_signature_json = EXCLUDED.time_signature_json,
+                                bars = EXCLUDED.bars,
+                                updated_at = NOW()
+                            """
+                        ),
+                        {
+                            "run_id": run_id,
+                            "drummer_slug": drummer_slug,
+                            "source_type": (source_type or "dcsm_json").strip() or "dcsm_json",
+                            "event_stream_json": event_stream_json,
+                            "tempo_bpm": self._safe_float(tempo_bpm),
+                            "time_signature_json": time_signature_json,
+                            "bars": self._safe_int(bars),
+                        },
+                    )
+                self.data_changed.emit("calibration_run_events", "upsert")
+                return True
+
+            now = datetime.utcnow().isoformat()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    """
+                    INSERT INTO calibration_run_events (
+                        run_id, drummer_slug, source_type,
+                        event_stream_json, tempo_bpm, time_signature_json, bars,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        drummer_slug = excluded.drummer_slug,
+                        source_type = excluded.source_type,
+                        event_stream_json = excluded.event_stream_json,
+                        tempo_bpm = excluded.tempo_bpm,
+                        time_signature_json = excluded.time_signature_json,
+                        bars = excluded.bars,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        run_id,
+                        drummer_slug,
+                        (source_type or "dcsm_json").strip() or "dcsm_json",
+                        event_stream_json,
+                        self._safe_float(tempo_bpm),
+                        time_signature_json,
+                        self._safe_int(bars),
+                        now,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return True
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("calibration_run_events", "upsert")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_run_events table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error upserting calibration run events for {run_id}: {str(e)}")
+            self.database_error.emit(f"Error upserting calibration run events: {str(e)}")
+            return False
+
+    def log_calibration_render_job(
+        self,
+        *,
+        run_id: str,
+        render_profile_id: str,
+        sample_pack_version: str,
+        status: str = "queued",
+        artifact_ids: Optional[List[str]] = None,
+        error_text: Optional[str] = None,
+        job_id: Optional[str] = None,
+    ) -> Optional[str]:
+        try:
+            run_id = (run_id or "").strip()
+            render_profile_id = (render_profile_id or "").strip()
+            sample_pack_version = (sample_pack_version or "").strip()
+            status_val = (status or "queued").strip() or "queued"
+            if not run_id or not render_profile_id or not sample_pack_version:
+                return None
+
+            job_id = (job_id or f"rjob_{uuid.uuid4().hex[:12]}").strip()
+            artifact_ids_json = self._json_dumps(artifact_ids or []) or "[]"
+            now = datetime.utcnow().isoformat()
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO public.calibration_render_jobs (
+                                job_id, run_id, render_profile_id, sample_pack_version,
+                                status, artifact_ids_json, error_text,
+                                created_at, started_at, completed_at
+                            ) VALUES (
+                                :job_id, :run_id, :render_profile_id, :sample_pack_version,
+                                :status, :artifact_ids_json, :error_text,
+                                NOW(), NULL, NULL
+                            )
+                            ON CONFLICT (job_id) DO UPDATE SET
+                                run_id = EXCLUDED.run_id,
+                                render_profile_id = EXCLUDED.render_profile_id,
+                                sample_pack_version = EXCLUDED.sample_pack_version,
+                                status = EXCLUDED.status,
+                                artifact_ids_json = EXCLUDED.artifact_ids_json,
+                                error_text = EXCLUDED.error_text
+                            """
+                        ),
+                        {
+                            "job_id": job_id,
+                            "run_id": run_id,
+                            "render_profile_id": render_profile_id,
+                            "sample_pack_version": sample_pack_version,
+                            "status": status_val,
+                            "artifact_ids_json": artifact_ids_json,
+                            "error_text": error_text,
+                        },
+                    )
+                self.data_changed.emit("calibration_render_jobs", "upsert")
+                return job_id
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> str:
+                cursor.execute(
+                    """
+                    INSERT INTO calibration_render_jobs (
+                        job_id, run_id, render_profile_id, sample_pack_version,
+                        status, artifact_ids_json, error_text,
+                        created_at, started_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        render_profile_id = excluded.render_profile_id,
+                        sample_pack_version = excluded.sample_pack_version,
+                        status = excluded.status,
+                        artifact_ids_json = excluded.artifact_ids_json,
+                        error_text = excluded.error_text
+                    """,
+                    (
+                        job_id,
+                        run_id,
+                        render_profile_id,
+                        sample_pack_version,
+                        status_val,
+                        artifact_ids_json,
+                        error_text,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return job_id
+
+            result = self._with_write_lock_retry(_do_write)
+            if result:
+                self.data_changed.emit("calibration_render_jobs", "upsert")
+            return str(result) if result else None
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_render_jobs table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error logging calibration render job for run {run_id}: {str(e)}")
+            self.database_error.emit(f"Error logging calibration render job: {str(e)}")
             return None
 
     def get_evaluation_item(self, *, item_id: str) -> Optional[EvaluationItem]:

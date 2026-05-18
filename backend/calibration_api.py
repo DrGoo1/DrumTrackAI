@@ -2390,6 +2390,7 @@ async def generate_candidates(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="No assimilated baseline available for target drummer",
                 )
+
             source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
             if source_groove_path:
                 effective_base_groove_id = source_groove_path
@@ -2397,12 +2398,14 @@ async def generate_candidates(
             if analysis_id:
                 baseline_analysis_id = analysis_id
                 item_base_groove_id = f"assimilation:{analysis_id}"
+
             baseline_ref = _create_reference_baseline_run(
                 db,
                 drummer_slug=target_slug,
                 baseline_source=baseline_source,
                 base_groove_id=item_base_groove_id,
             )
+
             if baseline_ref:
                 baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
                 reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None

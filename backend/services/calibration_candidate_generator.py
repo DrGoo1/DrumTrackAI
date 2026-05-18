@@ -270,12 +270,9 @@ def generate_candidate_run(
     pattern = helpers["load_base_pattern"](base_path)
     repeated_events = helpers["repeat_events"](getattr(pattern, "events", []), max(1, repeats))
 
-    rollup: Dict[str, Any] = {}
-    try:
-        rollup = helpers["fetch_rollup"](db, slug) or {}
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("generate_candidate_run: unable to fetch rollup for %s: %s", slug, exc)
-        rollup = {}
+    rollup = helpers["fetch_rollup"](db, slug) or {}
+    if not rollup:
+        raise RuntimeError(f"No assimilation rollup available for drummer '{slug}'")
 
     controls: Dict[str, Any] = generation_controls if isinstance(generation_controls, dict) else {}
     rng = random.Random(seed)
