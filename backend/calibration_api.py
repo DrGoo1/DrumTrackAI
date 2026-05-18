@@ -796,6 +796,15 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
         if preset_count <= 0:
             missing_steps.append("phase6_persona_preset")
 
+        has_downstream_assimilation = (
+            (fills > 0 and techniques > 0)
+            and phase4_enriched > 0
+            and rollup_count > 0
+            and preset_count > 0
+        )
+        if has_downstream_assimilation and "phase2_hit_events" in missing_steps:
+            missing_steps = [step for step in missing_steps if step != "phase2_hit_events"]
+
         ready = len(missing_steps) == 0
         status["status"] = "ready_for_calibration" if ready else "needs_processing"
         status["ready_for_calibration"] = ready
@@ -945,6 +954,15 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
         missing_steps.append("phase5_rollup")
     if preset_count <= 0:
         missing_steps.append("phase6_persona_preset")
+
+    has_downstream_assimilation = (
+        (fills > 0 and techniques > 0)
+        and phase4_enriched > 0
+        and rollup_count > 0
+        and preset_count > 0
+    )
+    if has_downstream_assimilation and "phase2_hit_events" in missing_steps:
+        missing_steps = [step for step in missing_steps if step != "phase2_hit_events"]
 
     ready = len(missing_steps) == 0
     overall_status = "ready_for_calibration" if ready else "needs_processing"
