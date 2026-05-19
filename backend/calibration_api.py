@@ -2493,7 +2493,10 @@ async def generate_candidates(
                 commit_hash=None,
             )
             if not version_ok:
-                _raise_stage_error("Failed to upsert run version")
+                logger.warning(
+                    "generate-candidates run_version_upsert skipped for run_id=%s (continuing)",
+                    run_id,
+                )
 
             # Store event stream placeholder so render pipeline has context.
             stage = "run_events_upsert"
