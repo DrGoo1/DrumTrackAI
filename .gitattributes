@@ -1,5 +1,6 @@
 *.pdf filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.onnx filter=lfs diff=lfs merge=lfs -text
+admin/models/production/v1.1.17/drum_humanizer/model.onnx -filter -diff -merge -text
 *.zip filter=lfs diff=lfs merge=lfs -text
 llm_training_project/training_datasets/*.jsonl filter=lfs diff=lfs merge=lfs -text
