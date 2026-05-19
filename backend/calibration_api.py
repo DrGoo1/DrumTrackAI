@@ -2418,34 +2418,26 @@ async def generate_candidates(
         if payload.include_baseline:
             stage = "baseline_source_select"
             baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
-            if not baseline_source:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "stage": stage,
-                        "message": "No assimilated baseline available for target drummer",
-                    },
+            if baseline_source:
+                source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
+                if source_groove_path:
+                    effective_base_groove_id = source_groove_path
+                analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+                if analysis_id:
+                    baseline_analysis_id = analysis_id
+                    item_base_groove_id = f"assimilation:{analysis_id}"
+
+                stage = "baseline_reference_run_create"
+                baseline_ref = _create_reference_baseline_run(
+                    db,
+                    drummer_slug=target_slug,
+                    baseline_source=baseline_source,
+                    base_groove_id=item_base_groove_id,
                 )
 
-            source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
-            if source_groove_path:
-                effective_base_groove_id = source_groove_path
-            analysis_id = str(baseline_source.get("analysis_id") or "").strip()
-            if analysis_id:
-                baseline_analysis_id = analysis_id
-                item_base_groove_id = f"assimilation:{analysis_id}"
-
-            stage = "baseline_reference_run_create"
-            baseline_ref = _create_reference_baseline_run(
-                db,
-                drummer_slug=target_slug,
-                baseline_source=baseline_source,
-                base_groove_id=item_base_groove_id,
-            )
-
-            if baseline_ref:
-                baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
-                reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
+                if baseline_ref:
+                    baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
+                    reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
 
         generate_baseline = bool(payload.include_baseline and not baseline_run_id)
         requested = payload.candidate_count + (1 if generate_baseline else 0)
