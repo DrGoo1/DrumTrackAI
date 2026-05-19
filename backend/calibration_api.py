@@ -2007,6 +2007,7 @@ async def submit_pairwise_judgment(
 
 @router.get("/health", response_model=CalibrationHealthPayload)
 async def calibration_health() -> CalibrationHealthPayload:
+    build_marker = "calibration_api_build_2026-05-19T00:40Z"
     db_path = None
     svc = CentralDatabaseService.get_instance()
     try:
@@ -2025,6 +2026,11 @@ async def calibration_health() -> CalibrationHealthPayload:
         "attribute_ratings": False,
     }
     notes: List[str] = []
+    notes.append(f"build_marker={build_marker}")
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
+        value = str(os.getenv(key, "")).strip()
+        if value:
+            notes.append(f"{key}={value}")
     try:
         engine_active = bool(getattr(svc, "_engine", None) is not None)
         backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
