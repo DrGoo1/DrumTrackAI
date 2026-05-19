@@ -1422,8 +1422,6 @@ def _select_assimilation_baseline_source(
             drummer_slug=drummer_slug,
             analysis_id=analysis_id,
         )
-        if not source_path and not base_groove_path:
-            continue
 
         source_song_name = title
         if not source_song_name and source_path is not None:
