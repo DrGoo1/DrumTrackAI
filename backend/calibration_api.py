@@ -1329,37 +1329,22 @@ def _select_assimilation_baseline_source(
 ) -> Optional[Dict[str, Any]]:
     if getattr(db, "_engine", None) is not None:
         with db._engine.connect() as conn_pg:
-            drummer_fk_text: Optional[str] = None
-            try:
-                fk_row = conn_pg.execute(
-                    text(
-                        """
-                        SELECT id
-                        FROM public.drummers
-                        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-                        LIMIT 1
-                        """
-                    ),
-                    {"slug": drummer_slug},
-                ).first()
-                if fk_row is not None and fk_row[0] is not None:
-                    drummer_fk_text = str(fk_row[0]).strip()
-            except Exception:
-                drummer_fk_text = None
-
             analyses = conn_pg.execute(
                 text(
                     """
                     SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
                     FROM public.song_performance_analysis spa
                     LEFT JOIN public.songs s ON s.id = spa.song_id
+                    LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
                     WHERE CAST(spa.drummer_id AS TEXT) = CAST(:slug AS TEXT)
-                       OR CAST(spa.drummer_id AS TEXT) = CAST(:drummer_fk AS TEXT)
+                       OR CAST(COALESCE(d.drummer_id, '') AS TEXT) = CAST(:slug AS TEXT)
+                       OR LOWER(REPLACE(COALESCE(d.display_name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
+                       OR LOWER(REPLACE(COALESCE(d.name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
                     ORDER BY spa.created_at DESC
                     LIMIT 50
                     """
                 ),
-                {"slug": drummer_slug, "drummer_fk": drummer_fk_text or ""},
+                {"slug": drummer_slug},
             ).mappings().all()
     else:
         conn = db._get_connection()
