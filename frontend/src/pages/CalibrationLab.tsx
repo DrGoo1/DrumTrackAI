@@ -595,6 +595,7 @@ const CalibrationLab: React.FC = () => {
   const assimilation = detail?.assimilationStatus;
   const missingSteps = assimilation?.missing_steps ?? [];
   const assimilationReady = Boolean(assimilation?.ready_for_calibration);
+  const latestRun = detail?.runHistory?.[0] ?? null;
   const readinessHint = missingSteps.length
     ? `Assimilation not ready (${missingSteps.map(slugToTitle).join(', ')}).`
     : 'Assimilation not ready for calibration yet.';
@@ -729,6 +730,7 @@ const CalibrationLab: React.FC = () => {
     if (!assimilationReady) {
       setStatusMessage(`${readinessHint} Trying server-side launch anyway to verify latest readiness.`);
     }
+    setTab('metrics');
     setGenerating(true);
     setStatusMessage('Launching calibration run...');
     try {
@@ -1114,6 +1116,9 @@ const CalibrationLab: React.FC = () => {
                     <p className="mt-2 text-xs text-purple-100/70">
                       Assimilation: {assimilation?.ready_for_calibration ? 'Ready for calibration' : 'Needs processing'}
                     </p>
+                    <p className="mt-1 text-xs text-purple-100/70">
+                      Latest run: {latestRun ? `${describeRunOutcome(latestRun)} (${formatDate(latestRun.started_at)})` : 'No runs yet'}
+                    </p>
                     {!assimilation?.ready_for_calibration && missingSteps.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-amber-100">
                         {missingSteps.map((step) => (
@@ -1163,6 +1168,11 @@ const CalibrationLab: React.FC = () => {
                     Tip: <span className="font-semibold text-purple-100">Run Metrics Calibration</span> updates metrics/run history. Use
                     <span className="font-semibold text-emerald-200"> Queue Listening Item</span> to generate baseline and A/B audio players.
                   </p>
+                  {statusMessage && (
+                    <div className="rounded-xl border border-purple-400/40 bg-purple-500/10 p-3 text-xs text-purple-100">
+                      {statusMessage}
+                    </div>
+                  )}
                 </div>
 
                 {hasPendingChanges && (
