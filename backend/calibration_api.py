@@ -2516,7 +2516,10 @@ async def generate_candidates(
                 source_type="generate_candidates_autogen",
             )
             if not events_ok:
-                _raise_stage_error("Failed to upsert calibration run events")
+                logger.warning(
+                    "generate-candidates run_events_upsert skipped for run_id=%s (continuing)",
+                    run_id,
+                )
 
             # Trigger render pipeline immediately.
             render_request = RenderRequest(
