@@ -1760,19 +1760,20 @@ async def _auto_populate_on_startup() -> None:
 # Static artifacts mount
 _artifacts_root = (Path(__file__).resolve().parents[1] / "artifacts").resolve()
 try:
-    if _artifacts_root.exists():
-        app.mount(
-            "/artifacts",
-            StaticFiles(directory=str(_artifacts_root), html=False),
-            name="artifacts",
-        )
-        calib_dir = _artifacts_root / "calibration"
-        if calib_dir.exists():
-            app.mount(
-                "/static/calibration_artifacts",
-                StaticFiles(directory=str(calib_dir), html=False),
-                name="calibration_static",
-            )
+    _artifacts_root.mkdir(parents=True, exist_ok=True)
+    calib_dir = _artifacts_root / "calibration"
+    calib_dir.mkdir(parents=True, exist_ok=True)
+
+    app.mount(
+        "/artifacts",
+        StaticFiles(directory=str(_artifacts_root), html=False),
+        name="artifacts",
+    )
+    app.mount(
+        "/static/calibration_artifacts",
+        StaticFiles(directory=str(calib_dir), html=False),
+        name="calibration_static",
+    )
 except Exception:
     pass
 
