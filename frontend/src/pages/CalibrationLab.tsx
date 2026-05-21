@@ -206,7 +206,7 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
 ];
 
 const API_BASE = resolveApiBaseNormalized();
-const api = axios.create({ baseURL: `${API_BASE}/calibration` });
+const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
@@ -352,6 +352,10 @@ const formatStructuredApiDetail = (detail: any): string | null => {
 const extractApiErrorMessage = (error: unknown, fallback: string): string => {
   if (axios.isAxiosError(error)) {
     const axiosError = error as any;
+    const code = String(axiosError?.code || '').trim();
+    if (code === 'ECONNABORTED') {
+      return `Request timed out contacting ${API_BASE || 'backend API'}.`;
+    }
     const statusCode = axiosError?.response?.status;
     const detail = axiosError?.response?.data?.detail;
     if (typeof detail === 'string' && detail.trim()) {
@@ -365,6 +369,9 @@ const extractApiErrorMessage = (error: unknown, fallback: string): string => {
     }
     const message = axiosError?.message;
     if (typeof message === 'string' && message.trim()) {
+      if (/network error/i.test(message)) {
+        return `Network error contacting ${API_BASE || 'backend API'}.`;
+      }
       return statusCode ? `${message} (HTTP ${statusCode})` : message;
     }
   }
