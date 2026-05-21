@@ -320,22 +320,52 @@ const asShareMap = (shares: unknown): Record<string, number> => {
   return {};
 };
 
+const shouldRetryRequest = (error: unknown): boolean => {
+  if (!axios.isAxiosError(error)) return false;
+  const statusCode = error.response?.status;
+  if (!statusCode) return true;
+  return statusCode >= 500 || statusCode === 429;
+};
+
+const sleepWithBackoff = async (attempt: number) => {
+  await sleep(1200 * attempt);
+};
+
+const formatStructuredApiDetail = (detail: any): string | null => {
+  if (!detail || typeof detail !== 'object') return null;
+  const stage = typeof detail.stage === 'string' ? detail.stage.trim() : '';
+  const message = typeof detail.message === 'string' ? detail.message.trim() : '';
+  if (!stage && !message) return null;
+
+  let suffix = '';
+  if (stage === 'assimilation_status' && detail.assimilationStatus && typeof detail.assimilationStatus === 'object') {
+    const missing = Array.isArray(detail.assimilationStatus.missing_steps) ? detail.assimilationStatus.missing_steps : [];
+    if (missing.length > 0) {
+      suffix = ` Missing steps: ${missing.map(slugToTitle).join(', ')}.`;
+    }
+  }
+
+  if (stage && message) return `${message} [${stage}]${suffix}`;
+  return `${message || stage}${suffix}`;
+};
+
 const extractApiErrorMessage = (error: unknown, fallback: string): string => {
   if (axios.isAxiosError(error)) {
     const axiosError = error as any;
+    const statusCode = axiosError?.response?.status;
     const detail = axiosError?.response?.data?.detail;
     if (typeof detail === 'string' && detail.trim()) {
-      return detail;
+      return statusCode ? `${detail} (HTTP ${statusCode})` : detail;
     }
     if (detail && typeof detail === 'object') {
-      const message = (detail as any).message;
-      if (typeof message === 'string' && message.trim()) {
-        return message;
+      const structured = formatStructuredApiDetail(detail);
+      if (structured) {
+        return statusCode ? `${structured} (HTTP ${statusCode})` : structured;
       }
     }
     const message = axiosError?.message;
     if (typeof message === 'string' && message.trim()) {
-      return message;
+      return statusCode ? `${message} (HTTP ${statusCode})` : message;
     }
   }
   return fallback;
@@ -602,21 +632,40 @@ const CalibrationLab: React.FC = () => {
 
   const handleQueueListeningItem = async () => {
     if (!selectedSlug) return;
-    if (!assimilationReady) {
-      setItemError(`${readinessHint} Complete ingestion before queuing listening audio.`);
-      return;
-    }
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
+    if (!assimilationReady) {
+      setPairwiseMessage(`${readinessHint} Trying server-side queue anyway to verify latest readiness.`);
+    }
     try {
-      const response = await api.post<GenerateCandidatesResponse>('generate-candidates', {
+      const requestPayload = {
         base_groove_id: baseGrooveId,
         target_drummer_slug: selectedSlug,
         candidate_count: 2,
         include_baseline: true,
         reviewer_id: reviewerId || `calibration_auto_${selectedSlug}`,
-      });
+      };
+
+      let response: { data: GenerateCandidatesResponse } | null = null;
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload);
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3 && shouldRetryRequest(error)) {
+            await sleepWithBackoff(attempt);
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!response) {
+        throw lastError ?? new Error('Unable to queue listening item.');
+      }
+
       const nextItemId = response.data.item_id;
       if (nextItemId) {
         await fetchItem(nextItemId);
@@ -628,6 +677,7 @@ const CalibrationLab: React.FC = () => {
     } catch (error) {
       setItemError(extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.'));
     } finally {
+      await Promise.all([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
       setListeningBusy(false);
     }
   };
@@ -677,13 +727,30 @@ const CalibrationLab: React.FC = () => {
   const handleGenerate = async () => {
     if (!selectedSlug) return;
     if (!assimilationReady) {
-      setStatusMessage(`${readinessHint} Calibration launch is blocked until ready.`);
-      return;
+      setStatusMessage(`${readinessHint} Trying server-side launch anyway to verify latest readiness.`);
     }
     setGenerating(true);
-    setStatusMessage('Launching calibration run�');
+    setStatusMessage('Launching calibration run...');
     try {
-      const response = await api.post<GenerateRunResponse>(`drummers/${selectedSlug}/generate`);
+      let response: { data: GenerateRunResponse } | null = null;
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await api.post<GenerateRunResponse>(`drummers/${selectedSlug}/generate`);
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3 && shouldRetryRequest(error)) {
+            await sleepWithBackoff(attempt);
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!response) {
+        throw lastError ?? new Error('Failed to trigger generation.');
+      }
+
       const runId = (response.data?.run_id || '').trim();
 
       setStatusMessage('Generation queued. Waiting for backend completion...');
@@ -693,7 +760,15 @@ const CalibrationLab: React.FC = () => {
         let terminalRun: CalibrationRun | null = null;
         for (let attempt = 0; attempt < 12; attempt += 1) {
           await sleep(2000);
-          const detailResponse = await api.get<DrummerDetailPayload>(`drummers/${selectedSlug}`);
+          let detailResponse: { data: DrummerDetailPayload };
+          try {
+            detailResponse = await api.get<DrummerDetailPayload>(`drummers/${selectedSlug}`);
+          } catch (pollError) {
+            if (attempt < 11 && shouldRetryRequest(pollError)) {
+              continue;
+            }
+            throw pollError;
+          }
           const runs = detailResponse.data.runHistory ?? [];
           const candidate = runs.find((run) => run.id === runId);
           if (candidate && candidate.outcome !== 'pending') {
@@ -705,15 +780,15 @@ const CalibrationLab: React.FC = () => {
         if (terminalRun?.outcome === 'failure') {
           setStatusMessage(terminalRun.error_message || 'Calibration run failed. Check backend logs and retry.');
         } else if (terminalRun?.outcome === 'success') {
-          setStatusMessage('Calibration run completed successfully.');
+          setStatusMessage('Calibration run completed successfully. For baseline/A-B audio, click "Queue Listening Item".');
         } else {
-          setStatusMessage('Generation queued. Still processing in background; use Refresh Detail in a few seconds.');
+          setStatusMessage('Generation queued. Still processing in background; use Refresh Detail in a few seconds. For baseline/A-B audio, click "Queue Listening Item".');
         }
       } else {
-        setStatusMessage('Generation queued. Refresh for updated metrics once the run completes.');
+        setStatusMessage('Generation queued. Refresh for updated metrics once the run completes. For baseline/A-B audio, click "Queue Listening Item".');
       }
 
-      await Promise.all([loadDetail(selectedSlug), loadDrummers()]);
+      await Promise.all([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
     } catch (error) {
       setStatusMessage(extractApiErrorMessage(error, 'Failed to trigger generation. Check backend logs for details.'));
     } finally {
@@ -1065,7 +1140,7 @@ const CalibrationLab: React.FC = () => {
                       className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
                     >
                       <RefreshCcw className="h-4 w-4" />
-                      {generating ? 'Launching�' : assimilationReady ? 'Run Calibration' : 'Run Blocked'}
+                      {generating ? 'Launching�' : assimilationReady ? 'Run Metrics Calibration' : 'Run Blocked'}
                     </button>
                     <button
                       type="button"
@@ -1084,6 +1159,10 @@ const CalibrationLab: React.FC = () => {
                       <ArrowRight className="h-4 w-4" /> Refresh Detail
                     </button>
                   </div>
+                  <p className="text-[11px] text-purple-100/70">
+                    Tip: <span className="font-semibold text-purple-100">Run Metrics Calibration</span> updates metrics/run history. Use
+                    <span className="font-semibold text-emerald-200"> Queue Listening Item</span> to generate baseline and A/B audio players.
+                  </p>
                 </div>
 
                 {hasPendingChanges && (
