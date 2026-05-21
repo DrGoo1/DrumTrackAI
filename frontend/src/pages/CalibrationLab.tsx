@@ -490,7 +490,24 @@ const CalibrationLab: React.FC = () => {
         setStatusMessage(null);
       }
       try {
-        const response = await api.get<DrummerDetailPayload>(`drummers/${slug}`);
+        let response: { data: DrummerDetailPayload } | null = null;
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            response = await api.get<DrummerDetailPayload>(`drummers/${slug}`);
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 3 && shouldRetryRequest(error)) {
+              await sleepWithBackoff(attempt);
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (!response) {
+          throw lastError ?? new Error('Failed to load calibration detail.');
+        }
         const payload = response.data;
         const merged: DrummerDetail = {
           ...payload,
@@ -507,7 +524,7 @@ const CalibrationLab: React.FC = () => {
         setTextDrafts(newDrafts);
         setTextErrors({});
       } catch (error) {
-        setDetailError('Failed to load calibration detail.');
+        setDetailError(extractApiErrorMessage(error, 'Failed to load calibration detail.'));
       } finally {
         setDetailLoading(false);
       }
