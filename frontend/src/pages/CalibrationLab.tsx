@@ -737,12 +737,14 @@ const CalibrationLab: React.FC = () => {
       let response: { data: GenerateRunResponse } | null = null;
       let lastError: unknown = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
+        setStatusMessage(`Launching calibration run (attempt ${attempt}/3)...`);
         try {
-          response = await api.post<GenerateRunResponse>(`drummers/${selectedSlug}/generate`);
+          response = await api.post<GenerateRunResponse>(`drummers/${selectedSlug}/generate`, undefined, { timeout: 15000 });
           break;
         } catch (error) {
           lastError = error;
           if (attempt < 3 && shouldRetryRequest(error)) {
+            setStatusMessage(`Launch attempt ${attempt} failed; retrying...`);
             await sleepWithBackoff(attempt);
             continue;
           }
