@@ -210,6 +210,8 @@ const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 })
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
 const LISTENING_QUEUE_TIMEOUT_MS = 60000;
 const LISTENING_ITEM_TIMEOUT_MS = 30000;
+const LISTENING_ITEM_READY_RETRIES = 8;
+const LISTENING_ITEM_READY_DELAY_MS = 1500;
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
@@ -723,9 +725,42 @@ const CalibrationLab: React.FC = () => {
 
       const nextItemId = response.data.item_id;
       if (nextItemId) {
-        await fetchItem(nextItemId);
+        let hydratedItem: EvaluationItemPayload | null = null;
+        for (let attempt = 1; attempt <= LISTENING_ITEM_READY_RETRIES; attempt += 1) {
+          setPairwiseMessage(
+            `Listening item queued. Preparing audio players (${attempt}/${LISTENING_ITEM_READY_RETRIES})...`
+          );
+          try {
+            const itemResponse = await api.get<EvaluationItemPayload>(`evaluation-items/${nextItemId}`, {
+              timeout: LISTENING_ITEM_TIMEOUT_MS,
+            });
+            hydratedItem = itemResponse.data;
+            break;
+          } catch (error) {
+            const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+            const isLastAttempt = attempt === LISTENING_ITEM_READY_RETRIES;
+            if (statusCode === 404 && !isLastAttempt) {
+              await sleep(LISTENING_ITEM_READY_DELAY_MS);
+              continue;
+            }
+            if (!isLastAttempt && shouldRetryRequest(error)) {
+              await sleepWithBackoff(attempt);
+              continue;
+            }
+            throw error;
+          }
+        }
+
+        if (hydratedItem) {
+          setCurrentItem(hydratedItem);
+          setItemError(null);
+          setPairwiseMessage('Listening item queued. Review baseline vs A/B and submit judgment.');
+        } else {
+          setCurrentItem(null);
+          setItemError('Listening item queued, but audio players are still preparing. Retry in a few seconds.');
+          setPairwiseMessage('Listening item queued. Audio is still processing in the background.');
+        }
         setTab('listening');
-        setPairwiseMessage('Listening item queued. Review baseline vs A/B and submit judgment.');
       } else {
         setPairwiseMessage('Candidates queued, but no evaluation item was created.');
       }
