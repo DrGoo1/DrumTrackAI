@@ -1,12 +1,18 @@
 const LOCAL_API_PORT = "8000";
+const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api2.onrender.com";
 
 /** Resolve the backend base URL, preferring explicit overrides and falling back to sensible defaults. */
 export function resolveApiBase(): string {
   if (typeof window !== "undefined") {
     const win = window as any;
     const hostLower = String(win?.location?.hostname || "localhost").toLowerCase();
-    if (hostLower.endsWith("netlify.app") || hostLower === "drumtrackai.netlify.app") {
-      return "https://drumtrackai-calibration-api2.onrender.com";
+    if (
+      hostLower.endsWith("netlify.app") ||
+      hostLower === "drumtrackai.netlify.app" ||
+      hostLower === "drumtrackai.net" ||
+      hostLower === "www.drumtrackai.net"
+    ) {
+      return CALIBRATION_API_BASE;
     }
     // Prefer explicit environment variable configured at build-time (e.g., Netlify UI)
     const explicitBase = process.env.REACT_APP_API_BASE;
@@ -33,7 +39,7 @@ export function resolveApiBase(): string {
   if (envBase) {
     const lower = envBase.toLowerCase();
     if (lower.includes('netlify.app')) {
-      return 'https://drumtrackai-calibration-api2.onrender.com';
+      return CALIBRATION_API_BASE;
     }
     return envBase;
   }
