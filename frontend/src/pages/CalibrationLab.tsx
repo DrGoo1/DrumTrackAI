@@ -432,7 +432,9 @@ const CalibrationLab: React.FC = () => {
       let lastError: any = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          response = await api.get<DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] }>('drummers');
+          response = await api.get<DrummerListItem[] | { value?: DrummerListItem[]; drummers?: DrummerListItem[] }>('drummers', {
+            timeout: 45000,
+          });
           break;
         } catch (error: any) {
           lastError = error;
@@ -570,6 +572,9 @@ const CalibrationLab: React.FC = () => {
   }, [selectedSlug, loadDetail]);
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') {
+      return;
+    }
     const liveBase = resolveApiBaseNormalized();
     const url = `${liveBase.replace(/\/$/, '')}/calibration/drummers`;
     fetch(url, { mode: 'cors', cache: 'no-store' })
