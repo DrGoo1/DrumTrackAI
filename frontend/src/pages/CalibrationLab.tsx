@@ -208,6 +208,8 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
+const LISTENING_QUEUE_TIMEOUT_MS = 60000;
+const LISTENING_ITEM_TIMEOUT_MS = 30000;
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
@@ -550,10 +552,29 @@ const CalibrationLab: React.FC = () => {
     setItemLoading(true);
     setItemError(null);
     try {
-      const response = await api.get<EvaluationItemPayload>(`evaluation-items/${normalized}`);
+      let response: { data: EvaluationItemPayload } | null = null;
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await api.get<EvaluationItemPayload>(`evaluation-items/${normalized}`, {
+            timeout: LISTENING_ITEM_TIMEOUT_MS,
+          });
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3 && shouldRetryRequest(error)) {
+            await sleepWithBackoff(attempt);
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!response) {
+        throw lastError ?? new Error('Unable to load listening item.');
+      }
       setCurrentItem(response.data);
     } catch (error) {
-      setItemError('Unable to load listening item.');
+      setItemError(extractApiErrorMessage(error, 'Unable to load listening item.'));
     } finally {
       setItemLoading(false);
     }
@@ -680,12 +701,16 @@ const CalibrationLab: React.FC = () => {
       let response: { data: GenerateCandidatesResponse } | null = null;
       let lastError: unknown = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
+        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/3)...`);
         try {
-          response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload);
+          response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload, {
+            timeout: LISTENING_QUEUE_TIMEOUT_MS,
+          });
           break;
         } catch (error) {
           lastError = error;
           if (attempt < 3 && shouldRetryRequest(error)) {
+            setPairwiseMessage(`Queue attempt ${attempt} failed; retrying...`);
             await sleepWithBackoff(attempt);
             continue;
           }
@@ -707,7 +732,7 @@ const CalibrationLab: React.FC = () => {
     } catch (error) {
       setItemError(extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.'));
     } finally {
-      await Promise.all([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
+      await Promise.allSettled([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
       setListeningBusy(false);
     }
   };
