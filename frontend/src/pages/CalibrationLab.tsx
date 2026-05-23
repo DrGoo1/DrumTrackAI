@@ -455,7 +455,7 @@ const FEEL_KNOB_KEYS = new Set(['timing_scale', 'velocity_std_scale', 'fill_fact
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
-const LISTENING_QUEUE_TIMEOUT_MS = 90000;
+const LISTENING_QUEUE_TIMEOUT_MS = 120000;
 const LISTENING_ITEM_TIMEOUT_MS = 45000;
 const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
@@ -717,6 +717,7 @@ const CalibrationLab: React.FC = () => {
     confidence: 3,
   });
   const autoQueuedSlugsRef = useRef<Set<string>>(new Set());
+  const autoQueueInFlightRef = useRef<Set<string>>(new Set());
 
   const [debugInfo, setDebugInfo] = useState<{
     apiBase: string;
@@ -1009,8 +1010,9 @@ const CalibrationLab: React.FC = () => {
     }
   };
 
-  const handleQueueListeningItem = useCallback(async () => {
-    if (!selectedSlug) return;
+  const handleQueueListeningItem = useCallback(async (): Promise<boolean> => {
+    if (!selectedSlug) return false;
+    let queuedSuccessfully = false;
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
@@ -1028,8 +1030,8 @@ const CalibrationLab: React.FC = () => {
 
       let response: { data: GenerateCandidatesResponse } | null = null;
       let lastError: unknown = null;
-      for (let attempt = 1; attempt <= 4; attempt += 1) {
-        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/4)...`);
+      for (let attempt = 1; attempt <= 6; attempt += 1) {
+        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/6)...`);
         try {
           response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload, {
             timeout: LISTENING_QUEUE_TIMEOUT_MS,
@@ -1037,7 +1039,7 @@ const CalibrationLab: React.FC = () => {
           break;
         } catch (error) {
           lastError = error;
-          if (attempt < 4 && shouldRetryRequest(error)) {
+          if (attempt < 6 && shouldRetryRequest(error)) {
             setPairwiseMessage(`Queue attempt ${attempt} failed; backend may be waking up, retrying...`);
             await sleepWithBackoff(attempt);
             continue;
@@ -1051,6 +1053,7 @@ const CalibrationLab: React.FC = () => {
 
       const nextItemId = response.data.item_id;
       if (nextItemId) {
+        queuedSuccessfully = true;
         let hydratedItem: EvaluationItemPayload | null = null;
         const totalHydrationAttempts = LISTENING_ITEM_READY_RETRIES + LISTENING_ARTIFACT_READY_RETRIES;
         for (let attempt = 1; attempt <= totalHydrationAttempts; attempt += 1) {
@@ -1113,10 +1116,12 @@ const CalibrationLab: React.FC = () => {
       } else {
         setItemError(baseMessage);
       }
+      return false;
     } finally {
       await Promise.allSettled([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
       setListeningBusy(false);
     }
+    return queuedSuccessfully;
   }, [selectedSlug, assimilationReady, readinessHint, baseGrooveId, reviewerId, loadDetail, loadDrummers]);
 
   useEffect(() => {
@@ -1125,10 +1130,19 @@ const CalibrationLab: React.FC = () => {
     if (!assimilationReady) return;
     if (currentItem?.target_drummer_slug === selectedSlug) return;
     if (autoQueuedSlugsRef.current.has(selectedSlug)) return;
+    if (autoQueueInFlightRef.current.has(selectedSlug)) return;
 
-    autoQueuedSlugsRef.current.add(selectedSlug);
+    autoQueueInFlightRef.current.add(selectedSlug);
     setPairwiseMessage('Auto-loading listening drum tracks for selected drummer...');
-    void handleQueueListeningItem();
+    void (async () => {
+      const succeeded = await handleQueueListeningItem();
+      autoQueueInFlightRef.current.delete(selectedSlug);
+      if (succeeded) {
+        autoQueuedSlugsRef.current.add(selectedSlug);
+      } else {
+        setPairwiseMessage('Auto-load could not queue drum tracks yet. Backend may be waking up — retrying is safe.');
+      }
+    })();
   }, [selectedSlug, detail, detailLoading, listeningBusy, assimilationReady, currentItem, handleQueueListeningItem]);
 
   const handlePairwiseSubmit = async (event: FormEvent<HTMLFormElement>) => {
