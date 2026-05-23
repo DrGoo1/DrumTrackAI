@@ -750,6 +750,21 @@ const extractApiErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const extractItemIdFromGenerateError = (error: unknown): string | null => {
+  if (!axios.isAxiosError(error)) return null;
+  const data = error.response?.data as
+    | { item_id?: string | null; detail?: { item_id?: string | null } | string }
+    | undefined;
+  const directItemId = (data?.item_id || '').trim();
+  if (directItemId) return directItemId;
+  const detail = data?.detail;
+  if (detail && typeof detail === 'object' && 'item_id' in detail) {
+    const nestedItemId = String((detail as { item_id?: string | null }).item_id || '').trim();
+    if (nestedItemId) return nestedItemId;
+  }
+  return null;
+};
+
 const CalibrationLab: React.FC = () => {
   const [drummers, setDrummers] = useState<DrummerListItem[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -1182,6 +1197,22 @@ const CalibrationLab: React.FC = () => {
           break;
         } catch (error) {
           lastError = error;
+          const recoveredItemId = extractItemIdFromGenerateError(error);
+          if (recoveredItemId) {
+            response = {
+              data: {
+                status: 'queued',
+                run_ids: [],
+                item_id: recoveredItemId,
+              },
+            };
+            setListeningProgress({
+              active: true,
+              label: 'Queue request timed out, but item was created. Tracking render progress...',
+              value: 0.3,
+            });
+            break;
+          }
           if (attempt < 6 && shouldRetryRequest(error)) {
             setListeningProgress((prev) => ({
               ...prev,
