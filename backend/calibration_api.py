@@ -5,6 +5,7 @@ import json
 import shutil
 import logging
 import threading
+import asyncio
 from datetime import datetime
 import os
 import base64
@@ -2262,7 +2263,10 @@ async def get_evaluation_item(item_id: str, db: CentralDatabaseService = Depends
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing item id")
 
     try:
-        item = db.get_evaluation_item(item_id=item_id)
+        item = await asyncio.wait_for(
+            asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
+            timeout=8.0,
+        )
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
 
@@ -2275,11 +2279,20 @@ async def get_evaluation_item(item_id: str, db: CentralDatabaseService = Depends
             run_id_val = (run_id or "").strip() if run_id else ""
             if not run_id_val:
                 continue
-            artifacts = db.get_audio_artifacts_for_run(run_id=run_id_val)
+            try:
+                artifacts = await asyncio.wait_for(
+                    asyncio.to_thread(db.get_audio_artifacts_for_run, run_id=run_id_val),
+                    timeout=6.0,
+                )
+            except Exception:
+                logger.warning("evaluation_item_artifacts_lookup_failed item_id=%s run_id=%s", item_id, run_id_val)
+                artifacts = []
             artifact_map[label] = [_serialize_artifact(artifact) for artifact in artifacts]
 
         baseline_label = _infer_baseline_label(item=item, artifact_lookup=artifact_map)
         return _serialize_item(item, artifact_map, baseline_label=baseline_label)
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item lookup timed out")
     except HTTPException:
         raise
     except Exception as exc:
