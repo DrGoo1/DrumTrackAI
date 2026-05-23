@@ -8003,6 +8003,21 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             if not item_id:
                 return None
 
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            """
+                            SELECT *
+                            FROM public.evaluation_items
+                            WHERE item_id = :item_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"item_id": item_id},
+                    ).mappings().first()
+                return self._row_to_evaluation_item(row) if row else None
+
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
