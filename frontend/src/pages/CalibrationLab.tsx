@@ -856,6 +856,7 @@ const CalibrationLab: React.FC = () => {
 
   const handleQueueListeningItem = async () => {
     if (!selectedSlug) return;
+    setTab('listening');
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
@@ -1530,6 +1531,90 @@ const CalibrationLab: React.FC = () => {
                     </button>
                   ))}
                 </div>
+
+                {tab !== 'listening' && (
+                  <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">Listening Dock</p>
+                      <button
+                        type="button"
+                        onClick={() => setTab('listening')}
+                        className="inline-flex items-center gap-2 rounded-full border border-emerald-400/50 bg-emerald-500/20 px-3 py-1.5 text-[11px] font-semibold text-emerald-100"
+                      >
+                        <Headphones className="h-3.5 w-3.5" /> Open Full Listening Panel
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <label className="text-[11px] text-emerald-100/90">
+                        Reviewer ID
+                        <input
+                          type="text"
+                          value={reviewerId}
+                          onChange={(event) => setReviewerId(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1.5 text-[11px] text-emerald-50"
+                        />
+                      </label>
+                      <label className="text-[11px] text-emerald-100/90">
+                        Base Groove ID
+                        <input
+                          type="text"
+                          value={baseGrooveId}
+                          onChange={(event) => setBaseGrooveId(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1.5 text-[11px] text-emerald-50"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleQueueListeningItem}
+                        disabled={listeningBusy || !selectedSlug}
+                        className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3.5 py-1.5 text-[11px] font-semibold text-emerald-100"
+                      >
+                        <Headphones className="h-3.5 w-3.5" /> {listeningBusy ? 'Queuing…' : 'Queue Listening Item'}
+                      </button>
+                      {currentItem?.item_id && (
+                        <p className="text-[11px] text-emerald-100/80">
+                          Current item: <span className="font-mono">{currentItem.item_id}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {itemError && <p className="mt-3 rounded-lg bg-rose-500/20 px-3 py-2 text-[11px] text-rose-200">{itemError}</p>}
+                    {pairwiseMessage && (
+                      <p className="mt-3 rounded-lg bg-emerald-500/20 px-3 py-2 text-[11px] text-emerald-100">{pairwiseMessage}</p>
+                    )}
+
+                    {currentItem && (
+                      <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                        {artifactGroups.map(({ label, entries }) => (
+                          <div key={`dock-${label}`} className="rounded-xl border border-emerald-500/25 bg-emerald-950/25 p-2.5">
+                            <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-200/90">{label}</p>
+                            <div className="mt-2 space-y-2">
+                              {entries.slice(0, 1).map((artifact) => {
+                                const src = resolveArtifactSource(artifact);
+                                return src ? (
+                                  <AudioPreviewPlayer
+                                    key={`dock-${artifact.artifact_id}`}
+                                    src={src}
+                                    title={artifact.artifact_type || 'audio'}
+                                  />
+                                ) : (
+                                  <p key={`dock-${artifact.artifact_id}`} className="text-[10px] text-rose-200">
+                                    Unable to resolve audio source.
+                                  </p>
+                                );
+                              })}
+                              {entries.length === 0 && <p className="text-[10px] text-emerald-100/70">No artifacts yet.</p>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {tab === 'adjustments' && pendingAdjustments && (
                   <div className="space-y-6">
