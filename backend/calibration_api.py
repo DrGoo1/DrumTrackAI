@@ -1734,8 +1734,14 @@ def _fetch_item_feedback(db: CentralDatabaseService, *, item_id: str, drummer_sl
 
 @router.get("/drummers", response_model=List[DrummerListItem])
 async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) -> List[DrummerListItem]:
+    async def _db_call_with_timeout(func, *args, timeout: float = 6.0, default=None, **kwargs):
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+        except Exception:
+            return default
+
     try:
-        rows = db.get_drummers() or []
+        rows = await _db_call_with_timeout(db.get_drummers, timeout=8.0, default=[]) or []
         results: List[DrummerListItem] = []
         for row in rows:
             try:
@@ -1756,11 +1762,12 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
                     except Exception:
                         completion_info = None
 
-                latest_run: Optional["CalibrationRun"] = None
-                try:
-                    latest_run = db.get_latest_calibration_run(drummer_slug=slug)
-                except Exception:
-                    latest_run = None
+                latest_run: Optional["CalibrationRun"] = await _db_call_with_timeout(
+                    db.get_latest_calibration_run,
+                    drummer_slug=slug,
+                    timeout=4.0,
+                    default=None,
+                )
 
                 if completion_info is None:
                     completion_info = _completion_from_run(latest_run)
@@ -1773,10 +1780,18 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
                     metrics_within_int = latest_run.within_tolerance_count
                     metrics_total_int = latest_run.total_compared
 
-                assimilation_status: Dict[str, Any]
-                try:
-                    assimilation_status = _assimilation_status_for_slug(db, slug)
-                except Exception:
+                assimilation_status = await _db_call_with_timeout(
+                    _assimilation_status_for_slug,
+                    db,
+                    slug,
+                    timeout=6.0,
+                    default={
+                        "status": "unknown",
+                        "ready_for_calibration": False,
+                        "missing_steps": ["status_check_failed"],
+                    },
+                )
+                if not isinstance(assimilation_status, dict):
                     assimilation_status = {
                         "status": "unknown",
                         "ready_for_calibration": False,
