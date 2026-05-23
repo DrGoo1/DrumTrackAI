@@ -64,6 +64,65 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [loopEnabled, setLoopEnabled] = useState(false);
+  const [waveformBins, setWaveformBins] = useState<number[]>([]);
+  const [waveformError, setWaveformError] = useState<string | null>(null);
+
+  const playbackProgress = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadWaveform = async () => {
+      setWaveformError(null);
+      setWaveformBins([]);
+      try {
+        const response = await fetch(src);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const audioBufferRaw = await response.arrayBuffer();
+        const WindowWithWebkitAudio = window as Window & {
+          webkitAudioContext?: typeof AudioContext;
+        };
+        const AudioContextCtor = window.AudioContext || WindowWithWebkitAudio.webkitAudioContext;
+        if (!AudioContextCtor) {
+          throw new Error('AudioContext unavailable');
+        }
+        const audioContext = new AudioContextCtor();
+        try {
+          const decoded = await audioContext.decodeAudioData(audioBufferRaw.slice(0));
+          if (cancelled) return;
+          const channel = decoded.getChannelData(0);
+          if (!channel.length) return;
+
+          const bins = 96;
+          const blockSize = Math.max(1, Math.floor(channel.length / bins));
+          const next: number[] = [];
+          for (let i = 0; i < bins; i += 1) {
+            const start = i * blockSize;
+            const end = Math.min(channel.length, start + blockSize);
+            let peak = 0;
+            for (let j = start; j < end; j += 1) {
+              const v = Math.abs(channel[j] || 0);
+              if (v > peak) peak = v;
+            }
+            next.push(peak);
+          }
+          setWaveformBins(next);
+        } finally {
+          void audioContext.close();
+        }
+      } catch {
+        if (!cancelled) {
+          setWaveformError('Waveform unavailable for this track.');
+        }
+      }
+    };
+
+    void loadWaveform();
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -116,6 +175,15 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
     setCurrentTime(next);
   };
 
+  const seekTo = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const max = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Math.max(duration, 0);
+    const next = Math.min(max, Math.max(0, seconds));
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -136,13 +204,56 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
     <div className="rounded-xl border border-purple-500/30 bg-purple-950/50 p-3">
       <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
       <p className="mb-2 text-[11px] text-purple-100/70">{title}</p>
-      <div className="flex items-center gap-2">
+      <div className="mb-3 rounded-lg border border-purple-500/25 bg-purple-950/40 p-2">
+        <div className="relative h-20 overflow-hidden rounded bg-black/30">
+          <div className="absolute inset-0 flex items-end gap-[2px] px-1 py-1">
+            {waveformBins.length > 0
+              ? waveformBins.map((bin, index) => {
+                  const minHeight = 8;
+                  const px = minHeight + Math.round(bin * 54);
+                  return (
+                    <span
+                      key={`${title}-${index}`}
+                      style={{ height: `${px}px` }}
+                      className="w-full rounded-sm bg-emerald-300/80"
+                    />
+                  );
+                })
+              : Array.from({ length: 64 }).map((_, index) => (
+                  <span key={`${title}-placeholder-${index}`} className="h-3 w-full rounded-sm bg-purple-300/25" />
+                ))}
+          </div>
+          <div
+            className="absolute top-0 bottom-0 w-[2px] bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.85)]"
+            style={{ left: `${playbackProgress * 100}%` }}
+          />
+          <button
+            type="button"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+              seekTo((duration || 0) * ratio);
+            }}
+            className="absolute inset-0"
+            aria-label="Seek within track waveform"
+          />
+        </div>
+        {waveformError && <p className="mt-1 text-[10px] text-purple-200/70">{waveformError}</p>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => nudge(-5)}
+          onClick={() => seekTo(0)}
           className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
         >
-          -5s
+          |&lt;
+        </button>
+        <button
+          type="button"
+          onClick={() => nudge(-10)}
+          className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
+        >
+          -10s
         </button>
         <button
           type="button"
@@ -153,10 +264,17 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
         </button>
         <button
           type="button"
-          onClick={() => nudge(5)}
+          onClick={() => nudge(10)}
           className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
         >
-          +5s
+          +10s
+        </button>
+        <button
+          type="button"
+          onClick={() => seekTo(duration || 0)}
+          className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
+        >
+          &gt;|
         </button>
         <button
           type="button"
@@ -1261,12 +1379,6 @@ const CalibrationLab: React.FC = () => {
       if (artifactPollStateRef.current.itemId !== currentItemId) {
         return;
       }
-      if (artifactPollStateRef.current.attempts >= LISTENING_ARTIFACT_READY_RETRIES) {
-        window.clearInterval(timerId);
-        setArtifactPollInfo((prev) => ({ ...prev, active: false }));
-        return;
-      }
-
       artifactPollStateRef.current.attempts += 1;
       setArtifactPollInfo({
         active: true,
@@ -1982,8 +2094,8 @@ const CalibrationLab: React.FC = () => {
                     {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
                     {currentItem && artifactPollInfo.attempts > 0 && !hasCurrentPlayableArtifacts && (
                       <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                        Auto-refresh {artifactPollInfo.active ? 'active' : 'paused'} · attempt {artifactPollInfo.attempts}/
-                        {LISTENING_ARTIFACT_READY_RETRIES} · last checked {formatClockTime(artifactPollInfo.lastCheckedAt)}
+                        Auto-refresh {artifactPollInfo.active ? 'active' : 'idle'} · checks {artifactPollInfo.attempts} · last checked{' '}
+                        {formatClockTime(artifactPollInfo.lastCheckedAt)}
                       </p>
                     )}
 
@@ -2013,7 +2125,7 @@ const CalibrationLab: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="grid gap-4 md:grid-cols-3">
+                        <div className="grid gap-4">
                           {artifactGroups.map(({ key, label, entries }) => (
                             <div key={label} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-3">
                               <p className="text-[11px] uppercase tracking-[0.3em] text-purple-200/80">{label}</p>
