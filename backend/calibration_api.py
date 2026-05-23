@@ -2623,42 +2623,56 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
     if not slug:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
-    try:
+    async def _db_call_with_timeout(func, *args, timeout: float = 6.0, default=None, **kwargs):
         try:
-            drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
         except Exception:
+            return default
+
+    try:
+        drummer_row = await _db_call_with_timeout(
+            db.get_drummer,
+            slug,
+            timeout=4.0,
+            default={"id": slug, "display_name": slug},
+        )
+        if not drummer_row:
             drummer_row = {"id": slug, "display_name": slug}
         display_name = _display_name_from_row(drummer_row, slug)
 
-        adjustments: Dict[str, Any] = {}
-        metadata: Dict[str, Any] = {}
-        try:
-            adjustments_record = db.get_calibration_adjustments(slug) or {}
-            adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
-            metadata = _safe_json_dict(adjustments_record.get("metadata"))
-        except Exception:
-            adjustments = {}
-            metadata = {}
+        adjustments_record = await _db_call_with_timeout(
+            db.get_calibration_adjustments,
+            slug,
+            timeout=5.0,
+            default={},
+        ) or {}
+        adjustments: Dict[str, Any] = _safe_json_dict(adjustments_record.get("adjustments"))
+        metadata: Dict[str, Any] = _safe_json_dict(adjustments_record.get("metadata"))
 
-        rollup_targets: Dict[str, Any] = {}
-        try:
-            rollup_targets = db.get_drummer_profile_rollup(drummer_slug=slug) or {}
-            if not isinstance(rollup_targets, dict):
-                rollup_targets = {}
-        except Exception:
+        rollup_targets = await _db_call_with_timeout(
+            db.get_drummer_profile_rollup,
+            drummer_slug=slug,
+            timeout=6.0,
+            default={},
+        ) or {}
+        if not isinstance(rollup_targets, dict):
             rollup_targets = {}
 
-        latest_run: Optional["CalibrationRun"] = None
-        try:
-            latest_run = db.get_latest_calibration_run(drummer_slug=slug)
-        except Exception:
-            latest_run = None
+        latest_run = await _db_call_with_timeout(
+            db.get_latest_calibration_run,
+            drummer_slug=slug,
+            timeout=6.0,
+            default=None,
+        )
         metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
 
-        try:
-            runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
-        except Exception:
-            runs = []
+        runs = await _db_call_with_timeout(
+            db.get_calibration_runs,
+            drummer_slug=slug,
+            limit=10,
+            timeout=6.0,
+            default=[],
+        ) or []
         run_history: List[CalibrationRunPayload] = []
         for run in runs:
             try:
@@ -2666,10 +2680,13 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
             except Exception:
                 continue
 
-        try:
-            feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
-        except Exception:
-            feedback_entries = []
+        feedback_entries = await _db_call_with_timeout(
+            db.get_calibration_feedback,
+            drummer_slug=slug,
+            limit=25,
+            timeout=6.0,
+            default=[],
+        ) or []
         feedback_samples: List[FeedbackEntry] = []
         for item in feedback_entries:
             try:
@@ -2679,9 +2696,14 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
 
         completion_status = _completion_from_run(latest_run)
 
-        try:
-            assimilation_status = _assimilation_status_for_slug(db, slug)
-        except Exception:
+        assimilation_status = await _db_call_with_timeout(
+            _assimilation_status_for_slug,
+            db,
+            slug,
+            timeout=7.0,
+            default=None,
+        )
+        if not assimilation_status:
             assimilation_status = {
                 "status": "unknown",
                 "ready_for_calibration": False,

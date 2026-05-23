@@ -365,6 +365,7 @@ const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
 const LISTENING_ARTIFACT_READY_RETRIES = 16;
 const LISTENING_ARTIFACT_READY_DELAY_MS = 2000;
+const DRUMMER_DETAIL_TIMEOUT_MS = 45000;
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
@@ -669,7 +670,9 @@ const CalibrationLab: React.FC = () => {
         let lastError: unknown = null;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           try {
-            response = await api.get<DrummerDetailPayload>(`drummers/${slug}`);
+            response = await api.get<DrummerDetailPayload>(`drummers/${slug}`, {
+              timeout: DRUMMER_DETAIL_TIMEOUT_MS,
+            });
             break;
           } catch (error) {
             lastError = error;
@@ -699,7 +702,13 @@ const CalibrationLab: React.FC = () => {
         setTextDrafts(newDrafts);
         setTextErrors({});
       } catch (error) {
-        setDetailError(extractApiErrorMessage(error, 'Failed to load calibration detail.'));
+        const baseMessage = extractApiErrorMessage(error, 'Failed to load calibration detail.');
+        const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (statusCode && statusCode >= 500) {
+          setDetailError(`${baseMessage} (endpoint: /calibration/drummers/${slug})`);
+        } else {
+          setDetailError(baseMessage);
+        }
       } finally {
         setDetailLoading(false);
       }
