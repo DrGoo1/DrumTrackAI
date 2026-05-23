@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { resolveApiBaseNormalized } from '../utils/apiBase';
 import {
@@ -37,6 +37,152 @@ interface DrummerListItem {
   metricsWithin?: number;
   metricsCompared?: number;
 }
+
+const formatTimeSeconds = (value: number): string => {
+  if (!Number.isFinite(value) || value < 0) return '0:00';
+  const whole = Math.floor(value);
+  const minutes = Math.floor(whole / 60);
+  const seconds = whole % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const hasPlayableArtifacts = (item: EvaluationItemPayload | null): boolean => {
+  if (!item?.artifact_map) return false;
+  return Object.values(item.artifact_map)
+    .flat()
+    .some((artifact) => Boolean(resolveArtifactSource(artifact)));
+};
+
+const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, title }) => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onLoadedMetadata = () => {
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+    };
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime || 0);
+    };
+    const onEnded = () => {
+      if (!audio.loop) {
+        setIsPlaying(false);
+      }
+    };
+
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('ended', onEnded);
+    return () => {
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, [src]);
+
+  const togglePlayback = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      try {
+        await audio.play();
+        setIsPlaying(true);
+      } catch {
+        setIsPlaying(false);
+      }
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const nudge = (deltaSeconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const max = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Math.max(currentTime, 0);
+    const next = Math.min(max, Math.max(0, (audio.currentTime || 0) + deltaSeconds));
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const next = Number(event.target.value);
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  const toggleLoop = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const next = !loopEnabled;
+    audio.loop = next;
+    setLoopEnabled(next);
+  };
+
+  return (
+    <div className="rounded-xl border border-purple-500/30 bg-purple-950/50 p-3">
+      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
+      <p className="mb-2 text-[11px] text-purple-100/70">{title}</p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => nudge(-5)}
+          className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
+        >
+          -5s
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayback}
+          className="rounded-md border border-emerald-400/50 bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold text-emerald-100"
+        >
+          {isPlaying ? 'Pause' : 'Play'}
+        </button>
+        <button
+          type="button"
+          onClick={() => nudge(5)}
+          className="rounded-md border border-purple-500/40 px-2 py-1 text-[11px] text-purple-100"
+        >
+          +5s
+        </button>
+        <button
+          type="button"
+          onClick={toggleLoop}
+          className={`rounded-md border px-2 py-1 text-[11px] ${
+            loopEnabled
+              ? 'border-amber-400/60 bg-amber-500/20 text-amber-100'
+              : 'border-purple-500/40 text-purple-100'
+          }`}
+        >
+          Loop {loopEnabled ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="mt-2">
+        <input
+          type="range"
+          min={0}
+          max={Math.max(duration, 0.001)}
+          step={0.01}
+          value={Math.min(currentTime, Math.max(duration, 0.001))}
+          onChange={handleSeek}
+          className="w-full accent-emerald-400"
+        />
+        <div className="mt-1 flex items-center justify-between text-[10px] text-purple-100/60">
+          <span>{formatTimeSeconds(currentTime)}</span>
+          <span>{formatTimeSeconds(duration)}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface AdjustmentMetadata {
   field_help?: Record<string, string>;
@@ -212,6 +358,8 @@ const LISTENING_QUEUE_TIMEOUT_MS = 60000;
 const LISTENING_ITEM_TIMEOUT_MS = 30000;
 const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
+const LISTENING_ARTIFACT_READY_RETRIES = 16;
+const LISTENING_ARTIFACT_READY_DELAY_MS = 2000;
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
@@ -726,19 +874,28 @@ const CalibrationLab: React.FC = () => {
       const nextItemId = response.data.item_id;
       if (nextItemId) {
         let hydratedItem: EvaluationItemPayload | null = null;
-        for (let attempt = 1; attempt <= LISTENING_ITEM_READY_RETRIES; attempt += 1) {
+        const totalHydrationAttempts = LISTENING_ITEM_READY_RETRIES + LISTENING_ARTIFACT_READY_RETRIES;
+        for (let attempt = 1; attempt <= totalHydrationAttempts; attempt += 1) {
           setPairwiseMessage(
-            `Listening item queued. Preparing audio players (${attempt}/${LISTENING_ITEM_READY_RETRIES})...`
+            `Listening item queued. Preparing audio players (${attempt}/${totalHydrationAttempts})...`
           );
           try {
             const itemResponse = await api.get<EvaluationItemPayload>(`evaluation-items/${nextItemId}`, {
               timeout: LISTENING_ITEM_TIMEOUT_MS,
             });
             hydratedItem = itemResponse.data;
-            break;
+            if (hasPlayableArtifacts(hydratedItem)) {
+              break;
+            }
+
+            const isLastAttempt = attempt === totalHydrationAttempts;
+            if (!isLastAttempt) {
+              await sleep(LISTENING_ARTIFACT_READY_DELAY_MS);
+              continue;
+            }
           } catch (error) {
             const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
-            const isLastAttempt = attempt === LISTENING_ITEM_READY_RETRIES;
+            const isLastAttempt = attempt === totalHydrationAttempts;
             if (statusCode === 404 && !isLastAttempt) {
               await sleep(LISTENING_ITEM_READY_DELAY_MS);
               continue;
@@ -753,8 +910,13 @@ const CalibrationLab: React.FC = () => {
 
         if (hydratedItem) {
           setCurrentItem(hydratedItem);
-          setItemError(null);
-          setPairwiseMessage('Listening item queued. Review baseline vs A/B and submit judgment.');
+          const hasAudio = hasPlayableArtifacts(hydratedItem);
+          setItemError(hasAudio ? null : 'Listening item is ready, but audio artifacts are still rendering. Try Refresh Detail in a few seconds.');
+          setPairwiseMessage(
+            hasAudio
+              ? 'Listening item queued. Review baseline vs A/B and submit judgment.'
+              : 'Listening item queued. Audio render is still in progress.'
+          );
         } else {
           setCurrentItem(null);
           setItemError('Listening item queued, but audio players are still preparing. Retry in a few seconds.');
@@ -1616,7 +1778,7 @@ const CalibrationLab: React.FC = () => {
                                   return (
                                     <div key={artifact.artifact_id} className="space-y-2">
                                       {src ? (
-                                        <audio controls src={src} className="w-full" preload="none" />
+                                        <AudioPreviewPlayer src={src} title={artifact.artifact_type || 'audio'} />
                                       ) : (
                                         <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
                                           Unable to resolve audio source.
