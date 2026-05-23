@@ -931,14 +931,17 @@ const CalibrationLab: React.FC = () => {
     []
   );
 
-  const fetchItem = useCallback(async (itemId: string) => {
+  const fetchItem = useCallback(async (itemId: string, options?: { silent?: boolean }) => {
     const normalized = (itemId || '').trim();
     const endpoint = `/calibration/evaluation-items/${normalized}`;
     if (!normalized) {
       setCurrentItem(null);
       return;
     }
-    setItemLoading(true);
+    const silent = Boolean(options?.silent);
+    if (!silent) {
+      setItemLoading(true);
+    }
     setItemError(null);
     try {
       let response: { data: EvaluationItemPayload } | null = null;
@@ -973,7 +976,9 @@ const CalibrationLab: React.FC = () => {
         setItemError(baseMessage);
       }
     } finally {
-      setItemLoading(false);
+      if (!silent) {
+        setItemLoading(false);
+      }
     }
   }, []);
 
@@ -1421,7 +1426,7 @@ const CalibrationLab: React.FC = () => {
       });
       artifactPollBusyRef.current = true;
       try {
-        await fetchItem(currentItemId);
+        await fetchItem(currentItemId, { silent: true });
       } finally {
         artifactPollBusyRef.current = false;
       }
@@ -2129,7 +2134,6 @@ const CalibrationLab: React.FC = () => {
                         <Headphones className="h-4 w-4" /> {listeningBusy ? 'Queuing…' : 'Queue Listening Item'}
                       </button>
                     </div>
-                    {itemLoading && <p className="text-xs text-purple-100/70">Loading listening item…</p>}
                     {itemError && <p className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs text-rose-200">{itemError}</p>}
                     {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
                     {showListeningProgress && (
