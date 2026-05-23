@@ -55,31 +55,22 @@ const hasPlayableArtifacts = (item: EvaluationItemPayload | null): boolean => {
   if (!item?.artifact_map) return false;
   return Object.values(item.artifact_map)
     .flat()
-    .some((artifact) => resolveArtifactSources(artifact).length > 0);
+    .some((artifact) => Boolean(resolveArtifactSource(artifact)));
 };
 
-const AudioPreviewPlayer: React.FC<{ sources: string[]; title: string }> = ({ sources, title }) => {
+const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, title }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [loopEnabled, setLoopEnabled] = useState(false);
-  const [sourceIndex, setSourceIndex] = useState(0);
-  const [sourceError, setSourceError] = useState<string | null>(null);
-  const activeSource = sources[sourceIndex] ?? '';
-
-  useEffect(() => {
-    setSourceIndex(0);
-    setSourceError(null);
-  }, [sources]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !activeSource) return;
+    if (!audio) return;
 
     const onLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-      setSourceError(null);
     };
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime || 0);
@@ -89,30 +80,20 @@ const AudioPreviewPlayer: React.FC<{ sources: string[]; title: string }> = ({ so
         setIsPlaying(false);
       }
     };
-    const onError = () => {
-      if (sourceIndex + 1 < sources.length) {
-        setSourceIndex((prev) => prev + 1);
-      } else {
-        setIsPlaying(false);
-        setSourceError('Unable to load drum track from available URLs.');
-      }
-    };
 
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
-    audio.addEventListener('error', onError);
     return () => {
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
-      audio.removeEventListener('error', onError);
     };
-  }, [activeSource, sourceIndex, sources.length]);
+  }, [src]);
 
   const togglePlayback = async () => {
     const audio = audioRef.current;
-    if (!audio || !activeSource) return;
+    if (!audio) return;
     if (audio.paused) {
       try {
         await audio.play();
@@ -153,9 +134,8 @@ const AudioPreviewPlayer: React.FC<{ sources: string[]; title: string }> = ({ so
 
   return (
     <div className="rounded-xl border border-purple-500/30 bg-purple-950/50 p-3">
-      <audio ref={audioRef} src={activeSource} preload="metadata" className="hidden" />
+      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
       <p className="mb-2 text-[11px] text-purple-100/70">{title}</p>
-      {sourceError && <p className="mb-2 text-[10px] text-rose-200">{sourceError}</p>}
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -484,55 +464,23 @@ const ensureAbsoluteArtifactUrl = (value: string): string => {
   return `${backendBase.replace(/\/$/, '')}${normalized}`;
 };
 
-const resolveArtifactSources = (artifact: AudioArtifactPayload): string[] => {
+const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
   const candidate = artifact.public_url ?? artifact.storage_uri;
-  if (!candidate) return [];
+  if (!candidate) return null;
   const trimmed = candidate.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
 
-  const resolved = new Set<string>();
-  const pushAbsolute = (value: string) => {
-    const normalized = value.trim();
-    if (!normalized) return;
-    resolved.add(ensureAbsoluteArtifactUrl(normalized));
-  };
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    resolved.add(trimmed);
-    return Array.from(resolved);
-  }
-
-  const slashNormalized = trimmed.replace(/\\/g, '/');
-  const normalized = slashNormalized.replace(/^\.?\//, '');
-  const staticVariants = (relative: string) => {
-    const clean = relative.replace(/^\/+/, '');
-    const staticPath = `${CALIBRATION_STATIC_PREFIX}/${clean}`;
-    pushAbsolute(staticPath);
-    pushAbsolute(`/calibration${staticPath}`);
-  };
-
-  pushAbsolute(slashNormalized.startsWith('/') ? slashNormalized : `/${slashNormalized}`);
-  pushAbsolute(`/calibration/${normalized}`);
-
-  if (slashNormalized.startsWith(CALIBRATION_STATIC_PREFIX)) {
-    pushAbsolute(slashNormalized);
-    pushAbsolute(`/calibration${slashNormalized}`);
-  }
-
+  const normalized = trimmed.replace(/\\/g, '/').replace(/^\.?\//, '');
   const marker = 'artifacts/calibration/';
   const markerIndex = normalized.toLowerCase().indexOf(marker);
   if (markerIndex !== -1) {
-    const relative = normalized.slice(markerIndex + marker.length);
-    staticVariants(relative);
+    const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
+    return ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${relative}`);
   }
 
-  const segments = normalized.split('/').filter(Boolean);
-  const filename = segments.at(-1);
-  if (filename) {
-    staticVariants(filename);
-  }
-
-  return Array.from(resolved);
+  return ensureAbsoluteArtifactUrl(`/${normalized}`);
 };
 
 const formatPercent = (value?: number | null) => {
@@ -1140,7 +1088,7 @@ const CalibrationLab: React.FC = () => {
       if (succeeded) {
         autoQueuedSlugsRef.current.add(selectedSlug);
       } else {
-        setPairwiseMessage('Auto-load could not queue drum tracks yet. Backend may be waking up — retrying is safe.');
+        setPairwiseMessage('Auto-load could not queue drum tracks yet. Queue Listening Item to try again.');
       }
     })();
   }, [selectedSlug, detail, detailLoading, listeningBusy, assimilationReady, currentItem, handleQueueListeningItem]);
@@ -2088,11 +2036,11 @@ const CalibrationLab: React.FC = () => {
                               )}
                               <div className="mt-2 space-y-3">
                                 {entries.map((artifact) => {
-                                  const sources = resolveArtifactSources(artifact);
+                                  const src = resolveArtifactSource(artifact);
                                   return (
                                     <div key={artifact.artifact_id} className="space-y-2">
-                                      {sources.length > 0 ? (
-                                        <AudioPreviewPlayer sources={sources} title={artifact.artifact_type || 'drum track'} />
+                                      {src ? (
+                                        <AudioPreviewPlayer src={src} title={artifact.artifact_type || 'drum track'} />
                                       ) : (
                                         <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
                                           Unable to resolve drum track source.
