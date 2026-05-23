@@ -766,6 +766,11 @@ const CalibrationLab: React.FC = () => {
   const [baseGrooveId, setBaseGrooveId] = useState('base_groove');
   const [pairwiseSubmitting, setPairwiseSubmitting] = useState(false);
   const [pairwiseMessage, setPairwiseMessage] = useState<string | null>(null);
+  const [listeningProgress, setListeningProgress] = useState<{ active: boolean; label: string; value: number | null }>({
+    active: false,
+    label: '',
+    value: null,
+  });
   const artifactPollStateRef = useRef<{ itemId: string | null; attempts: number }>({ itemId: null, attempts: 0 });
   const artifactPollBusyRef = useRef(false);
   const [artifactPollInfo, setArtifactPollInfo] = useState<{ active: boolean; attempts: number; lastCheckedAt: number | null }>(
@@ -1048,6 +1053,7 @@ const CalibrationLab: React.FC = () => {
     setCurrentItem(null);
     setItemError(null);
     setPairwiseMessage(null);
+    setListeningProgress({ active: false, label: '', value: null });
   };
 
   const handleNumberChange = (key: string, raw: string) => {
@@ -1082,6 +1088,7 @@ const CalibrationLab: React.FC = () => {
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
+    setListeningProgress({ active: true, label: 'Queueing listening item...', value: 0.05 });
     if (!assimilationReady) {
       setPairwiseMessage(`${readinessHint} Trying server-side queue anyway to verify latest readiness.`);
     }
@@ -1097,7 +1104,11 @@ const CalibrationLab: React.FC = () => {
       let response: { data: GenerateCandidatesResponse } | null = null;
       let lastError: unknown = null;
       for (let attempt = 1; attempt <= 6; attempt += 1) {
-        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/6)...`);
+        setListeningProgress({
+          active: true,
+          label: `Queueing listening item (${attempt}/6)...`,
+          value: 0.05 + (attempt / 6) * 0.25,
+        });
         try {
           response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload, {
             timeout: LISTENING_QUEUE_TIMEOUT_MS,
@@ -1106,7 +1117,11 @@ const CalibrationLab: React.FC = () => {
         } catch (error) {
           lastError = error;
           if (attempt < 6 && shouldRetryRequest(error)) {
-            setPairwiseMessage(`Queue attempt ${attempt} failed; backend may be waking up, retrying...`);
+            setListeningProgress((prev) => ({
+              ...prev,
+              active: true,
+              label: `Queue attempt ${attempt} failed. Retrying...`,
+            }));
             await sleepWithBackoff(attempt);
             continue;
           }
@@ -1123,9 +1138,11 @@ const CalibrationLab: React.FC = () => {
         let hydratedItem: EvaluationItemPayload | null = null;
         const totalHydrationAttempts = LISTENING_ITEM_READY_RETRIES + LISTENING_ARTIFACT_READY_RETRIES;
         for (let attempt = 1; attempt <= totalHydrationAttempts; attempt += 1) {
-          setPairwiseMessage(
-            `Listening item queued. Preparing audio players (${attempt}/${totalHydrationAttempts})...`
-          );
+          setListeningProgress({
+            active: true,
+            label: `Preparing listening drum tracks (${attempt}/${totalHydrationAttempts})...`,
+            value: 0.3 + (attempt / totalHydrationAttempts) * 0.6,
+          });
           try {
             const itemResponse = await api.get<EvaluationItemPayload>(`evaluation-items/${nextItemId}`, {
               timeout: LISTENING_ITEM_TIMEOUT_MS,
@@ -1159,6 +1176,11 @@ const CalibrationLab: React.FC = () => {
           setCurrentItem(hydratedItem);
           const hasAudio = hasPlayableArtifacts(hydratedItem);
           setItemError(hasAudio ? null : 'Listening item is ready, but drum tracks are still rendering. Try Refresh Detail in a few seconds.');
+          setListeningProgress(
+            hasAudio
+              ? { active: false, label: '', value: null }
+              : { active: true, label: 'Rendering drum tracks...', value: null }
+          );
           setPairwiseMessage(
             hasAudio
               ? 'Listening item queued. Review baseline vs A/B and submit judgment.'
@@ -1168,9 +1190,11 @@ const CalibrationLab: React.FC = () => {
           setCurrentItem(null);
           setItemError('Listening item queued, but drum tracks are still preparing. Retry in a few seconds.');
           setPairwiseMessage('Listening item queued. Drum tracks are still processing in the background.');
+          setListeningProgress({ active: true, label: 'Rendering drum tracks...', value: null });
         }
       } else {
         setPairwiseMessage('Candidates queued, but no evaluation item was created.');
+        setListeningProgress({ active: false, label: '', value: null });
       }
     } catch (error) {
       const baseMessage = extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.');
@@ -1182,6 +1206,7 @@ const CalibrationLab: React.FC = () => {
       } else {
         setItemError(baseMessage);
       }
+      setListeningProgress({ active: false, label: '', value: null });
       return false;
     } finally {
       await Promise.allSettled([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
@@ -1356,6 +1381,16 @@ const CalibrationLab: React.FC = () => {
   const rollupShares = useMemo(() => asShareMap(detail?.rollupTargets?.instrument_shares), [detail]);
   const actualShares = useMemo(() => asShareMap(detail?.metrics?.instrument_category_shares), [detail]);
   const hasCurrentPlayableArtifacts = useMemo(() => hasPlayableArtifacts(currentItem), [currentItem]);
+  const listeningProgressValue = useMemo(() => {
+    if (listeningProgress.value != null) {
+      return Math.min(1, Math.max(0, listeningProgress.value));
+    }
+    if (currentItem && !hasCurrentPlayableArtifacts) {
+      return Math.min(0.95, 0.4 + artifactPollInfo.attempts * 0.03);
+    }
+    return 0;
+  }, [listeningProgress.value, currentItem, hasCurrentPlayableArtifacts, artifactPollInfo.attempts]);
+  const showListeningProgress = listeningProgress.active || itemLoading || Boolean(currentItem && !hasCurrentPlayableArtifacts);
 
   useEffect(() => {
     const currentItemId = currentItem?.item_id ?? null;
@@ -1369,7 +1404,6 @@ const CalibrationLab: React.FC = () => {
       return;
     }
 
-    setPairwiseMessage((prev) => prev ?? 'Listening item is ready. Waiting for drum tracks to finish rendering...');
     setArtifactPollInfo((prev) => ({ ...prev, active: true }));
 
     const timerId = window.setInterval(async () => {
@@ -1398,6 +1432,12 @@ const CalibrationLab: React.FC = () => {
       setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
     };
   }, [currentItem?.item_id, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
+
+  useEffect(() => {
+    if (hasCurrentPlayableArtifacts) {
+      setListeningProgress((prev) => (prev.active ? { active: false, label: '', value: null } : prev));
+    }
+  }, [hasCurrentPlayableArtifacts]);
 
   const metricsRows = useMemo(
     () => [
@@ -1772,8 +1812,8 @@ const CalibrationLab: React.FC = () => {
                   </div>
                 )}
 
-                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr),minmax(360px,1fr)]">
-                  <div className="order-2 space-y-5 xl:order-2">
+                <div className="grid gap-6">
+                  <div className="order-2 space-y-4 lg:max-h-[58vh] lg:overflow-y-auto lg:pr-1">
                     <div className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-purple-200/80">Calibration Controls</p>
                       <div className="mt-3 grid gap-3">
@@ -2077,7 +2117,7 @@ const CalibrationLab: React.FC = () => {
 
                   </div>
 
-                  <div className="order-1 space-y-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-5 xl:order-1">
+                  <div className="order-1 space-y-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">Listening Workspace</p>
                       <button
@@ -2092,6 +2132,20 @@ const CalibrationLab: React.FC = () => {
                     {itemLoading && <p className="text-xs text-purple-100/70">Loading listening item…</p>}
                     {itemError && <p className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs text-rose-200">{itemError}</p>}
                     {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
+                    {showListeningProgress && (
+                      <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+                        <div className="mb-1 flex items-center justify-between text-[11px] text-amber-100">
+                          <span>{listeningProgress.label || 'Rendering drum tracks...'}</span>
+                          <span>{Math.round(listeningProgressValue * 100)}%</span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-purple-950/70">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-amber-300 to-emerald-300 transition-[width] duration-500"
+                            style={{ width: `${Math.max(6, Math.round(listeningProgressValue * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {currentItem && artifactPollInfo.attempts > 0 && !hasCurrentPlayableArtifacts && (
                       <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                         Auto-refresh {artifactPollInfo.active ? 'active' : 'idle'} · checks {artifactPollInfo.attempts} · last checked{' '}
