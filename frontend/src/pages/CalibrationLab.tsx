@@ -455,14 +455,25 @@ const FEEL_KNOB_KEYS = new Set(['timing_scale', 'velocity_std_scale', 'fill_fact
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
-const LISTENING_QUEUE_TIMEOUT_MS = 60000;
+const LISTENING_QUEUE_TIMEOUT_MS = 90000;
 const LISTENING_ITEM_TIMEOUT_MS = 45000;
 const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
 const LISTENING_ARTIFACT_READY_RETRIES = 16;
 const LISTENING_ARTIFACT_READY_DELAY_MS = 2000;
 const DRUMMER_DETAIL_TIMEOUT_MS = 45000;
+const DEFAULT_TEST_DRUMMER_KEYWORD = 'bonham';
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+const pickDefaultDrummerSlug = (items: DrummerListItem[]): string | null => {
+  if (!items.length) return null;
+  const bonham = items.find((item) => {
+    const slug = String(item.slug || '').toLowerCase();
+    const name = String(item.displayName || '').toLowerCase();
+    return slug.includes(DEFAULT_TEST_DRUMMER_KEYWORD) || name.includes('john bonham');
+  });
+  return (bonham || items[0]).slug;
+};
 
 const ensureAbsoluteArtifactUrl = (value: string): string => {
   if (!value) return value;
@@ -705,6 +716,7 @@ const CalibrationLab: React.FC = () => {
     more_musical: '',
     confidence: 3,
   });
+  const autoQueuedSlugsRef = useRef<Set<string>>(new Set());
 
   const [debugInfo, setDebugInfo] = useState<{
     apiBase: string;
@@ -749,7 +761,10 @@ const CalibrationLab: React.FC = () => {
         : [];
       setDrummers(items);
       if (items.length && !selectedSlug) {
-        setSelectedSlug(items[0].slug);
+        const preferred = pickDefaultDrummerSlug(items);
+        if (preferred) {
+          setSelectedSlug(preferred);
+        }
       }
     } catch (error: any) {
       const statusCode = error?.response?.status;
@@ -963,6 +978,9 @@ const CalibrationLab: React.FC = () => {
   const handleSelectDrummer = (slug: string) => {
     setSelectedSlug(slug);
     setTab('adjustments');
+    setCurrentItem(null);
+    setItemError(null);
+    setPairwiseMessage(null);
   };
 
   const handleNumberChange = (key: string, raw: string) => {
@@ -991,7 +1009,7 @@ const CalibrationLab: React.FC = () => {
     }
   };
 
-  const handleQueueListeningItem = async () => {
+  const handleQueueListeningItem = useCallback(async () => {
     if (!selectedSlug) return;
     setListeningBusy(true);
     setItemError(null);
@@ -1010,8 +1028,8 @@ const CalibrationLab: React.FC = () => {
 
       let response: { data: GenerateCandidatesResponse } | null = null;
       let lastError: unknown = null;
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/3)...`);
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        setPairwiseMessage(`Queueing listening item (attempt ${attempt}/4)...`);
         try {
           response = await api.post<GenerateCandidatesResponse>('generate-candidates', requestPayload, {
             timeout: LISTENING_QUEUE_TIMEOUT_MS,
@@ -1019,8 +1037,8 @@ const CalibrationLab: React.FC = () => {
           break;
         } catch (error) {
           lastError = error;
-          if (attempt < 3 && shouldRetryRequest(error)) {
-            setPairwiseMessage(`Queue attempt ${attempt} failed; retrying...`);
+          if (attempt < 4 && shouldRetryRequest(error)) {
+            setPairwiseMessage(`Queue attempt ${attempt} failed; backend may be waking up, retrying...`);
             await sleepWithBackoff(attempt);
             continue;
           }
@@ -1099,7 +1117,19 @@ const CalibrationLab: React.FC = () => {
       await Promise.allSettled([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
       setListeningBusy(false);
     }
-  };
+  }, [selectedSlug, assimilationReady, readinessHint, baseGrooveId, reviewerId, loadDetail, loadDrummers]);
+
+  useEffect(() => {
+    if (!selectedSlug || detailLoading || listeningBusy || !detail) return;
+    if (detail.slug !== selectedSlug) return;
+    if (!assimilationReady) return;
+    if (currentItem?.target_drummer_slug === selectedSlug) return;
+    if (autoQueuedSlugsRef.current.has(selectedSlug)) return;
+
+    autoQueuedSlugsRef.current.add(selectedSlug);
+    setPairwiseMessage('Auto-loading listening drum tracks for selected drummer...');
+    void handleQueueListeningItem();
+  }, [selectedSlug, detail, detailLoading, listeningBusy, assimilationReady, currentItem, handleQueueListeningItem]);
 
   const handlePairwiseSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
