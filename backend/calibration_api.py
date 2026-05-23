@@ -2257,12 +2257,16 @@ async def submit_attribute_ratings(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
 @router.get("/evaluation-items/{item_id}", response_model=EvaluationItemPayload)
-async def get_evaluation_item(item_id: str, db: CentralDatabaseService = Depends(get_db_service)) -> EvaluationItemPayload:
+async def get_evaluation_item(item_id: str) -> EvaluationItemPayload:
     item_id = (item_id or "").strip()
     if not item_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing item id")
 
     try:
+        db = await asyncio.wait_for(
+            asyncio.to_thread(get_db_service),
+            timeout=5.0,
+        )
         item = await asyncio.wait_for(
             asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
             timeout=8.0,
