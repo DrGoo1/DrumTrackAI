@@ -508,13 +508,6 @@ const STATUS_LABEL: Record<CompletionStatus, string> = {
   unknown: 'Unknown',
 };
 
-const STATUS_STYLE: Record<CompletionStatus, string> = {
-  ready: 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40',
-  refine: 'bg-amber-500/20 text-amber-200 border border-amber-400/40',
-  needs_tuning: 'bg-rose-500/20 text-rose-200 border border-rose-400/40',
-  unknown: 'bg-slate-500/20 text-slate-200 border border-slate-400/40',
-};
-
 const STATUS_FILTERS: Array<{ id: 'all' | CompletionStatus; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'ready', label: 'Ready' },
