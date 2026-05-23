@@ -38,6 +38,11 @@ interface DrummerListItem {
   metricsCompared?: number;
 }
 
+const formatClockTime = (value: number | null): string => {
+  if (!value) return '—';
+  return new Date(value).toLocaleTimeString();
+};
+
 const formatTimeSeconds = (value: number): string => {
   if (!Number.isFinite(value) || value < 0) return '0:00';
   const whole = Math.floor(value);
@@ -559,6 +564,13 @@ const CalibrationLab: React.FC = () => {
   const [pairwiseMessage, setPairwiseMessage] = useState<string | null>(null);
   const artifactPollStateRef = useRef<{ itemId: string | null; attempts: number }>({ itemId: null, attempts: 0 });
   const artifactPollBusyRef = useRef(false);
+  const [artifactPollInfo, setArtifactPollInfo] = useState<{ active: boolean; attempts: number; lastCheckedAt: number | null }>(
+    {
+      active: false,
+      attempts: 0,
+      lastCheckedAt: null,
+    }
+  );
   const [pairwiseForm, setPairwiseForm] = useState<PairwiseJudgmentForm>({
     preferred_candidate: '',
     closer_to_target: '',
@@ -1086,13 +1098,16 @@ const CalibrationLab: React.FC = () => {
     const currentItemId = currentItem?.item_id ?? null;
     if (artifactPollStateRef.current.itemId !== currentItemId) {
       artifactPollStateRef.current = { itemId: currentItemId, attempts: 0 };
+      setArtifactPollInfo({ active: false, attempts: 0, lastCheckedAt: null });
     }
 
     if (tab !== 'listening' || !currentItemId || hasCurrentPlayableArtifacts || listeningBusy) {
+      setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
       return;
     }
 
     setPairwiseMessage((prev) => prev ?? 'Listening item is ready. Waiting for artifacts to finish rendering...');
+    setArtifactPollInfo((prev) => ({ ...prev, active: true }));
 
     const timerId = window.setInterval(async () => {
       if (artifactPollBusyRef.current) {
@@ -1103,10 +1118,16 @@ const CalibrationLab: React.FC = () => {
       }
       if (artifactPollStateRef.current.attempts >= LISTENING_ARTIFACT_READY_RETRIES) {
         window.clearInterval(timerId);
+        setArtifactPollInfo((prev) => ({ ...prev, active: false }));
         return;
       }
 
       artifactPollStateRef.current.attempts += 1;
+      setArtifactPollInfo({
+        active: true,
+        attempts: artifactPollStateRef.current.attempts,
+        lastCheckedAt: Date.now(),
+      });
       artifactPollBusyRef.current = true;
       try {
         await fetchItem(currentItemId);
@@ -1117,6 +1138,7 @@ const CalibrationLab: React.FC = () => {
 
     return () => {
       window.clearInterval(timerId);
+      setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
     };
   }, [tab, currentItem?.item_id, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
 
@@ -1765,6 +1787,12 @@ const CalibrationLab: React.FC = () => {
                     {itemLoading && <p className="text-xs text-purple-100/70">Loading listening item…</p>}
                     {itemError && <p className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs text-rose-200">{itemError}</p>}
                     {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
+                    {currentItem && artifactPollInfo.attempts > 0 && !hasCurrentPlayableArtifacts && (
+                      <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                        Auto-refresh {artifactPollInfo.active ? 'active' : 'paused'} · attempt {artifactPollInfo.attempts}/
+                        {LISTENING_ARTIFACT_READY_RETRIES} · last checked {formatClockTime(artifactPollInfo.lastCheckedAt)}
+                      </p>
+                    )}
 
                     {currentItem && (
                       <>
