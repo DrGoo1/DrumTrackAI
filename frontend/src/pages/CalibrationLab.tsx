@@ -761,6 +761,7 @@ const CalibrationLab: React.FC = () => {
   const [currentItem, setCurrentItem] = useState<EvaluationItemPayload | null>(null);
   const [itemLoading, setItemLoading] = useState(false);
   const [itemError, setItemError] = useState<string | null>(null);
+  const [pendingListeningItemId, setPendingListeningItemId] = useState<string | null>(null);
   const [listeningBusy, setListeningBusy] = useState(false);
   const [reviewerId, setReviewerId] = useState('calibration_auto');
   const [baseGrooveId, setBaseGrooveId] = useState('base_groove');
@@ -1056,6 +1057,7 @@ const CalibrationLab: React.FC = () => {
     setSelectedSlug(slug);
     setTab('adjustments');
     setCurrentItem(null);
+    setPendingListeningItemId(null);
     setItemError(null);
     setPairwiseMessage(null);
     setListeningProgress({ active: false, label: '', value: null });
@@ -1093,6 +1095,7 @@ const CalibrationLab: React.FC = () => {
     setListeningBusy(true);
     setItemError(null);
     setPairwiseMessage(null);
+    setPendingListeningItemId(null);
     setListeningProgress({ active: true, label: 'Queueing listening item...', value: 0.05 });
     if (!assimilationReady) {
       setPairwiseMessage(`${readinessHint} Trying server-side queue anyway to verify latest readiness.`);
@@ -1140,6 +1143,7 @@ const CalibrationLab: React.FC = () => {
       const nextItemId = response.data.item_id;
       if (nextItemId) {
         queuedSuccessfully = true;
+        setPendingListeningItemId(nextItemId);
         let hydratedItem: EvaluationItemPayload | null = null;
         const totalHydrationAttempts = LISTENING_ITEM_READY_RETRIES + LISTENING_ARTIFACT_READY_RETRIES;
         for (let attempt = 1; attempt <= totalHydrationAttempts; attempt += 1) {
@@ -1179,6 +1183,7 @@ const CalibrationLab: React.FC = () => {
 
         if (hydratedItem) {
           setCurrentItem(hydratedItem);
+          setPendingListeningItemId(null);
           const hasAudio = hasPlayableArtifacts(hydratedItem);
           setItemError(hasAudio ? null : 'Listening item is ready, but drum tracks are still rendering. Try Refresh Detail in a few seconds.');
           setListeningProgress(
@@ -1192,13 +1197,14 @@ const CalibrationLab: React.FC = () => {
               : 'Listening item queued. Drum track render is still in progress.'
           );
         } else {
-          setCurrentItem(null);
+          setCurrentItem((prev) => prev);
           setItemError('Listening item queued, but drum tracks are still preparing. Retry in a few seconds.');
           setPairwiseMessage('Listening item queued. Drum tracks are still processing in the background.');
           setListeningProgress({ active: true, label: 'Rendering drum tracks...', value: null });
         }
       } else {
         setPairwiseMessage('Candidates queued, but no evaluation item was created.');
+        setPendingListeningItemId(null);
         setListeningProgress({ active: false, label: '', value: null });
       }
     } catch (error) {
@@ -1211,6 +1217,7 @@ const CalibrationLab: React.FC = () => {
       } else {
         setItemError(baseMessage);
       }
+      setPendingListeningItemId(null);
       setListeningProgress({ active: false, label: '', value: null });
       return false;
     } finally {
@@ -1224,6 +1231,7 @@ const CalibrationLab: React.FC = () => {
     if (!selectedSlug || detailLoading || listeningBusy || !detail) return;
     if (detail.slug !== selectedSlug) return;
     if (!assimilationReady) return;
+    if (pendingListeningItemId) return;
     if (currentItem?.target_drummer_slug === selectedSlug) return;
     if (autoQueuedSlugsRef.current.has(selectedSlug)) return;
     if (autoQueueInFlightRef.current.has(selectedSlug)) return;
@@ -1239,7 +1247,7 @@ const CalibrationLab: React.FC = () => {
         setPairwiseMessage('Auto-load could not queue drum tracks yet. Queue Listening Item to try again.');
       }
     })();
-  }, [selectedSlug, detail, detailLoading, listeningBusy, assimilationReady, currentItem, handleQueueListeningItem]);
+  }, [selectedSlug, detail, detailLoading, listeningBusy, assimilationReady, pendingListeningItemId, currentItem, handleQueueListeningItem]);
 
   const handlePairwiseSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1386,6 +1394,7 @@ const CalibrationLab: React.FC = () => {
   const rollupShares = useMemo(() => asShareMap(detail?.rollupTargets?.instrument_shares), [detail]);
   const actualShares = useMemo(() => asShareMap(detail?.metrics?.instrument_category_shares), [detail]);
   const hasCurrentPlayableArtifacts = useMemo(() => hasPlayableArtifacts(currentItem), [currentItem]);
+  const activeListeningItemId = currentItem?.item_id ?? pendingListeningItemId;
   const listeningProgressValue = useMemo(() => {
     if (listeningProgress.value != null) {
       return Math.min(1, Math.max(0, listeningProgress.value));
@@ -1395,16 +1404,17 @@ const CalibrationLab: React.FC = () => {
     }
     return 0;
   }, [listeningProgress.value, currentItem, hasCurrentPlayableArtifacts, artifactPollInfo.attempts]);
-  const showListeningProgress = listeningProgress.active || itemLoading || Boolean(currentItem && !hasCurrentPlayableArtifacts);
+  const showListeningProgress =
+    listeningProgress.active || itemLoading || Boolean(pendingListeningItemId) || Boolean(currentItem && !hasCurrentPlayableArtifacts);
 
   useEffect(() => {
-    const currentItemId = currentItem?.item_id ?? null;
+    const currentItemId = activeListeningItemId ?? null;
     if (artifactPollStateRef.current.itemId !== currentItemId) {
       artifactPollStateRef.current = { itemId: currentItemId, attempts: 0 };
       setArtifactPollInfo({ active: false, attempts: 0, lastCheckedAt: null });
     }
 
-    if (!currentItemId || hasCurrentPlayableArtifacts || listeningBusy) {
+    if (!currentItemId || (hasCurrentPlayableArtifacts && !pendingListeningItemId) || listeningBusy) {
       setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
       return;
     }
@@ -1436,10 +1446,11 @@ const CalibrationLab: React.FC = () => {
       window.clearInterval(timerId);
       setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
     };
-  }, [currentItem?.item_id, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
+  }, [activeListeningItemId, pendingListeningItemId, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
 
   useEffect(() => {
     if (hasCurrentPlayableArtifacts) {
+      setPendingListeningItemId(null);
       setListeningProgress((prev) => (prev.active ? { active: false, label: '', value: null } : prev));
     }
   }, [hasCurrentPlayableArtifacts]);
