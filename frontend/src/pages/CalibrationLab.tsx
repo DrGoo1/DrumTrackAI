@@ -462,6 +462,24 @@ interface GenerateCandidatesResponse {
   run_ids: string[];
   session_id?: string | null;
   item_id?: string | null;
+  artifact_wait_enforced?: boolean;
+  artifact_wait_timeout_sec?: number;
+}
+
+interface ListeningLaneProgress {
+  lane: string;
+  run_id?: string | null;
+  ready: boolean;
+  artifact_count: number;
+  artifact_types: string[];
+  strict_reference_ok?: boolean;
+}
+
+interface ListeningItemProgressPayload {
+  item_id: string;
+  all_ready: boolean;
+  missing_lanes: string[];
+  lanes: ListeningLaneProgress[];
 }
 
 interface GenerateRunResponse {
@@ -553,7 +571,7 @@ const FEEL_KNOB_KEYS = new Set(['timing_scale', 'velocity_std_scale', 'fill_fact
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
-const LISTENING_QUEUE_TIMEOUT_MS = 120000;
+const LISTENING_QUEUE_TIMEOUT_MS = 180000;
 const LISTENING_ITEM_TIMEOUT_MS = 45000;
 const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
@@ -767,6 +785,8 @@ const CalibrationLab: React.FC = () => {
   const [baseGrooveId, setBaseGrooveId] = useState('base_groove');
   const [pairwiseSubmitting, setPairwiseSubmitting] = useState(false);
   const [pairwiseMessage, setPairwiseMessage] = useState<string | null>(null);
+  const [laneProgress, setLaneProgress] = useState<ListeningLaneProgress[]>([]);
+  const [laneProgressUpdatedAt, setLaneProgressUpdatedAt] = useState<number | null>(null);
   const [listeningProgress, setListeningProgress] = useState<{ active: boolean; label: string; value: number | null }>({
     active: false,
     label: '',
@@ -864,6 +884,43 @@ const CalibrationLab: React.FC = () => {
         calibration_tables: {},
         notes: ['health_unavailable'],
       });
+    }
+  }, []);
+
+  const fetchListeningProgress = useCallback(async (itemId: string, options?: { silent?: boolean }) => {
+    const normalized = (itemId || '').trim();
+    if (!normalized) {
+      setLaneProgress([]);
+      setLaneProgressUpdatedAt(null);
+      return;
+    }
+
+    const silent = Boolean(options?.silent);
+    try {
+      const response = await api.get<ListeningItemProgressPayload>(`evaluation-items/${normalized}/progress`, {
+        timeout: LISTENING_ITEM_TIMEOUT_MS,
+      });
+      const lanes = Array.isArray(response.data?.lanes) ? response.data.lanes : [];
+      setLaneProgress(lanes);
+      setLaneProgressUpdatedAt(Date.now());
+
+      if (silent) {
+        return;
+      }
+
+      const pending = lanes.filter((lane) => !lane.ready).map((lane) => lane.lane);
+      if (pending.length > 0) {
+        setListeningProgress((prev) => ({
+          ...prev,
+          active: true,
+          label: `Rendering lanes: ${pending.join(', ')}`,
+          value: null,
+        }));
+      }
+    } catch {
+      if (!silent) {
+        setLaneProgress([]);
+      }
     }
   }, []);
 
@@ -1058,6 +1115,8 @@ const CalibrationLab: React.FC = () => {
     setTab('adjustments');
     setCurrentItem(null);
     setPendingListeningItemId(null);
+    setLaneProgress([]);
+    setLaneProgressUpdatedAt(null);
     setItemError(null);
     setPairwiseMessage(null);
     setListeningProgress({ active: false, label: '', value: null });
@@ -1096,6 +1155,8 @@ const CalibrationLab: React.FC = () => {
     setItemError(null);
     setPairwiseMessage(null);
     setPendingListeningItemId(null);
+    setLaneProgress([]);
+    setLaneProgressUpdatedAt(null);
     setListeningProgress({ active: true, label: 'Queueing listening item...', value: 0.05 });
     if (!assimilationReady) {
       setPairwiseMessage(`${readinessHint} Trying server-side queue anyway to verify latest readiness.`);
@@ -1106,6 +1167,10 @@ const CalibrationLab: React.FC = () => {
         target_drummer_slug: selectedSlug,
         candidate_count: 2,
         include_baseline: true,
+        strict_reference_baseline: true,
+        wait_for_all_artifacts: true,
+        artifact_wait_timeout_sec: 120,
+        artifact_poll_interval_ms: 1500,
         reviewer_id: reviewerId || `calibration_auto_${selectedSlug}`,
       };
 
@@ -1157,6 +1222,7 @@ const CalibrationLab: React.FC = () => {
               timeout: LISTENING_ITEM_TIMEOUT_MS,
             });
             hydratedItem = itemResponse.data;
+            await fetchListeningProgress(nextItemId, { silent: true });
             if (hasPlayableArtifacts(hydratedItem)) {
               break;
             }
@@ -1225,7 +1291,7 @@ const CalibrationLab: React.FC = () => {
       setListeningBusy(false);
     }
     return queuedSuccessfully;
-  }, [selectedSlug, assimilationReady, readinessHint, baseGrooveId, reviewerId, loadDetail, loadDrummers]);
+  }, [selectedSlug, assimilationReady, readinessHint, baseGrooveId, reviewerId, loadDetail, loadDrummers, fetchListeningProgress]);
 
   useEffect(() => {
     if (!selectedSlug || detailLoading || listeningBusy || !detail) return;
@@ -1437,6 +1503,7 @@ const CalibrationLab: React.FC = () => {
       artifactPollBusyRef.current = true;
       try {
         await fetchItem(currentItemId, { silent: true });
+        await fetchListeningProgress(currentItemId, { silent: true });
       } finally {
         artifactPollBusyRef.current = false;
       }
@@ -1446,7 +1513,7 @@ const CalibrationLab: React.FC = () => {
       window.clearInterval(timerId);
       setArtifactPollInfo((prev) => (prev.active ? { ...prev, active: false } : prev));
     };
-  }, [activeListeningItemId, pendingListeningItemId, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
+  }, [activeListeningItemId, pendingListeningItemId, hasCurrentPlayableArtifacts, listeningBusy, fetchItem, fetchListeningProgress]);
 
   useEffect(() => {
     if (hasCurrentPlayableArtifacts) {
@@ -2166,6 +2233,33 @@ const CalibrationLab: React.FC = () => {
                         Auto-refresh {artifactPollInfo.active ? 'active' : 'idle'} · checks {artifactPollInfo.attempts} · last checked{' '}
                         {formatClockTime(artifactPollInfo.lastCheckedAt)}
                       </p>
+                    )}
+                    {laneProgress.length > 0 && (
+                      <div className="rounded-xl border border-purple-500/25 bg-purple-900/20 p-3">
+                        <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-purple-200/80">
+                          <span>Lane Render Status</span>
+                          <span>Updated {formatClockTime(laneProgressUpdatedAt)}</span>
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-3">
+                          {laneProgress.map((lane) => (
+                            <div
+                              key={`lane-progress-${lane.lane}`}
+                              className={`rounded-lg border px-2 py-2 text-[11px] ${
+                                lane.ready
+                                  ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                                  : 'border-amber-400/40 bg-amber-500/10 text-amber-100'
+                              }`}
+                            >
+                              <p className="font-semibold">{lane.lane}</p>
+                              <p className="mt-1">{lane.ready ? 'Ready' : 'Rendering'}</p>
+                              <p className="mt-1 text-[10px] opacity-80">Artifacts: {lane.artifact_count}</p>
+                              {lane.lane === 'baseline' && lane.strict_reference_ok === false && (
+                                <p className="mt-1 text-[10px] text-rose-200">Baseline source not strict-reference ready</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
 
                     {currentItem && (

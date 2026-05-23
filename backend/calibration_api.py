@@ -6,6 +6,7 @@ import shutil
 import logging
 import threading
 import asyncio
+import time
 from datetime import datetime
 import os
 import base64
@@ -371,6 +372,10 @@ class GenerateCandidatesRequest(BaseModel):
     reviewer_id: Optional[str] = None
     seed: Optional[int] = None
     generation_controls: Optional[Dict[str, Any]] = None
+    strict_reference_baseline: bool = True
+    wait_for_all_artifacts: bool = True
+    artifact_wait_timeout_sec: int = Field(default=120, ge=30, le=600)
+    artifact_poll_interval_ms: int = Field(default=1500, ge=500, le=10000)
 
 
 class AutoAssimilationPopulateRequest(BaseModel):
@@ -1555,6 +1560,74 @@ def _serialize_run_bundle(db: CentralDatabaseService, run_id: Optional[str]) -> 
     }
 
 
+def _collect_item_lane_progress(
+    db: CentralDatabaseService,
+    *,
+    baseline_run_id: Optional[str],
+    candidate_a_run_id: Optional[str],
+    candidate_b_run_id: Optional[str],
+) -> Dict[str, Any]:
+    lane_specs: List[tuple[str, Optional[str]]] = [
+        ("baseline", baseline_run_id),
+        ("A", candidate_a_run_id),
+        ("B", candidate_b_run_id),
+    ]
+    lanes: List[Dict[str, Any]] = []
+    missing_lanes: List[str] = []
+    all_ready = True
+
+    for lane, run_id in lane_specs:
+        run_id_val = (run_id or "").strip()
+        lane_payload: Dict[str, Any] = {
+            "lane": lane,
+            "run_id": run_id_val or None,
+            "ready": False,
+            "artifact_count": 0,
+            "artifact_types": [],
+            "strict_reference_ok": True,
+        }
+
+        if not run_id_val:
+            lane_payload["strict_reference_ok"] = lane != "baseline"
+            lanes.append(lane_payload)
+            missing_lanes.append(lane)
+            all_ready = False
+            continue
+
+        try:
+            artifacts = db.get_audio_artifacts_for_run(run_id=run_id_val)
+        except Exception:
+            artifacts = []
+
+        serialized = [_serialize_artifact(item) for item in artifacts]
+        artifact_types = [str(item.artifact_type or "").strip() for item in serialized if str(item.artifact_type or "").strip()]
+
+        lane_payload["artifact_count"] = len(serialized)
+        lane_payload["artifact_types"] = artifact_types
+        lane_payload["ready"] = len(serialized) > 0
+
+        if lane == "baseline":
+            strict_reference_ok = any(
+                str(item.artifact_type or "").strip() == "reference_song"
+                and str((item.render_recipe or {}).get("source_type") or "").strip() == "assimilated_song"
+                for item in serialized
+            )
+            lane_payload["strict_reference_ok"] = strict_reference_ok
+            lane_payload["ready"] = lane_payload["ready"] and strict_reference_ok
+
+        if not lane_payload["ready"]:
+            missing_lanes.append(lane)
+            all_ready = False
+
+        lanes.append(lane_payload)
+
+    return {
+        "all_ready": all_ready,
+        "missing_lanes": missing_lanes,
+        "lanes": lanes,
+    }
+
+
 def _safe_json_load(value: Any, default: Any) -> Any:
     try:
         if isinstance(value, str):
@@ -1725,6 +1798,48 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
                 logger.warning(f"Skipping drummer row due to roster serialization error: {row_exc}")
                 continue
         return sorted(results, key=lambda item: item.displayName.lower())
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/evaluation-items/{item_id}/progress")
+async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
+    item_id = (item_id or "").strip()
+    if not item_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing item id")
+
+    try:
+        db = await asyncio.wait_for(
+            asyncio.to_thread(get_db_service),
+            timeout=5.0,
+        )
+        item = await asyncio.wait_for(
+            asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
+            timeout=8.0,
+        )
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
+
+        progress = await asyncio.wait_for(
+            asyncio.to_thread(
+                _collect_item_lane_progress,
+                db,
+                baseline_run_id=item.baseline_run_id,
+                candidate_a_run_id=item.candidate_a_run_id,
+                candidate_b_run_id=item.candidate_b_run_id,
+            ),
+            timeout=8.0,
+        )
+        return {
+            "item_id": item.item_id,
+            "all_ready": bool(progress.get("all_ready")),
+            "missing_lanes": progress.get("missing_lanes") or [],
+            "lanes": progress.get("lanes") or [],
+        }
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item progress lookup timed out")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 # ASGI application factory
@@ -2458,9 +2573,17 @@ async def generate_candidates(
         baseline_run_id: Optional[str] = None
         reference_artifact_id: Optional[str] = None
 
+        if payload.candidate_count < 2:
+            _raise_stage_error("candidate_count must be at least 2 to produce A/B outputs", status_code=status.HTTP_400_BAD_REQUEST)
+
         if payload.include_baseline:
             stage = "baseline_source_select"
             baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
+            if payload.strict_reference_baseline and not baseline_source:
+                _raise_stage_error(
+                    "Strict baseline mode requires an assimilated source clip for baseline",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             if baseline_source:
                 source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
                 if source_groove_path:
@@ -2477,6 +2600,12 @@ async def generate_candidates(
                     baseline_source=baseline_source,
                     base_groove_id=item_base_groove_id,
                 )
+
+                if payload.strict_reference_baseline and not baseline_ref:
+                    _raise_stage_error(
+                        "Strict baseline mode failed to create baseline reference artifact",
+                        status_code=status.HTTP_409_CONFLICT,
+                    )
 
                 if baseline_ref:
                     baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
@@ -2619,11 +2748,44 @@ async def generate_candidates(
             if not item_id:
                 _raise_stage_error("Failed to create evaluation item")
 
+            if payload.wait_for_all_artifacts:
+                stage = "artifact_wait"
+                wait_start = time.perf_counter()
+                timeout_s = max(30.0, float(payload.artifact_wait_timeout_sec))
+                poll_s = max(0.5, float(payload.artifact_poll_interval_ms) / 1000.0)
+                lane_progress: Dict[str, Any] = {}
+
+                while True:
+                    lane_progress = _collect_item_lane_progress(
+                        db,
+                        baseline_run_id=baseline_run_id,
+                        candidate_a_run_id=candidate_a_run_id,
+                        candidate_b_run_id=candidate_b_run_id,
+                    )
+                    if lane_progress.get("all_ready"):
+                        break
+
+                    elapsed = time.perf_counter() - wait_start
+                    if elapsed >= timeout_s:
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail={
+                                "stage": stage,
+                                "message": "Timed out waiting for baseline/A/B artifacts",
+                                "item_id": item_id,
+                                "elapsed_sec": round(elapsed, 2),
+                                "progress": lane_progress,
+                            },
+                        )
+                    await asyncio.sleep(poll_s)
+
         return {
             "status": "queued",
             "run_ids": created_run_ids,
             "session_id": session_id,
             "item_id": item_id,
+            "artifact_wait_enforced": bool(payload.wait_for_all_artifacts),
+            "artifact_wait_timeout_sec": int(payload.artifact_wait_timeout_sec),
         }
     except HTTPException:
         raise
