@@ -189,6 +189,80 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
   );
 };
 
+const AdjustmentKnob: React.FC<{
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  help?: string;
+  onChange: (next: number) => void;
+}> = ({ label, value, min, max, step, help, onChange }) => {
+  const boundedValue = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
+  const span = Math.max(max - min, Number.EPSILON);
+  const ratio = (boundedValue - min) / span;
+  const angle = -135 + ratio * 270;
+  const radians = (angle * Math.PI) / 180;
+  const x2 = 50 + 28 * Math.cos(radians);
+  const y2 = 50 + 28 * Math.sin(radians);
+
+  const nudge = (delta: number) => {
+    const next = Math.min(max, Math.max(min, boundedValue + delta));
+    onChange(Number(next.toFixed(4)));
+  };
+
+  return (
+    <div className="rounded-2xl border border-amber-400/25 bg-amber-500/5 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-amber-100/90">{label}</p>
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => nudge(-step)}
+          className="h-7 w-7 rounded-full border border-amber-300/40 text-xs text-amber-100"
+          aria-label={`Decrease ${label}`}
+        >
+          −
+        </button>
+        <div className="relative h-20 w-20">
+          <svg viewBox="0 0 100 100" className="h-20 w-20">
+            <circle cx="50" cy="50" r="34" className="fill-purple-950/90 stroke-purple-500/30" strokeWidth="7" />
+            <circle
+              cx="50"
+              cy="50"
+              r="34"
+              className="fill-none stroke-amber-300/60"
+              strokeWidth="6"
+              strokeDasharray={`${ratio * 214} 214`}
+              transform="rotate(-135 50 50)"
+            />
+            <line x1="50" y1="50" x2={x2} y2={y2} className="stroke-amber-200" strokeWidth="5" strokeLinecap="round" />
+          </svg>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={boundedValue}
+            onChange={(event) => onChange(Number(event.target.value))}
+            className="absolute inset-0 cursor-pointer opacity-0"
+            aria-label={label}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => nudge(step)}
+          className="h-7 w-7 rounded-full border border-amber-300/40 text-xs text-amber-100"
+          aria-label={`Increase ${label}`}
+        >
+          +
+        </button>
+      </div>
+      <div className="mt-2 text-xs text-amber-200 font-mono">{boundedValue.toFixed(2)}</div>
+      {help && <p className="mt-1 text-[11px] text-purple-100/70">{help}</p>}
+    </div>
+  );
+};
+
 interface AdjustmentMetadata {
   field_help?: Record<string, string>;
 }
@@ -355,6 +429,8 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
     blurb: 'Reallocate note share across the kit to preserve each drummer fingerprint.',
   },
 ];
+
+const FEEL_KNOB_KEYS = new Set(['timing_scale', 'velocity_std_scale', 'fill_factor', 'fill_velocity_scale']);
 
 const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
@@ -1626,60 +1702,86 @@ const CalibrationLab: React.FC = () => {
                             <p className="text-xs text-purple-100/70">{group.blurb}</p>
                           </div>
                         </div>
-                        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                          {group.keys.map((key) => {
-                            const value = pendingAdjustments[key];
-                            const meta = CONTROL_BOUNDS[key];
-                            const help = detail.metadata?.field_help?.[key];
-                            if (meta) {
-                              return (
-                                <div key={key} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
-                                  <div className="flex items-center justify-between text-xs text-purple-100/70">
-                                    <span className="font-semibold text-white">{labelize(key)}</span>
-                                    <span className="font-mono text-amber-200">{Number(value).toFixed(2)}</span>
-                                  </div>
-                                  <input
-                                    type="range"
+                        <div className="mt-4 space-y-4">
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            {group.keys
+                              .filter((key) => FEEL_KNOB_KEYS.has(key) && Boolean(CONTROL_BOUNDS[key]))
+                              .map((key) => {
+                                const meta = CONTROL_BOUNDS[key];
+                                const value = Number(pendingAdjustments[key]);
+                                const help = detail.metadata?.field_help?.[key];
+                                return (
+                                  <AdjustmentKnob
+                                    key={key}
+                                    label={labelize(key)}
+                                    value={Number.isFinite(value) ? value : meta.min}
                                     min={meta.min}
                                     max={meta.max}
                                     step={meta.step}
-                                    value={Number(value)}
-                                    onChange={(event) => handleNumberChange(key, event.target.value)}
-                                    className="mt-3 w-full accent-amber-400"
+                                    help={help}
+                                    onChange={(next) => handleNumberChange(key, String(next))}
                                   />
-                                  <div className="mt-3 flex items-center gap-2 text-xs text-purple-100/70">
-                                    <input
-                                      type="number"
-                                      value={Number(value)}
-                                      min={meta.min}
-                                      max={meta.max}
-                                      step={meta.step}
-                                      onChange={(event) => handleNumberChange(key, event.target.value)}
-                                      className="w-24 rounded-lg border border-purple-500/30 bg-purple-950/60 px-2 py-1 text-xs"
+                                );
+                              })}
+                          </div>
+
+                          <div className="grid gap-3 lg:grid-cols-2">
+                            {group.keys
+                              .filter((key) => !FEEL_KNOB_KEYS.has(key) || !CONTROL_BOUNDS[key])
+                              .map((key) => {
+                                const value = pendingAdjustments[key];
+                                const meta = CONTROL_BOUNDS[key];
+                                const help = detail.metadata?.field_help?.[key];
+                                if (meta) {
+                                  return (
+                                    <div key={key} className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-3">
+                                      <div className="flex items-center justify-between text-xs text-purple-100/70">
+                                        <span className="font-semibold text-white">{labelize(key)}</span>
+                                        <span className="font-mono text-amber-200">{Number(value).toFixed(2)}</span>
+                                      </div>
+                                      <input
+                                        type="range"
+                                        min={meta.min}
+                                        max={meta.max}
+                                        step={meta.step}
+                                        value={Number(value)}
+                                        onChange={(event) => handleNumberChange(key, event.target.value)}
+                                        className="mt-2 w-full accent-amber-400"
+                                      />
+                                      <div className="mt-2 flex items-center gap-2 text-xs text-purple-100/70">
+                                        <input
+                                          type="number"
+                                          value={Number(value)}
+                                          min={meta.min}
+                                          max={meta.max}
+                                          step={meta.step}
+                                          onChange={(event) => handleNumberChange(key, event.target.value)}
+                                          className="w-20 rounded-lg border border-purple-500/30 bg-purple-950/60 px-2 py-1 text-xs"
+                                        />
+                                        {help && <span className="text-[11px] text-purple-200/70">{help}</span>}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                const draftValue = textDrafts[key] ?? '';
+                                return (
+                                  <div key={key} className="space-y-2 rounded-2xl border border-purple-500/20 bg-purple-900/20 p-3">
+                                    <div className="text-xs font-semibold uppercase tracking-[0.3em] text-purple-200">
+                                      {labelize(key)}
+                                    </div>
+                                    <textarea
+                                      value={draftValue}
+                                      onChange={(event) => handleTextDraftChange(key, event.target.value)}
+                                      onBlur={() => handleTextDraftCommit(key)}
+                                      rows={4}
+                                      className="w-full resize-none rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs font-mono text-purple-100"
                                     />
-                                    {help && <span className="text-[11px] text-purple-200/70">{help}</span>}
+                                    {help && <div className="text-[11px] text-purple-200/70">{help}</div>}
+                                    {textErrors[key] && <div className="text-[11px] text-rose-200/80">{textErrors[key]}</div>}
                                   </div>
-                                </div>
-                              );
-                            }
-                            const draftValue = textDrafts[key] ?? '';
-                            return (
-                              <div key={key} className="space-y-2 rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
-                                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-purple-200">
-                                  {labelize(key)}
-                                </div>
-                                <textarea
-                                  value={draftValue}
-                                  onChange={(event) => handleTextDraftChange(key, event.target.value)}
-                                  onBlur={() => handleTextDraftCommit(key)}
-                                  rows={6}
-                                  className="w-full resize-none rounded-lg border border-purple-500/30 bg-purple-950/60 px-3 py-2 text-xs font-mono text-purple-100"
-                                />
-                                {help && <div className="text-[11px] text-purple-200/70">{help}</div>}
-                                {textErrors[key] && <div className="text-[11px] text-rose-200/80">{textErrors[key]}</div>}
-                              </div>
-                            );
-                          })}
+                                );
+                              })}
+                          </div>
                         </div>
                       </div>
                     ))}
