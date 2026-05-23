@@ -557,6 +557,8 @@ const CalibrationLab: React.FC = () => {
   const [baseGrooveId, setBaseGrooveId] = useState('base_groove');
   const [pairwiseSubmitting, setPairwiseSubmitting] = useState(false);
   const [pairwiseMessage, setPairwiseMessage] = useState<string | null>(null);
+  const artifactPollStateRef = useRef<{ itemId: string | null; attempts: number }>({ itemId: null, attempts: 0 });
+  const artifactPollBusyRef = useRef(false);
   const [pairwiseForm, setPairwiseForm] = useState<PairwiseJudgmentForm>({
     preferred_candidate: '',
     closer_to_target: '',
@@ -1078,6 +1080,45 @@ const CalibrationLab: React.FC = () => {
 
   const rollupShares = useMemo(() => asShareMap(detail?.rollupTargets?.instrument_shares), [detail]);
   const actualShares = useMemo(() => asShareMap(detail?.metrics?.instrument_category_shares), [detail]);
+  const hasCurrentPlayableArtifacts = useMemo(() => hasPlayableArtifacts(currentItem), [currentItem]);
+
+  useEffect(() => {
+    const currentItemId = currentItem?.item_id ?? null;
+    if (artifactPollStateRef.current.itemId !== currentItemId) {
+      artifactPollStateRef.current = { itemId: currentItemId, attempts: 0 };
+    }
+
+    if (tab !== 'listening' || !currentItemId || hasCurrentPlayableArtifacts || listeningBusy) {
+      return;
+    }
+
+    setPairwiseMessage((prev) => prev ?? 'Listening item is ready. Waiting for artifacts to finish rendering...');
+
+    const timerId = window.setInterval(async () => {
+      if (artifactPollBusyRef.current) {
+        return;
+      }
+      if (artifactPollStateRef.current.itemId !== currentItemId) {
+        return;
+      }
+      if (artifactPollStateRef.current.attempts >= LISTENING_ARTIFACT_READY_RETRIES) {
+        window.clearInterval(timerId);
+        return;
+      }
+
+      artifactPollStateRef.current.attempts += 1;
+      artifactPollBusyRef.current = true;
+      try {
+        await fetchItem(currentItemId);
+      } finally {
+        artifactPollBusyRef.current = false;
+      }
+    }, LISTENING_ARTIFACT_READY_DELAY_MS);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [tab, currentItem?.item_id, hasCurrentPlayableArtifacts, listeningBusy, fetchItem]);
 
   const metricsRows = useMemo(
     () => [
