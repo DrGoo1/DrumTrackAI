@@ -456,7 +456,7 @@ const API_BASE = resolveApiBaseNormalized();
 const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
 const LISTENING_QUEUE_TIMEOUT_MS = 60000;
-const LISTENING_ITEM_TIMEOUT_MS = 30000;
+const LISTENING_ITEM_TIMEOUT_MS = 45000;
 const LISTENING_ITEM_READY_RETRIES = 8;
 const LISTENING_ITEM_READY_DELAY_MS = 1500;
 const LISTENING_ARTIFACT_READY_RETRIES = 16;
@@ -522,10 +522,6 @@ const resolveArtifactSources = (artifact: AudioArtifactPayload): string[] => {
   }
 
   return Array.from(resolved);
-};
-
-const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
-  return resolveArtifactSources(artifact)[0] ?? null;
 };
 
 const formatPercent = (value?: number | null) => {
@@ -850,6 +846,7 @@ const CalibrationLab: React.FC = () => {
 
   const fetchItem = useCallback(async (itemId: string) => {
     const normalized = (itemId || '').trim();
+    const endpoint = `/calibration/evaluation-items/${normalized}`;
     if (!normalized) {
       setCurrentItem(null);
       return;
@@ -879,7 +876,15 @@ const CalibrationLab: React.FC = () => {
       }
       setCurrentItem(response.data);
     } catch (error) {
-      setItemError(extractApiErrorMessage(error, 'Unable to load listening item.'));
+      const baseMessage = extractApiErrorMessage(error, 'Unable to load listening item.');
+      const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (statusCode && statusCode >= 500) {
+        setItemError(`${baseMessage} (endpoint: ${endpoint})`);
+      } else if (!statusCode) {
+        setItemError(`${baseMessage} (endpoint: ${endpoint})`);
+      } else {
+        setItemError(baseMessage);
+      }
     } finally {
       setItemLoading(false);
     }
@@ -1081,7 +1086,15 @@ const CalibrationLab: React.FC = () => {
         setPairwiseMessage('Candidates queued, but no evaluation item was created.');
       }
     } catch (error) {
-      setItemError(extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.'));
+      const baseMessage = extractApiErrorMessage(error, 'Unable to queue listening item. Check backend logs and retry.');
+      const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (statusCode && statusCode >= 500) {
+        setItemError(`${baseMessage} (endpoint: /calibration/generate-candidates)`);
+      } else if (!statusCode) {
+        setItemError(`${baseMessage} (endpoint: /calibration/generate-candidates)`);
+      } else {
+        setItemError(baseMessage);
+      }
     } finally {
       await Promise.allSettled([loadDetail(selectedSlug, { preserveStatusMessage: true }), loadDrummers()]);
       setListeningBusy(false);
@@ -1655,7 +1668,7 @@ const CalibrationLab: React.FC = () => {
                   </div>
                 )}
 
-                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr),minmax(0,0.95fr)]">
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr),minmax(360px,1fr)]">
                   <div className="order-2 space-y-5 xl:order-2">
                     <div className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-purple-200/80">Calibration Controls</p>
@@ -1704,7 +1717,7 @@ const CalibrationLab: React.FC = () => {
                           </div>
                         </div>
                         <div className="mt-4 space-y-4">
-                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="grid gap-3 sm:grid-cols-2">
                             {group.keys
                               .filter((key) => FEEL_KNOB_KEYS.has(key) && Boolean(CONTROL_BOUNDS[key]))
                               .map((key) => {
@@ -1726,7 +1739,7 @@ const CalibrationLab: React.FC = () => {
                               })}
                           </div>
 
-                          <div className="grid gap-3 lg:grid-cols-2">
+                          <div className="grid gap-3">
                             {group.keys
                               .filter((key) => !FEEL_KNOB_KEYS.has(key) || !CONTROL_BOUNDS[key])
                               .map((key) => {
@@ -1749,7 +1762,7 @@ const CalibrationLab: React.FC = () => {
                                         onChange={(event) => handleNumberChange(key, event.target.value)}
                                         className="mt-2 w-full accent-amber-400"
                                       />
-                                      <div className="mt-2 flex items-center gap-2 text-xs text-purple-100/70">
+                                      <div className="mt-2 flex flex-col gap-2 text-xs text-purple-100/70">
                                         <input
                                           type="number"
                                           value={Number(value)}
@@ -1757,7 +1770,7 @@ const CalibrationLab: React.FC = () => {
                                           max={meta.max}
                                           step={meta.step}
                                           onChange={(event) => handleNumberChange(key, event.target.value)}
-                                          className="w-20 rounded-lg border border-purple-500/30 bg-purple-950/60 px-2 py-1 text-xs"
+                                          className="w-24 rounded-lg border border-purple-500/30 bg-purple-950/60 px-2 py-1 text-xs"
                                         />
                                         {help && <span className="text-[11px] text-purple-200/70">{help}</span>}
                                       </div>
