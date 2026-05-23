@@ -295,7 +295,26 @@ def get_db_service() -> CentralDatabaseService:
     svc = CentralDatabaseService.get_instance()
     if svc is None:
         raise RuntimeError("CentralDatabaseService unavailable")
-    if not svc.initialize():
+
+    init_result: Dict[str, Any] = {"ok": False, "error": None}
+
+    def _init_worker() -> None:
+        try:
+            init_result["ok"] = bool(svc.initialize())
+        except Exception as exc:
+            init_result["error"] = exc
+
+    init_thread = threading.Thread(target=_init_worker, daemon=True)
+    init_thread.start()
+    init_thread.join(timeout=8.0)
+
+    if init_thread.is_alive():
+        raise RuntimeError("CentralDatabaseService initialization timed out")
+
+    if init_result["error"] is not None:
+        raise RuntimeError(f"CentralDatabaseService failed to initialize: {init_result['error']}")
+
+    if not init_result["ok"]:
         raise RuntimeError("CentralDatabaseService failed to initialize")
     return svc
 

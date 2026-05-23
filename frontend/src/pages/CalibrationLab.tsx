@@ -782,6 +782,8 @@ const CalibrationLab: React.FC = () => {
         const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
         if (statusCode && statusCode >= 500) {
           setDetailError(`${baseMessage} (endpoint: /calibration/drummers/${slug})`);
+        } else if (!statusCode) {
+          setDetailError(`${baseMessage} (endpoint: /calibration/drummers/${slug})`);
         } else {
           setDetailError(baseMessage);
         }
