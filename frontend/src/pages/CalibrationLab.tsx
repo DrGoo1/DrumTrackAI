@@ -55,22 +55,31 @@ const hasPlayableArtifacts = (item: EvaluationItemPayload | null): boolean => {
   if (!item?.artifact_map) return false;
   return Object.values(item.artifact_map)
     .flat()
-    .some((artifact) => Boolean(resolveArtifactSource(artifact)));
+    .some((artifact) => resolveArtifactSources(artifact).length > 0);
 };
 
-const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, title }) => {
+const AudioPreviewPlayer: React.FC<{ sources: string[]; title: string }> = ({ sources, title }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [loopEnabled, setLoopEnabled] = useState(false);
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const activeSource = sources[sourceIndex] ?? '';
+
+  useEffect(() => {
+    setSourceIndex(0);
+    setSourceError(null);
+  }, [sources]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !activeSource) return;
 
     const onLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+      setSourceError(null);
     };
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime || 0);
@@ -80,20 +89,30 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
         setIsPlaying(false);
       }
     };
+    const onError = () => {
+      if (sourceIndex + 1 < sources.length) {
+        setSourceIndex((prev) => prev + 1);
+      } else {
+        setIsPlaying(false);
+        setSourceError('Unable to load drum track from available URLs.');
+      }
+    };
 
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
     return () => {
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
     };
-  }, [src]);
+  }, [activeSource, sourceIndex, sources.length]);
 
   const togglePlayback = async () => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !activeSource) return;
     if (audio.paused) {
       try {
         await audio.play();
@@ -134,8 +153,9 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
 
   return (
     <div className="rounded-xl border border-purple-500/30 bg-purple-950/50 p-3">
-      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
+      <audio ref={audioRef} src={activeSource} preload="metadata" className="hidden" />
       <p className="mb-2 text-[11px] text-purple-100/70">{title}</p>
+      {sourceError && <p className="mb-2 text-[10px] text-rose-200">{sourceError}</p>}
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -453,25 +473,59 @@ const ensureAbsoluteArtifactUrl = (value: string): string => {
   return `${backendBase.replace(/\/$/, '')}${normalized}`;
 };
 
-const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
+const resolveArtifactSources = (artifact: AudioArtifactPayload): string[] => {
   const candidate = artifact.public_url ?? artifact.storage_uri;
-  if (!candidate) return null;
+  if (!candidate) return [];
   const trimmed = candidate.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
+  if (!trimmed) return [];
 
-  const normalized = trimmed.replace(/\\/g, '/').replace(/^\.?\//, '');
+  const resolved = new Set<string>();
+  const pushAbsolute = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized) return;
+    resolved.add(ensureAbsoluteArtifactUrl(normalized));
+  };
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    resolved.add(trimmed);
+    return Array.from(resolved);
+  }
+
+  const slashNormalized = trimmed.replace(/\\/g, '/');
+  const normalized = slashNormalized.replace(/^\.?\//, '');
+  const staticVariants = (relative: string) => {
+    const clean = relative.replace(/^\/+/, '');
+    const staticPath = `${CALIBRATION_STATIC_PREFIX}/${clean}`;
+    pushAbsolute(staticPath);
+    pushAbsolute(`/calibration${staticPath}`);
+  };
+
+  pushAbsolute(slashNormalized.startsWith('/') ? slashNormalized : `/${slashNormalized}`);
+  pushAbsolute(`/calibration/${normalized}`);
+
+  if (slashNormalized.startsWith(CALIBRATION_STATIC_PREFIX)) {
+    pushAbsolute(slashNormalized);
+    pushAbsolute(`/calibration${slashNormalized}`);
+  }
+
   const marker = 'artifacts/calibration/';
   const markerIndex = normalized.toLowerCase().indexOf(marker);
   if (markerIndex !== -1) {
-    const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
-    return ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${relative}`);
+    const relative = normalized.slice(markerIndex + marker.length);
+    staticVariants(relative);
   }
 
   const segments = normalized.split('/').filter(Boolean);
-  const filename = segments.pop();
-  return filename ? ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${filename}`) : null;
+  const filename = segments.at(-1);
+  if (filename) {
+    staticVariants(filename);
+  }
+
+  return Array.from(resolved);
+};
+
+const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
+  return resolveArtifactSources(artifact)[0] ?? null;
 };
 
 const formatPercent = (value?: number | null) => {
@@ -1601,53 +1655,43 @@ const CalibrationLab: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex flex-wrap gap-3 text-xs">
-                  {(['adjustments', 'metrics', 'feedback'] as TabId[]).map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setTab(id)}
-                      className="rounded-full px-4 py-2 font-semibold transition"
-                    >
-                      {labelize(id)}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="space-y-5 rounded-3xl border border-emerald-400/30 bg-emerald-500/10 p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">Listening Workspace</p>
-                    <button
-                      type="button"
-                      onClick={handleQueueListeningItem}
-                      disabled={listeningBusy || !selectedSlug}
-                      className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100"
-                    >
-                      <Headphones className="h-4 w-4" /> {listeningBusy ? 'Queuing…' : 'Queue Listening Item'}
-                    </button>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="text-xs text-emerald-100">
-                      Reviewer ID
-                      <input
-                        type="text"
-                        value={reviewerId}
-                        onChange={(event) => setReviewerId(event.target.value)}
-                        className="mt-2 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-50"
-                      />
-                    </label>
-                    <label className="text-xs text-emerald-100">
-                      Base Groove ID
-                      <input
-                        type="text"
-                        value={baseGrooveId}
-                        onChange={(event) => setBaseGrooveId(event.target.value)}
-                        className="mt-2 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-50"
-                      />
-                    </label>
-                  </div>
-                </div>
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr),minmax(0,0.95fr)]">
+                  <div className="order-2 space-y-5 xl:order-2">
+                    <div className="rounded-2xl border border-purple-500/20 bg-purple-900/20 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-purple-200/80">Calibration Controls</p>
+                      <div className="mt-3 grid gap-3">
+                        <label className="text-xs text-emerald-100">
+                          Reviewer ID
+                          <input
+                            type="text"
+                            value={reviewerId}
+                            onChange={(event) => setReviewerId(event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-50"
+                          />
+                        </label>
+                        <label className="text-xs text-emerald-100">
+                          Base Groove ID
+                          <input
+                            type="text"
+                            value={baseGrooveId}
+                            onChange={(event) => setBaseGrooveId(event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-50"
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {(['adjustments', 'metrics', 'feedback'] as TabId[]).map((id) => (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => setTab(id)}
+                              className="rounded-full px-3 py-1.5 text-[11px] font-semibold transition"
+                            >
+                              {labelize(id)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
 
                 {tab === 'adjustments' && pendingAdjustments && (
                   <div className="space-y-6">
@@ -1914,7 +1958,20 @@ const CalibrationLab: React.FC = () => {
                   </div>
                 )}
 
-                    <div className="space-y-5 rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-4">
+                  </div>
+
+                  <div className="order-1 space-y-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-5 xl:order-1">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">Listening Workspace</p>
+                      <button
+                        type="button"
+                        onClick={handleQueueListeningItem}
+                        disabled={listeningBusy || !selectedSlug}
+                        className="inline-flex items-center gap-2 rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100"
+                      >
+                        <Headphones className="h-4 w-4" /> {listeningBusy ? 'Queuing…' : 'Queue Listening Item'}
+                      </button>
+                    </div>
                     {itemLoading && <p className="text-xs text-purple-100/70">Loading listening item…</p>}
                     {itemError && <p className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs text-rose-200">{itemError}</p>}
                     {pairwiseMessage && <p className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs text-emerald-200">{pairwiseMessage}</p>}
@@ -1974,11 +2031,11 @@ const CalibrationLab: React.FC = () => {
                               )}
                               <div className="mt-2 space-y-3">
                                 {entries.map((artifact) => {
-                                  const src = resolveArtifactSource(artifact);
+                                  const sources = resolveArtifactSources(artifact);
                                   return (
                                     <div key={artifact.artifact_id} className="space-y-2">
-                                      {src ? (
-                                        <AudioPreviewPlayer src={src} title={artifact.artifact_type || 'drum track'} />
+                                      {sources.length > 0 ? (
+                                        <AudioPreviewPlayer sources={sources} title={artifact.artifact_type || 'drum track'} />
                                       ) : (
                                         <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 p-2 text-[11px] text-rose-200">
                                           Unable to resolve drum track source.
@@ -2045,6 +2102,7 @@ const CalibrationLab: React.FC = () => {
                       </>
                     )}
                   </div>
+                </div>
                 </div>
             )}
           </div>
