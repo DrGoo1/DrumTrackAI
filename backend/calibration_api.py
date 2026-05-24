@@ -12,6 +12,7 @@ import os
 import base64
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
@@ -317,6 +318,8 @@ def get_db_service() -> CentralDatabaseService:
 
     if not init_result["ok"]:
         raise RuntimeError("CentralDatabaseService failed to initialize")
+    if getattr(svc, "_engine", None) is None:
+        raise RuntimeError("Calibration API requires Postgres (DB_BACKEND=postgres with valid DATABASE_URL)")
     return svc
 
 
@@ -687,15 +690,11 @@ def _completion_from_run(run: Optional["CalibrationRun"]) -> CompletionStatusInf
     return _completion_from_counts(run.within_tolerance_count, run.total_compared)
 
 
-def _safe_count(cursor: Any, query: str, params: tuple[Any, ...]) -> int:
-    try:
-        row = cursor.execute(query, params).fetchone()
-        if not row:
-            return 0
-        value = row[0] if not isinstance(row, dict) else next(iter(row.values()))
-        return int(value or 0)
-    except Exception:
-        return 0
+def _require_postgres_engine(db: CentralDatabaseService):
+    engine = getattr(db, "_engine", None)
+    if engine is None:
+        raise RuntimeError("Calibration API requires Postgres engine")
+    return engine
 
 
 def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict[str, Any]:
@@ -721,253 +720,92 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
     if not slug:
         return status
 
-    if getattr(db, "_engine", None) is not None:
-        def _safe_count_pg(sql, params: Dict[str, Any]) -> int:
-            try:
-                with db._engine.connect() as conn_pg:
-                    row = conn_pg.execute(text(sql), params).first()
-                return int(row[0] or 0) if row else 0
-            except Exception:
-                return 0
+    engine = _require_postgres_engine(db)
 
-        songs = _safe_count_pg(
-            """
-            SELECT COUNT(DISTINCT analysis_id)
-            FROM public.song_performance_analysis
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        artifacts = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.analysis_artifacts
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        stems = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.stem_artifacts
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        hit_events = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.drum_hit_events
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        fills = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.fill_events
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        techniques = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.technique_events
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        phase4_enriched = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.song_performance_analysis
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-              AND groove_micro_timing_variance IS NOT NULL
-              AND groove_pocket_tightness IS NOT NULL
-              AND humanness_score IS NOT NULL
-            """,
-            {"slug": slug},
-        )
-        rollup_count = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.drummer_profile_rollups
-            WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
-            """,
-            {"slug": slug},
-        )
-        preset_count = _safe_count_pg(
-            """
-            SELECT COUNT(1)
-            FROM public.drummer_presets
-            WHERE (profile_type = 'drummer' AND CAST(source_ref AS TEXT) = CAST(:slug AS TEXT))
-               OR CAST(preset_id AS TEXT) = CAST(:preset_id AS TEXT)
-            """,
-            {"slug": slug, "preset_id": f"phase6_{slug}"},
-        )
+    def _safe_count_pg(sql: str, params: Dict[str, Any]) -> int:
+        try:
+            with engine.connect() as conn_pg:
+                row = conn_pg.execute(text(sql), params).first()
+            return int(row[0] or 0) if row else 0
+        except Exception:
+            return 0
 
-        missing_steps: List[str] = []
-        if songs <= 0:
-            missing_steps.append("ingestion")
-        if hit_events <= 0:
-            missing_steps.append("phase2_hit_events")
-        if fills <= 0 or techniques <= 0:
-            missing_steps.append("phase3_fills_techniques")
-        if phase4_enriched <= 0:
-            missing_steps.append("phase4_microtiming_dynamics")
-        if rollup_count <= 0:
-            missing_steps.append("phase5_rollup")
-        if preset_count <= 0:
-            missing_steps.append("phase6_persona_preset")
-
-        has_downstream_assimilation = (
-            phase4_enriched > 0
-            and rollup_count > 0
-            and preset_count > 0
-        )
-        if has_downstream_assimilation:
-            missing_steps = [
-                step
-                for step in missing_steps
-                if step not in {"phase2_hit_events", "phase3_fills_techniques"}
-            ]
-
-        ready = len(missing_steps) == 0
-        status["status"] = "ready_for_calibration" if ready else "needs_processing"
-        status["ready_for_calibration"] = ready
-        status["missing_steps"] = missing_steps
-        status["counts"] = {
-            "songs": songs,
-            "artifacts": artifacts,
-            "stems": stems,
-            "hit_events": hit_events,
-            "fills": fills,
-            "techniques": techniques,
-        }
-        status["metrics"] = {
-            "phase4_enriched_analyses": phase4_enriched,
-            "phase5_rollups": rollup_count,
-            "phase6_presets": preset_count,
-        }
-        return status
-
-    try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-    except Exception:
-        return status
-
-    drummer_fk: Optional[int] = None
-    try:
-        cursor.execute(
-            """
-            SELECT d.id
-            FROM drummers d
-            WHERE d.drummer_id = ? OR d.id = ?
-            LIMIT 1
-            """,
-            (slug, slug),
-        )
-        row = cursor.fetchone()
-        if row is not None:
-            try:
-                drummer_fk = int(row[0])
-            except Exception:
-                drummer_fk = None
-    except Exception:
-        drummer_fk = None
-
-    params_fk_or_slug = (drummer_fk if drummer_fk is not None else slug, slug)
-    songs = _safe_count(
-        cursor,
+    songs = _safe_count_pg(
         """
         SELECT COUNT(DISTINCT analysis_id)
-        FROM song_performance_analysis
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.song_performance_analysis
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    artifacts = _safe_count(
-        cursor,
+    artifacts = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM analysis_artifacts
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.analysis_artifacts
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    stems = _safe_count(
-        cursor,
+    stems = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM stem_artifacts
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.stem_artifacts
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    hit_events = _safe_count(
-        cursor,
+    hit_events = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM drum_hit_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.drum_hit_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    fills = _safe_count(
-        cursor,
+    fills = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM fill_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.fill_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    techniques = _safe_count(
-        cursor,
+    techniques = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM technique_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.technique_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    phase4_enriched = _safe_count(
-        cursor,
+    phase4_enriched = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM song_performance_analysis
-        WHERE (CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-               OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT))
+        FROM public.song_performance_analysis
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
           AND groove_micro_timing_variance IS NOT NULL
           AND groove_pocket_tightness IS NOT NULL
           AND humanness_score IS NOT NULL
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-
-    rollup_count = 0
-    if drummer_fk is not None:
-        rollup_count = _safe_count(
-            cursor,
-            "SELECT COUNT(1) FROM drummer_profile_rollups WHERE drummer_id = ?",
-            (drummer_fk,),
-        )
-
-    preset_count = 0
-    if drummer_fk is not None:
-        preset_count = _safe_count(
-            cursor,
-            "SELECT COUNT(1) FROM drummer_presets WHERE drummer_id = ?",
-            (drummer_fk,),
-        )
+    rollup_count = _safe_count_pg(
+        """
+        SELECT COUNT(1)
+        FROM public.drummer_profile_rollups
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+        """,
+        {"slug": slug},
+    )
+    preset_count = _safe_count_pg(
+        """
+        SELECT COUNT(1)
+        FROM public.drummer_presets
+        WHERE (profile_type = 'drummer' AND CAST(source_ref AS TEXT) = CAST(:slug AS TEXT))
+           OR CAST(preset_id AS TEXT) = CAST(:preset_id AS TEXT)
+        """,
+        {"slug": slug, "preset_id": f"phase6_{slug}"},
+    )
 
     missing_steps: List[str] = []
     if songs <= 0:
@@ -1159,10 +997,18 @@ def _resolve_local_path(value: Any) -> Optional[Path]:
     text = str(value or "").strip()
     if not text:
         return None
+    lower = text.lower()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return None
     candidate = Path(text)
     if candidate.is_file():
         return candidate.resolve()
     root = Path(__file__).resolve().parents[1]
+    trimmed = text.lstrip("/\\")
+    if trimmed and trimmed != text:
+        rooted = (root / trimmed).resolve()
+        if rooted.is_file():
+            return rooted
     alt = (root / candidate).resolve()
     if alt.is_file():
         return alt
@@ -1177,6 +1023,17 @@ def _song_label_from_path(path: Path) -> str:
         parent_name = parent.parent.name.strip()
     stem = path.stem.strip()
     label = parent_name or stem or "Assimilated Reference"
+    return label.replace("_", " ")
+
+
+def _song_label_from_uri(uri: str) -> str:
+    text = str(uri or "").strip()
+    if not text:
+        return "Assimilated Reference"
+    parsed = urlparse(text)
+    candidate = parsed.path if parsed.scheme else text
+    stem = Path(candidate).stem.strip()
+    label = stem or Path(candidate).name.strip() or "Assimilated Reference"
     return label.replace("_", " ")
 
 
@@ -1207,53 +1064,30 @@ def _build_assimilation_base_groove(
     drummer_slug: str,
     analysis_id: str,
 ) -> Optional[Path]:
-    if getattr(db, "_engine", None) is not None:
-        with db._engine.connect() as conn_pg:
-            spa = conn_pg.execute(
-                text(
-                    """
-                    SELECT tempo_bpm, time_signature
-                    FROM public.song_performance_analysis
-                    WHERE analysis_id = :analysis_id
-                    LIMIT 1
-                    """
-                ),
-                {"analysis_id": analysis_id},
-            ).mappings().first()
-            rows = conn_pg.execute(
-                text(
-                    """
-                    SELECT instrument, component, onset_time_sec, velocity_est, bar_index
-                    FROM public.drum_hit_events
-                    WHERE analysis_id = :analysis_id
-                    ORDER BY onset_time_sec ASC
-                    """
-                ),
-                {"analysis_id": analysis_id},
-            ).mappings().all()
-    else:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT tempo_bpm, time_signature
-            FROM song_performance_analysis
-            WHERE analysis_id = ?
-            LIMIT 1
-            """,
-            (analysis_id,),
-        )
-        spa = cursor.fetchone()
-        cursor.execute(
-            """
-            SELECT instrument, component, onset_time_sec, velocity_est, bar_index
-            FROM drum_hit_events
-            WHERE analysis_id = ?
-            ORDER BY onset_time_sec ASC
-            """,
-            (analysis_id,),
-        )
-        rows = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        spa = conn_pg.execute(
+            text(
+                """
+                SELECT tempo_bpm, time_signature
+                FROM public.song_performance_analysis
+                WHERE analysis_id = :analysis_id
+                LIMIT 1
+                """
+            ),
+            {"analysis_id": analysis_id},
+        ).mappings().first()
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT instrument, component, onset_time_sec, velocity_est, bar_index
+                FROM public.drum_hit_events
+                WHERE analysis_id = :analysis_id
+                ORDER BY onset_time_sec ASC
+                """
+            ),
+            {"analysis_id": analysis_id},
+        ).mappings().all()
     if not spa:
         return None
 
@@ -1352,44 +1186,25 @@ def _select_assimilation_baseline_source(
     *,
     drummer_slug: str,
 ) -> Optional[Dict[str, Any]]:
-    if getattr(db, "_engine", None) is not None:
-        with db._engine.connect() as conn_pg:
-            analyses = conn_pg.execute(
-                text(
-                    """
-                    SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
-                    FROM public.song_performance_analysis spa
-                    LEFT JOIN public.songs s ON s.id = spa.song_id
-                    LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
-                    WHERE CAST(spa.drummer_id AS TEXT) = CAST(:slug AS TEXT)
-                       OR CAST(COALESCE(d.drummer_id, '') AS TEXT) = CAST(:slug AS TEXT)
-                       OR LOWER(REPLACE(COALESCE(d.display_name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
-                       OR LOWER(REPLACE(COALESCE(d.name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
-                    ORDER BY spa.created_at DESC
-                    LIMIT 50
-                    """
-                ),
-                {"slug": drummer_slug},
-            ).mappings().all()
-    else:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-        drummer_fk = db._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-        if drummer_fk is None:
-            return None
-
-        cursor.execute(
-            """
-            SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
-            FROM song_performance_analysis spa
-            LEFT JOIN songs s ON s.id = spa.song_id
-            WHERE spa.drummer_id = ?
-            ORDER BY spa.created_at DESC
-            LIMIT 50
-            """,
-            (int(drummer_fk),),
-        )
-        analyses = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        analyses = conn_pg.execute(
+            text(
+                """
+                SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
+                FROM public.song_performance_analysis spa
+                LEFT JOIN public.songs s ON s.id = spa.song_id
+                LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
+                WHERE CAST(spa.drummer_id AS TEXT) = CAST(:slug AS TEXT)
+                   OR CAST(COALESCE(d.drummer_id, '') AS TEXT) = CAST(:slug AS TEXT)
+                   OR LOWER(REPLACE(COALESCE(d.display_name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
+                   OR LOWER(REPLACE(COALESCE(d.name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
+                ORDER BY spa.created_at DESC
+                LIMIT 50
+                """
+            ),
+            {"slug": drummer_slug},
+        ).mappings().all()
     if not analyses:
         return None
 
@@ -1400,46 +1215,47 @@ def _select_assimilation_baseline_source(
             continue
 
         source_path: Optional[Path] = None
+        source_uri: Optional[str] = None
         source_song_name: Optional[str] = None
 
-        if getattr(db, "_engine", None) is not None:
-            with db._engine.connect() as conn_pg:
-                stem_rows = conn_pg.execute(
-                    text(
-                        """
-                        SELECT stem_name, file_path
-                        FROM public.stem_artifacts
-                        WHERE analysis_id = :analysis_id
-                        """
-                    ),
-                    {"analysis_id": analysis_id},
-                ).mappings().all()
-        else:
-            cursor.execute(
-                """
-                SELECT stem_name, file_path
-                FROM stem_artifacts
-                WHERE analysis_id = ?
-                """,
-                (analysis_id,),
-            )
-            stem_rows = cursor.fetchall() or []
+        with engine.connect() as conn_pg:
+            stem_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT stem_name, file_path
+                    FROM public.stem_artifacts
+                    WHERE analysis_id = :analysis_id
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
         best_stem: Optional[Path] = None
+        best_stem_uri: Optional[str] = None
         fallback_stem: Optional[Path] = None
+        fallback_stem_uri: Optional[str] = None
         for stem in stem_rows:
             stem_name = str(stem["stem_name"] or "").strip().lower()
-            resolved = _resolve_local_path(stem["file_path"])
-            if not resolved:
+            file_path_value = str(stem["file_path"] or "").strip()
+            resolved = _resolve_local_path(file_path_value)
+            if not resolved and not file_path_value:
                 continue
             if stem_name in preferred_stems:
                 best_stem = resolved
+                best_stem_uri = file_path_value or None
                 break
             if fallback_stem is None:
                 fallback_stem = resolved
+                fallback_stem_uri = file_path_value or None
         source_path = best_stem or fallback_stem
+        source_uri = best_stem_uri or fallback_stem_uri
 
         if source_path is None:
-            source_path = _resolve_local_path(row["source_file"])
+            row_source = str(row["source_file"] or "").strip()
+            source_path = _resolve_local_path(row_source)
+            if not source_uri and row_source:
+                source_uri = row_source
+        elif not source_uri:
+            source_uri = str(source_path)
 
         title = str(row["song_title"] or "").strip()
         base_groove_path = _build_assimilation_base_groove(
@@ -1451,12 +1267,15 @@ def _select_assimilation_baseline_source(
         source_song_name = title
         if not source_song_name and source_path is not None:
             source_song_name = _song_label_from_path(source_path)
+        if not source_song_name and source_uri:
+            source_song_name = _song_label_from_uri(source_uri)
         if not source_song_name:
             source_song_name = analysis_id
 
         return {
             "analysis_id": analysis_id,
             "source_path": source_path,
+            "source_uri": source_uri,
             "source_song_name": source_song_name,
             "base_groove_path": str(base_groove_path) if base_groove_path else None,
         }
@@ -1471,12 +1290,19 @@ def _create_reference_baseline_run(
     baseline_source: Dict[str, Any],
     base_groove_id: str,
 ) -> Optional[Dict[str, Any]]:
-    source_path = Path(str(baseline_source.get("source_path") or "")).resolve()
-    if not source_path.is_file():
-        return None
+    source_path = _resolve_local_path(baseline_source.get("source_path"))
+    source_uri = str(baseline_source.get("source_uri") or "").strip()
+    if source_path is None and source_uri:
+        source_path = _resolve_local_path(source_uri)
 
     analysis_id = str(baseline_source.get("analysis_id") or "").strip() or None
-    source_song_name = str(baseline_source.get("source_song_name") or "").strip() or _song_label_from_path(source_path)
+    source_song_name = str(baseline_source.get("source_song_name") or "").strip()
+    if not source_song_name and source_path is not None:
+        source_song_name = _song_label_from_path(source_path)
+    if not source_song_name and source_uri:
+        source_song_name = _song_label_from_uri(source_uri)
+    if not source_song_name:
+        source_song_name = analysis_id or "Assimilated Reference"
     run_id = db.log_calibration_run(
         drummer_slug=drummer_slug,
         outcome="reference",
@@ -1498,11 +1324,29 @@ def _create_reference_baseline_run(
     root = Path(__file__).resolve().parents[1]
     dest_dir = root / "artifacts" / "calibration" / "references" / run_id
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / source_path.name
-    if source_path.resolve() != dest_path.resolve():
-        shutil.copy2(source_path, dest_path)
+    if source_path is not None and source_path.is_file():
+        dest_path = dest_dir / source_path.name
+        if source_path.resolve() != dest_path.resolve():
+            shutil.copy2(source_path, dest_path)
+    elif source_uri.lower().startswith("http://") or source_uri.lower().startswith("https://"):
+        parsed = urlparse(source_uri)
+        source_name = Path(parsed.path or "").name.strip()
+        if not source_name:
+            source_name = f"{analysis_id or 'reference'}.wav"
+        dest_path = dest_dir / source_name
+        try:
+            with requests.get(source_uri, stream=True, timeout=30) as response:
+                response.raise_for_status()
+                with dest_path.open("wb") as fh:
+                    for chunk in response.iter_content(chunk_size=65536):
+                        if chunk:
+                            fh.write(chunk)
+        except Exception:
+            return None
+    else:
+        return None
 
-    storage_uri = str(Path("artifacts") / "calibration" / "references" / run_id / source_path.name)
+    storage_uri = str(Path("artifacts") / "calibration" / "references" / run_id / dest_path.name)
     artifact_id = db.log_audio_artifact(
         run_id=run_id,
         artifact_type="reference_song",
@@ -1639,19 +1483,20 @@ def _safe_json_load(value: Any, default: Any) -> Any:
 
 
 def _fetch_pairwise_judgments(db: CentralDatabaseService, *, item_id: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT judgment_id, item_id, preferred_candidate, closer_to_target,
-               better_feel, more_musical, confidence, created_at
-        FROM pairwise_judgments
-        WHERE item_id = ?
-        ORDER BY created_at ASC
-        """,
-        (item_id,),
-    )
-    rows = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT judgment_id, item_id, preferred_candidate, closer_to_target,
+                       better_feel, more_musical, confidence, created_at
+                FROM public.pairwise_judgments
+                WHERE item_id = :item_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"item_id": item_id},
+        ).mappings().all()
     return [
         {
             "judgment_id": row["judgment_id"],
@@ -1668,21 +1513,22 @@ def _fetch_pairwise_judgments(db: CentralDatabaseService, *, item_id: str) -> Li
 
 
 def _fetch_attribute_ratings(db: CentralDatabaseService, *, item_id: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT rating_id, item_id, candidate_label,
-               stylistic_authenticity, groove_feel, dynamics, phrasing,
-               kit_balance, fill_behavior, human_realism, overall_usefulness,
-               created_at
-        FROM attribute_ratings
-        WHERE item_id = ?
-        ORDER BY created_at ASC
-        """,
-        (item_id,),
-    )
-    rows = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT rating_id, item_id, candidate_label,
+                       stylistic_authenticity, groove_feel, dynamics, phrasing,
+                       kit_balance, fill_behavior, human_realism, overall_usefulness,
+                       created_at
+                FROM public.attribute_ratings
+                WHERE item_id = :item_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"item_id": item_id},
+        ).mappings().all()
     return [
         {
             "rating_id": row["rating_id"],
@@ -1703,19 +1549,20 @@ def _fetch_attribute_ratings(db: CentralDatabaseService, *, item_id: str) -> Lis
 
 
 def _fetch_item_feedback(db: CentralDatabaseService, *, item_id: str, drummer_slug: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
+    engine = _require_postgres_engine(db)
     like_token = f'%"item_id": "{item_id}"%'
-    cursor.execute(
-        """
-        SELECT feedback_id, drummer_slug, rating, comment, author, submitted_at, metadata_json
-        FROM calibration_feedback
-        WHERE drummer_slug = ? AND metadata_json LIKE ?
-        ORDER BY submitted_at ASC
-        """,
-        (drummer_slug, like_token),
-    )
-    rows = cursor.fetchall() or []
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT feedback_id, drummer_slug, rating, comment, author, submitted_at, metadata_json
+                FROM public.calibration_feedback
+                WHERE drummer_slug = :drummer_slug AND metadata_json::text LIKE :like_token
+                ORDER BY submitted_at ASC
+                """
+            ),
+            {"drummer_slug": drummer_slug, "like_token": like_token},
+        ).mappings().all()
     output: List[Dict[str, Any]] = []
     for row in rows:
         output.append(
@@ -2077,37 +1924,39 @@ async def get_analysis_detail(analysis_id: str, db: CentralDatabaseService = Dep
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing analysis id")
 
     try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT spa.analysis_id,
-                   spa.source_file,
-                   spa.tempo_bpm,
-                   spa.time_signature,
-                   spa.duration_sec,
-                   spa.created_at,
-                   d.drummer_id AS drummer_slug,
-                   s.title AS song_title
-            FROM song_performance_analysis spa
-            LEFT JOIN drummers d ON d.id = spa.drummer_id
-            LEFT JOIN songs s ON s.id = spa.song_id
-            WHERE spa.analysis_id = ?
-            LIMIT 1
-            """,
-            (analysis_id,),
-        )
-        row = cursor.fetchone()
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            row = conn_pg.execute(
+                text(
+                    """
+                    SELECT spa.analysis_id,
+                           spa.source_file,
+                           spa.tempo_bpm,
+                           spa.time_signature,
+                           spa.duration_sec,
+                           spa.created_at,
+                           d.drummer_id AS drummer_slug,
+                           s.title AS song_title
+                    FROM public.song_performance_analysis spa
+                    LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
+                    LEFT JOIN public.songs s ON s.id = spa.song_id
+                    WHERE spa.analysis_id = :analysis_id
+                    LIMIT 1
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().first()
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis not found")
 
         hit_event_count: Optional[int] = None
         try:
-            cursor.execute(
-                "SELECT COUNT(1) FROM drum_hit_events WHERE analysis_id = ?",
-                (analysis_id,),
-            )
-            hit_event_count = int((cursor.fetchone() or [0])[0] or 0)
+            with engine.connect() as conn_pg:
+                count_row = conn_pg.execute(
+                    text("SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id = :analysis_id"),
+                    {"analysis_id": analysis_id},
+                ).first()
+            hit_event_count = int((count_row[0] if count_row else 0) or 0)
         except Exception:
             hit_event_count = None
 
@@ -2328,17 +2177,20 @@ async def export_training_dataset(
     items: List[Dict[str, Any]] = []
 
     try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-
-        query = (
-            "SELECT * FROM evaluation_items "
-            + ("WHERE target_drummer_slug = ? " if slug_filter else "")
-            + "ORDER BY created_at DESC LIMIT ?"
-        )
-        params: tuple[Any, ...] = ((slug_filter, int(limit)) if slug_filter else (int(limit),))
-        cursor.execute(query, params)
-        rows = cursor.fetchall() or []
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM public.evaluation_items
+                    WHERE (:slug_filter = '' OR target_drummer_slug = :slug_filter)
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"slug_filter": slug_filter, "limit": int(limit)},
+            ).mappings().all()
 
         for row in rows:
             item = db._row_to_evaluation_item(row)

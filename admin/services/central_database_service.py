@@ -4750,7 +4750,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
         Initialize the database connection.
         
         Args:
-            db_path: Path to SQLite database. If None, uses default path.
+            db_path: Legacy parameter retained for compatibility.
             
         Returns:
             bool: True if successful
@@ -4762,6 +4762,15 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             
             db_backend = str(os.getenv("DB_BACKEND", "")).strip().lower()
             db_url = str(os.getenv("DATABASE_URL", "")).strip()
+            postgres_configured = db_backend in {"postgres", "postgresql"} or db_url.lower().startswith("postgres")
+            if not postgres_configured:
+                msg = "CentralDatabaseService requires Postgres configuration (set DB_BACKEND=postgres and DATABASE_URL)"
+                logger.error(msg)
+                try:
+                    self.database_error.emit(msg)
+                except Exception:
+                    pass
+                return False
             if db_backend in {"postgres", "postgresql"} and not db_url.lower().startswith("postgres"):
                 msg = "DB_BACKEND is postgres but DATABASE_URL is missing or not a postgres URL"
                 logger.error(msg)
