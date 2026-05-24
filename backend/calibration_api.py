@@ -1394,6 +1394,7 @@ def _select_assimilation_baseline_source(
     db: CentralDatabaseService,
     *,
     drummer_slug: str,
+    require_cloud_uri: bool = False,
 ) -> Optional[Dict[str, Any]]:
     engine = _require_postgres_engine(db)
     with engine.connect() as conn_pg:
@@ -1538,6 +1539,9 @@ def _select_assimilation_baseline_source(
 
         if best_noncloud_candidate is None:
             best_noncloud_candidate = candidate
+
+    if require_cloud_uri:
+        return None
 
     return best_noncloud_candidate
 
@@ -2644,10 +2648,14 @@ async def generate_candidates(
 
         if payload.include_baseline:
             stage = "baseline_source_select"
-            baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
+            baseline_source = _select_assimilation_baseline_source(
+                db,
+                drummer_slug=target_slug,
+                require_cloud_uri=bool(payload.strict_reference_baseline),
+            )
             if payload.strict_reference_baseline and not baseline_source:
                 _raise_stage_error(
-                    "Strict baseline mode requires an assimilated source clip for baseline",
+                    "Strict baseline mode requires an assimilated source clip with a cloud-readable storage URI",
                     status_code=status.HTTP_409_CONFLICT,
                 )
             if baseline_source:
