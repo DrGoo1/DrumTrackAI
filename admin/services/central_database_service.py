@@ -5197,6 +5197,51 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             except Exception:
                 source_file = ""
 
+            source_file_storage = source_file
+            stem_storage_paths: Dict[str, Any] = {}
+            storage_bucket = str(os.getenv("AWS_S3_BUCKET") or "").strip()
+            storage_region = str(os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
+            storage_client = None
+            upload_cache: Dict[str, str] = {}
+            if getattr(self, "_engine", None) is not None and storage_bucket and storage_region:
+                try:
+                    import boto3  # type: ignore
+
+                    storage_client = boto3.client("s3", region_name=storage_region)
+                except Exception as storage_exc:
+                    logger.warning("ingest_processed_stems_song_folder S3 client unavailable: %s", storage_exc)
+
+            def _to_cloud_storage_uri(local_path: str, *, category: str) -> str:
+                value = str(local_path or "").strip()
+                if not value:
+                    return ""
+                lower = value.lower()
+                if lower.startswith(("https://", "http://", "s3://", "supabase://", "gs://", "r2://")):
+                    return value
+                if not os.path.exists(value) or not os.path.isfile(value):
+                    return value
+                cached = upload_cache.get(value)
+                if cached:
+                    return cached
+                if storage_client is None:
+                    return value
+                safe_name = os.path.basename(value)
+                key = f"drummers/{drummer_id}/assimilation/{analysis_id}/{category}/{safe_name}"
+                try:
+                    storage_client.upload_file(value, storage_bucket, key)
+                    cloud_uri = f"s3://{storage_bucket}/{key}"
+                    upload_cache[value] = cloud_uri
+                    return cloud_uri
+                except Exception as upload_exc:
+                    logger.warning("ingest_processed_stems_song_folder upload failed path=%s err=%s", value, upload_exc)
+                    return value
+
+            if source_file:
+                source_file_storage = _to_cloud_storage_uri(source_file, category="source")
+            for stem_name, stem_path in resolved_stems.items():
+                stem_storage_paths[stem_name] = _to_cloud_storage_uri(str(stem_path), category=f"stem_{stem_name}")
+            stem_files_used_for_db = stem_storage_paths or resolved_stems
+
             song_title = os.path.basename(song_folder).strip()
             try:
                 meta_path = os.path.join(song_folder, "song_meta.json")
@@ -5219,10 +5264,10 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     analysis_id=analysis_id,
                     drummer_id=drummer_id,
                     song_id=None,
-                    source_file=source_file,
+                    source_file=source_file_storage,
                     mvsep_output_dir=song_folder,
                     analysis_json=analysis_json,
-                    stem_files_used=resolved_stems,
+                    stem_files_used=stem_files_used_for_db,
                     analysis_version=analysis_version,
                 )
                 if not ok:
@@ -5245,7 +5290,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                                 "id": sid,
                                 "title": song_title or None,
                                 "duration": duration_val,
-                                "file_path": source_file or None,
+                                "file_path": source_file_storage or None,
                                 "drummer_id": drummer_id,
                             },
                         )
@@ -5255,14 +5300,16 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                         )
                     except Exception:
                         pass
-                    def _insert_artifact_pg(role: str, path: str, fmt: str = ""):
+                    def _insert_artifact_pg(role: str, path: str, fmt: str = "", *, storage_path: Optional[str] = None):
                         try:
-                            if not path or not os.path.exists(path):
+                            storage_value = str(storage_path if storage_path is not None else path or "").strip()
+                            if not storage_value:
                                 return
-                            stat = os.stat(path)
+                            local_path = str(path or "").strip()
+                            stat = os.stat(local_path) if local_path and os.path.exists(local_path) else None
                             sha = ""
-                            if compute_hashes:
-                                sha = self._sha256_file(path, max_bytes=hash_max_bytes)
+                            if compute_hashes and stat is not None:
+                                sha = self._sha256_file(local_path, max_bytes=hash_max_bytes)
                             conn_pg.execute(
                                 text(
                                     """
@@ -5287,10 +5334,10 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                                     "drummer_id": drummer_id,
                                     "song_id": None,
                                     "artifact_role": role,
-                                    "file_path": str(path),
+                                    "file_path": storage_value,
                                     "file_format": (fmt or "").strip() or None,
-                                    "file_size_bytes": int(stat.st_size),
-                                    "file_mtime_epoch": float(stat.st_mtime),
+                                    "file_size_bytes": int(stat.st_size) if stat is not None else None,
+                                    "file_mtime_epoch": float(stat.st_mtime) if stat is not None else None,
                                     "sha256": sha or None,
                                     "extractor_name": "processed_stems_ingest",
                                     "extractor_version": (analysis_version or "").strip() or None,
@@ -5303,6 +5350,13 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                     _insert_artifact_pg("drum_analysis_json", drum_analysis_path, "json")
                     prof = os.path.join(song_folder, "drummer_profile.json")
                     _insert_artifact_pg("drummer_profile_json", prof, "json")
+                    if source_file:
+                        _insert_artifact_pg(
+                            "source_audio",
+                            source_file,
+                            Path(source_file).suffix.lower().lstrip("."),
+                            storage_path=source_file_storage,
+                        )
 
                     for stem_name, path in resolved_stems.items():
                         try:
@@ -5312,6 +5366,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                             sha = ""
                             if compute_hashes:
                                 sha = self._sha256_file(path, max_bytes=hash_max_bytes)
+                            storage_path = str(stem_storage_paths.get(stem_name) or path)
                             conn_pg.execute(
                                 text(
                                     """
@@ -5334,7 +5389,7 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                                     "drummer_id": drummer_id,
                                     "song_id": None,
                                     "stem_name": str(stem_name),
-                                    "file_path": str(path),
+                                    "file_path": storage_path,
                                     "file_size_bytes": int(stat.st_size),
                                     "file_mtime_epoch": float(stat.st_mtime),
                                     "sha256": sha or None,

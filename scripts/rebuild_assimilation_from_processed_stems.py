@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import time
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Callable
@@ -87,6 +88,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--compute-hashes", action="store_true", help="Compute SHA256 on artifacts during ingest (slower)")
     p.add_argument("--hash-max-bytes", type=int, default=0, help="When computing hashes, limit bytes read per file (0=all)")
     p.add_argument("--summary-json", default="", help="Optional path to write machine-readable summary JSON")
+    p.add_argument(
+        "--backfill-source-uris",
+        action="store_true",
+        help="After ingest, upload local source clips to S3 and backfill cloud URIs in Postgres",
+    )
+    p.add_argument(
+        "--backfill-limit",
+        type=int,
+        default=200,
+        help="Max analyses per drummer slug to process when --backfill-source-uris is set",
+    )
     return p.parse_args()
 
 
@@ -164,6 +176,34 @@ def main() -> None:
             else:
                 log("WARN", f"[{slug}] Ingest failed ({ingested}/{len(song_dirs)}): {sd.name}")
         total_ingested += ingested
+
+        if args.backfill_source_uris:
+            backfill_step = run_step(
+                f"[{slug}] Backfill source URIs",
+                lambda: subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts" / "backfill_assimilation_source_uris.py"),
+                        "--drummer-slug",
+                        slug,
+                        "--limit",
+                        str(int(args.backfill_limit)),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=os.environ.copy(),
+                ),
+            )
+            if isinstance(backfill_step.get("result"), subprocess.CompletedProcess):
+                cp = backfill_step["result"]
+                if cp.stdout:
+                    log("INFO", f"[{slug}] Backfill output:\n{cp.stdout.strip()}")
+                if cp.stderr:
+                    log("WARN", f"[{slug}] Backfill warnings:\n{cp.stderr.strip()}")
+                backfill_step["result"] = {
+                    "returncode": cp.returncode,
+                }
 
         # Run phases 2 → 6
         p2 = run_step(
