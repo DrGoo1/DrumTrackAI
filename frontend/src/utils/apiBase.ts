@@ -2,6 +2,16 @@ const LOCAL_API_PORT = "8000";
 const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api.onrender.com";
 
 const normalizeApiBase = (value?: string | null): string => String(value || "").trim().replace(/\/+$/, "");
+const rewriteDeprecatedApiBase = (value?: string | null): string => {
+  const normalized = normalizeApiBase(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(
+    /^https?:\/\/drumtrackai-calibration-api2\.onrender\.com(?=\/|$)/i,
+    CALIBRATION_API_BASE,
+  );
+};
 
 const isProductionFrontendHost = (hostname: string): boolean => {
   const hostLower = String(hostname || "").toLowerCase();
@@ -10,13 +20,13 @@ const isProductionFrontendHost = (hostname: string): boolean => {
 
 /** Resolve the backend base URL, preferring explicit overrides and falling back to sensible defaults. */
 export function resolveApiBase(): string {
-  const explicitBase = normalizeApiBase(process.env.REACT_APP_API_BASE);
+  const explicitBase = rewriteDeprecatedApiBase(process.env.REACT_APP_API_BASE);
 
   if (typeof window !== "undefined") {
     const win = window as any;
     const hostLower = String(win?.location?.hostname || "localhost").toLowerCase();
 
-    const runtimeBase = normalizeApiBase(win.__API_BASE__);
+    const runtimeBase = rewriteDeprecatedApiBase(win.__API_BASE__);
     if (runtimeBase) {
       return runtimeBase;
     }
