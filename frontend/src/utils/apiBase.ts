@@ -1,5 +1,5 @@
 const LOCAL_API_PORT = "8000";
-const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api2.onrender.com";
+const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api.onrender.com";
 
 /** Resolve the backend base URL, preferring explicit overrides and falling back to sensible defaults. */
 export function resolveApiBase(): string {
