@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import json
-import shutil
 import logging
 import threading
 import asyncio
 import time
-import math
-import struct
-import wave
+import hashlib
 from datetime import datetime
 import os
 import base64
@@ -1036,72 +1033,6 @@ def _song_label_from_path(path: Path) -> str:
     return label.replace("_", " ")
 
 
-def _synthesize_reference_proxy_from_base_groove(
-    *,
-    base_groove_path: Path,
-    dest_path: Path,
-) -> bool:
-    try:
-        payload = json.loads(base_groove_path.read_text(encoding="utf-8"))
-        events = payload.get("pattern_events") if isinstance(payload, dict) else None
-        if not isinstance(events, list) or not events:
-            return False
-
-        sr = 22050
-        tone_hz = 1100.0
-        click_len_s = 0.045
-        click_len = max(1, int(sr * click_len_s))
-
-        last_event = 0.0
-        cleaned_events: List[float] = []
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            try:
-                t = float(event.get("time_sec", 0.0))
-            except Exception:
-                continue
-            if t < 0:
-                continue
-            cleaned_events.append(t)
-            if t > last_event:
-                last_event = t
-        if not cleaned_events:
-            return False
-
-        duration_s = max(3.0, min(20.0, last_event + 0.75))
-        total_samples = int(duration_s * sr)
-        samples: List[int] = [0] * total_samples
-
-        for event_sec in cleaned_events:
-            start = int(event_sec * sr)
-            if start >= total_samples:
-                continue
-            for i in range(click_len):
-                idx = start + i
-                if idx >= total_samples:
-                    break
-                env = 1.0 - (i / click_len)
-                value = int(12000.0 * env * math.sin((2.0 * math.pi * tone_hz * i) / sr))
-                mixed = samples[idx] + value
-                if mixed > 32767:
-                    mixed = 32767
-                elif mixed < -32768:
-                    mixed = -32768
-                samples[idx] = mixed
-
-        with wave.open(str(dest_path), "wb") as wav_out:
-            wav_out.setnchannels(1)
-            wav_out.setsampwidth(2)
-            wav_out.setframerate(sr)
-            pcm = struct.pack("<{}h".format(len(samples)), *samples)
-            wav_out.writeframes(pcm)
-
-        return dest_path.is_file() and dest_path.stat().st_size > 44
-    except Exception:
-        return False
-
-
 def _song_label_from_uri(uri: str) -> str:
     text = str(uri or "").strip()
     if not text:
@@ -1132,6 +1063,208 @@ def _instrument_id_from_hit(instrument: str, component: str) -> str:
         "toms": "tom_mid",
     }
     return mapping.get(inst, inst or "kick")
+
+
+def _normalize_storage_uri(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _is_cloud_readable_storage_uri(value: Any) -> bool:
+    uri = _normalize_storage_uri(value)
+    if not uri:
+        return False
+    lower = uri.lower()
+    return lower.startswith(("https://", "http://", "s3://", "supabase://", "gs://", "r2://"))
+
+
+def _baseline_source_summary(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(source, dict):
+        return {"present": False}
+
+    summary: Dict[str, Any] = {
+        "present": True,
+        "analysis_id": str(source.get("analysis_id") or "").strip() or None,
+        "has_base_groove_path": bool(str(source.get("base_groove_path") or "").strip()),
+        "has_source_path": bool(str(source.get("source_path") or "").strip()),
+        "has_source_uri": bool(str(source.get("source_uri") or "").strip()),
+        "keys": sorted(str(key) for key in source.keys()),
+    }
+
+    for key in (
+        "storage_uri",
+        "audio_storage_uri",
+        "artifact_storage_uri",
+        "source_storage_uri",
+        "s3_uri",
+        "audio_s3_uri",
+        "public_url",
+        "audio_url",
+        "source_uri",
+        "source_path",
+        "base_groove_path",
+    ):
+        value = str(source.get(key) or "").strip()
+        if value:
+            summary[f"{key}_kind"] = "cloud" if _is_cloud_readable_storage_uri(value) else "local_or_relative"
+
+    return summary
+
+
+def _reference_storage_uri_from_baseline_source(source: Dict[str, Any]) -> Optional[str]:
+    for key in (
+        "storage_uri",
+        "audio_storage_uri",
+        "artifact_storage_uri",
+        "source_storage_uri",
+        "s3_uri",
+        "audio_s3_uri",
+        "public_url",
+        "audio_url",
+        "source_uri",
+        "source_path",
+        "base_groove_path",
+    ):
+        value = _normalize_storage_uri(source.get(key))
+        if _is_cloud_readable_storage_uri(value):
+            return value
+    return None
+
+
+def _stable_reference_id_part(*, drummer_slug: str, analysis_id: str, storage_uri: str) -> str:
+    basis = "|".join([
+        drummer_slug.strip(),
+        analysis_id.strip(),
+        storage_uri.strip(),
+    ])
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def _find_existing_reference_baseline(
+    db: CentralDatabaseService,
+    *,
+    drummer_slug: str,
+    analysis_id: str,
+    fingerprint: str,
+) -> Optional[Dict[str, str]]:
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        row = conn_pg.execute(
+            text(
+                """
+                SELECT r.run_id, a.artifact_id
+                FROM public.calibration_runs r
+                JOIN public.audio_artifacts a ON a.run_id = r.run_id
+                WHERE r.drummer_slug = :drummer_slug
+                  AND COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'requested_via'), '') = 'baseline_reference'
+                  AND (
+                        COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'source_analysis_id'), '') = :analysis_id
+                     OR COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'source_fingerprint'), '') = :fingerprint
+                  )
+                ORDER BY r.started_at DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "drummer_slug": drummer_slug,
+                "analysis_id": analysis_id,
+                "fingerprint": fingerprint,
+            },
+        ).mappings().first()
+    if not row:
+        return None
+    return {
+        "run_id": str(row["run_id"]),
+        "artifact_id": str(row["artifact_id"]),
+    }
+
+
+def _ensure_reference_baseline_run(
+    db: CentralDatabaseService,
+    *,
+    drummer_slug: str,
+    baseline_source: Dict[str, Any],
+    base_groove_id: str,
+    sample_pack_version: Optional[str] = None,
+) -> Dict[str, str]:
+    analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+    source_song_name = str(baseline_source.get("source_song_name") or "").strip() or (analysis_id or "Assimilated Reference")
+    storage_uri = _reference_storage_uri_from_baseline_source(baseline_source)
+    if not storage_uri:
+        raise RuntimeError(
+            "Selected assimilation baseline source has no cloud-readable storage URI. "
+            "Backfill a source clip URL into storage before queueing strict baseline mode."
+        )
+
+    fingerprint = _stable_reference_id_part(
+        drummer_slug=drummer_slug,
+        analysis_id=analysis_id,
+        storage_uri=storage_uri,
+    )
+
+    existing = _find_existing_reference_baseline(
+        db,
+        drummer_slug=drummer_slug,
+        analysis_id=analysis_id,
+        fingerprint=fingerprint,
+    )
+    if existing:
+        return {
+            "run_id": existing["run_id"],
+            "artifact_id": existing["artifact_id"],
+            "baseline_label": source_song_name,
+        }
+
+    run_id = f"baseline-ref-{fingerprint}"
+    artifact_id = f"artifact-{run_id}"
+    metadata = {
+        "requested_via": "baseline_reference",
+        "source_type": "assimilated_song",
+        "source_song_name": source_song_name,
+        "source_analysis_id": analysis_id,
+        "source_fingerprint": fingerprint,
+        "source_storage_uri": storage_uri,
+        "target_drummer_slug": drummer_slug,
+        "base_groove_id": base_groove_id,
+    }
+    logged_run_id = db.log_calibration_run(
+        drummer_slug=drummer_slug,
+        outcome="reference",
+        note_count=None,
+        metadata=metadata,
+        metrics={},
+        comparison={},
+        run_id=run_id,
+    )
+    if not logged_run_id:
+        raise RuntimeError("Failed to upsert strict baseline reference run")
+
+    render_recipe = {
+        "requested_via": "baseline_reference",
+        "source_type": "assimilated_song",
+        "source_song_name": source_song_name,
+        "analysis_id": analysis_id,
+        "target_drummer_slug": drummer_slug,
+        "base_groove_id": base_groove_id,
+        "source_storage_uri": storage_uri,
+    }
+    logged_artifact_id = db.log_audio_artifact(
+        run_id=logged_run_id,
+        artifact_type="reference_song",
+        storage_uri=storage_uri,
+        duration_sec=None,
+        loudness_lufs=None,
+        sample_pack_version=sample_pack_version,
+        render_recipe=render_recipe,
+        artifact_id=artifact_id,
+    )
+    if not logged_artifact_id:
+        raise RuntimeError("Failed to upsert strict baseline reference artifact")
+
+    return {
+        "run_id": logged_run_id,
+        "artifact_id": logged_artifact_id,
+        "baseline_label": source_song_name,
+    }
 
 
 def _build_assimilation_base_groove(
@@ -1366,99 +1499,16 @@ def _create_reference_baseline_run(
     baseline_source: Dict[str, Any],
     base_groove_id: str,
 ) -> Optional[Dict[str, Any]]:
-    source_path = _resolve_local_path(baseline_source.get("source_path"))
-    source_uri = str(baseline_source.get("source_uri") or "").strip()
-    if source_path is None and source_uri:
-        source_path = _resolve_local_path(source_uri)
-
-    analysis_id = str(baseline_source.get("analysis_id") or "").strip() or None
-    source_song_name = str(baseline_source.get("source_song_name") or "").strip()
-    if not source_song_name and source_path is not None:
-        source_song_name = _song_label_from_path(source_path)
-    if not source_song_name and source_uri:
-        source_song_name = _song_label_from_uri(source_uri)
-    if not source_song_name:
-        source_song_name = analysis_id or "Assimilated Reference"
-    run_id = db.log_calibration_run(
-        drummer_slug=drummer_slug,
-        outcome="reference",
-        note_count=None,
-        metadata={
-            "requested_via": "generate-candidates",
-            "source_type": "assimilated_song",
-            "source_song_name": source_song_name,
-            "analysis_id": analysis_id,
-            "target_drummer_slug": drummer_slug,
-            "base_groove_id": base_groove_id,
-        },
-        metrics={},
-        comparison={},
-    )
-    if not run_id:
+    try:
+        return _ensure_reference_baseline_run(
+            db,
+            drummer_slug=drummer_slug,
+            baseline_source=baseline_source,
+            base_groove_id=base_groove_id,
+            sample_pack_version=None,
+        )
+    except Exception:
         return None
-
-    root = Path(__file__).resolve().parents[1]
-    dest_dir = root / "artifacts" / "calibration" / "references" / run_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path: Optional[Path] = None
-
-    if source_path is not None and source_path.is_file():
-        dest_path = dest_dir / source_path.name
-        if source_path.resolve() != dest_path.resolve():
-            shutil.copy2(source_path, dest_path)
-    elif source_uri.lower().startswith("http://") or source_uri.lower().startswith("https://"):
-        parsed = urlparse(source_uri)
-        source_name = Path(parsed.path or "").name.strip()
-        if not source_name:
-            source_name = f"{analysis_id or 'reference'}.wav"
-        dest_path = dest_dir / source_name
-        try:
-            with requests.get(source_uri, stream=True, timeout=30) as response:
-                response.raise_for_status()
-                with dest_path.open("wb") as fh:
-                    for chunk in response.iter_content(chunk_size=65536):
-                        if chunk:
-                            fh.write(chunk)
-        except Exception:
-            dest_path = None
-    else:
-        dest_path = None
-
-    if dest_path is None or not dest_path.is_file():
-        base_groove_path = _resolve_local_path(baseline_source.get("base_groove_path"))
-        if base_groove_path is not None and base_groove_path.is_file():
-            proxy_name = f"{analysis_id or 'reference'}_assimilation_proxy.wav"
-            proxy_path = dest_dir / proxy_name
-            if _synthesize_reference_proxy_from_base_groove(base_groove_path=base_groove_path, dest_path=proxy_path):
-                dest_path = proxy_path
-
-    if dest_path is None or not dest_path.is_file():
-        return None
-
-    storage_uri = str(Path("artifacts") / "calibration" / "references" / run_id / dest_path.name)
-    artifact_id = db.log_audio_artifact(
-        run_id=run_id,
-        artifact_type="reference_song",
-        storage_uri=storage_uri,
-        duration_sec=None,
-        loudness_lufs=None,
-        sample_pack_version=None,
-        render_recipe={
-            "requested_via": "generate-candidates",
-            "source_type": "assimilated_song",
-            "source_song_name": source_song_name,
-            "analysis_id": analysis_id,
-            "target_drummer_slug": drummer_slug,
-            "base_groove_id": base_groove_id,
-        },
-    )
-    if not artifact_id:
-        return None
-    return {
-        "run_id": run_id,
-        "artifact_id": artifact_id,
-        "baseline_label": source_song_name,
-    }
 
 
 def _infer_baseline_label(
@@ -2560,17 +2610,42 @@ async def generate_candidates(
                     item_base_groove_id = f"assimilation:{analysis_id}"
 
                 stage = "baseline_reference_run_create"
-                baseline_ref = _create_reference_baseline_run(
-                    db,
-                    drummer_slug=target_slug,
-                    baseline_source=baseline_source,
-                    base_groove_id=item_base_groove_id,
-                )
+                baseline_ref: Optional[Dict[str, Any]] = None
+                baseline_source_debug = _baseline_source_summary(baseline_source)
+                try:
+                    baseline_ref = _ensure_reference_baseline_run(
+                        db,
+                        drummer_slug=target_slug,
+                        baseline_source=baseline_source,
+                        base_groove_id=item_base_groove_id,
+                        sample_pack_version=payload.sample_pack_version,
+                    )
+                except Exception as baseline_exc:
+                    if payload.strict_reference_baseline:
+                        logger.exception(
+                            "strict_baseline_reference_create_failed drummer=%s source=%s",
+                            target_slug,
+                            baseline_source_debug,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail={
+                                "stage": stage,
+                                "message": "Strict baseline mode failed to create baseline reference artifact",
+                                "reason": str(baseline_exc),
+                                "baselineSource": baseline_source_debug,
+                            },
+                        )
 
                 if payload.strict_reference_baseline and not baseline_ref:
-                    _raise_stage_error(
-                        "Strict baseline mode failed to create baseline reference artifact",
+                    raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "stage": stage,
+                            "message": "Strict baseline mode failed to create baseline reference artifact",
+                            "reason": "baseline reference helper returned no run/artifact",
+                            "baselineSource": baseline_source_debug,
+                        },
                     )
 
                 if baseline_ref:
