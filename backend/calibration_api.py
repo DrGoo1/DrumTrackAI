@@ -1418,6 +1418,7 @@ def _select_assimilation_baseline_source(
         return None
 
     preferred_stems = {"drums", "drum"}
+    best_noncloud_candidate: Optional[Dict[str, Any]] = None
     for row in analyses:
         analysis_id = str(row["analysis_id"] or "").strip()
         if not analysis_id:
@@ -1434,6 +1435,18 @@ def _select_assimilation_baseline_source(
                     SELECT stem_name, file_path
                     FROM public.stem_artifacts
                     WHERE analysis_id = :analysis_id
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
+
+            analysis_artifact_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT artifact_role, file_path
+                    FROM public.analysis_artifacts
+                    WHERE analysis_id = :analysis_id
+                    ORDER BY created_at DESC
                     """
                 ),
                 {"analysis_id": analysis_id},
@@ -1466,6 +1479,33 @@ def _select_assimilation_baseline_source(
         elif not source_uri:
             source_uri = str(source_path)
 
+        if not source_uri and analysis_artifact_rows:
+            cloud_candidate: Optional[str] = None
+            fallback_candidate: Optional[str] = None
+            role_priority = {
+                "source_audio": 0,
+                "source": 1,
+                "drums": 2,
+                "drum_mix": 3,
+                "mix": 4,
+            }
+            sorted_rows = sorted(
+                analysis_artifact_rows,
+                key=lambda item: role_priority.get(str(item.get("artifact_role") or "").strip().lower(), 99),
+            )
+            for artifact in sorted_rows:
+                file_path_value = str(artifact.get("file_path") or "").strip()
+                if not file_path_value:
+                    continue
+                if _is_cloud_readable_storage_uri(file_path_value):
+                    cloud_candidate = file_path_value
+                    break
+                if fallback_candidate is None:
+                    fallback_candidate = file_path_value
+            source_uri = cloud_candidate or fallback_candidate or source_uri
+            if source_path is None and source_uri:
+                source_path = _resolve_local_path(source_uri)
+
         title = str(row["song_title"] or "").strip()
         base_groove_path = _build_assimilation_base_groove(
             db,
@@ -1481,7 +1521,7 @@ def _select_assimilation_baseline_source(
         if not source_song_name:
             source_song_name = analysis_id
 
-        return {
+        candidate = {
             "analysis_id": analysis_id,
             "source_path": source_path,
             "source_uri": source_uri,
@@ -1489,7 +1529,17 @@ def _select_assimilation_baseline_source(
             "base_groove_path": str(base_groove_path) if base_groove_path else None,
         }
 
-    return None
+        has_any_source = bool(source_path is not None or str(source_uri or "").strip())
+        if not has_any_source:
+            continue
+
+        if _is_cloud_readable_storage_uri(source_uri):
+            return candidate
+
+        if best_noncloud_candidate is None:
+            best_noncloud_candidate = candidate
+
+    return best_noncloud_candidate
 
 
 def _create_reference_baseline_run(
