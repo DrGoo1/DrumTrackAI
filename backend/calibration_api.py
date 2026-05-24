@@ -7,6 +7,9 @@ import logging
 import threading
 import asyncio
 import time
+import math
+import struct
+import wave
 from datetime import datetime
 import os
 import base64
@@ -1033,6 +1036,72 @@ def _song_label_from_path(path: Path) -> str:
     return label.replace("_", " ")
 
 
+def _synthesize_reference_proxy_from_base_groove(
+    *,
+    base_groove_path: Path,
+    dest_path: Path,
+) -> bool:
+    try:
+        payload = json.loads(base_groove_path.read_text(encoding="utf-8"))
+        events = payload.get("pattern_events") if isinstance(payload, dict) else None
+        if not isinstance(events, list) or not events:
+            return False
+
+        sr = 22050
+        tone_hz = 1100.0
+        click_len_s = 0.045
+        click_len = max(1, int(sr * click_len_s))
+
+        last_event = 0.0
+        cleaned_events: List[float] = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            try:
+                t = float(event.get("time_sec", 0.0))
+            except Exception:
+                continue
+            if t < 0:
+                continue
+            cleaned_events.append(t)
+            if t > last_event:
+                last_event = t
+        if not cleaned_events:
+            return False
+
+        duration_s = max(3.0, min(20.0, last_event + 0.75))
+        total_samples = int(duration_s * sr)
+        samples: List[int] = [0] * total_samples
+
+        for event_sec in cleaned_events:
+            start = int(event_sec * sr)
+            if start >= total_samples:
+                continue
+            for i in range(click_len):
+                idx = start + i
+                if idx >= total_samples:
+                    break
+                env = 1.0 - (i / click_len)
+                value = int(12000.0 * env * math.sin((2.0 * math.pi * tone_hz * i) / sr))
+                mixed = samples[idx] + value
+                if mixed > 32767:
+                    mixed = 32767
+                elif mixed < -32768:
+                    mixed = -32768
+                samples[idx] = mixed
+
+        with wave.open(str(dest_path), "wb") as wav_out:
+            wav_out.setnchannels(1)
+            wav_out.setsampwidth(2)
+            wav_out.setframerate(sr)
+            pcm = struct.pack("<{}h".format(len(samples)), *samples)
+            wav_out.writeframes(pcm)
+
+        return dest_path.is_file() and dest_path.stat().st_size > 44
+    except Exception:
+        return False
+
+
 def _song_label_from_uri(uri: str) -> str:
     text = str(uri or "").strip()
     if not text:
@@ -1331,6 +1400,8 @@ def _create_reference_baseline_run(
     root = Path(__file__).resolve().parents[1]
     dest_dir = root / "artifacts" / "calibration" / "references" / run_id
     dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path: Optional[Path] = None
+
     if source_path is not None and source_path.is_file():
         dest_path = dest_dir / source_path.name
         if source_path.resolve() != dest_path.resolve():
@@ -1349,8 +1420,19 @@ def _create_reference_baseline_run(
                         if chunk:
                             fh.write(chunk)
         except Exception:
-            return None
+            dest_path = None
     else:
+        dest_path = None
+
+    if dest_path is None or not dest_path.is_file():
+        base_groove_path = _resolve_local_path(baseline_source.get("base_groove_path"))
+        if base_groove_path is not None and base_groove_path.is_file():
+            proxy_name = f"{analysis_id or 'reference'}_assimilation_proxy.wav"
+            proxy_path = dest_dir / proxy_name
+            if _synthesize_reference_proxy_from_base_groove(base_groove_path=base_groove_path, dest_path=proxy_path):
+                dest_path = proxy_path
+
+    if dest_path is None or not dest_path.is_file():
         return None
 
     storage_uri = str(Path("artifacts") / "calibration" / "references" / run_id / dest_path.name)
