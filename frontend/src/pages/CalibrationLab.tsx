@@ -562,7 +562,8 @@ const FIELD_GROUPS: Array<{ title: string; keys: string[]; blurb: string }> = [
 const FEEL_KNOB_KEYS = new Set(['timing_scale', 'velocity_std_scale', 'fill_factor', 'fill_velocity_scale']);
 
 const API_BASE = resolveApiBaseNormalized();
-const api = axios.create({ baseURL: `${API_BASE}/calibration`, timeout: 15000 });
+const API_ROOT = `${API_BASE}/calibration`.replace(/([^:]\/)\/+?/g, '$1');
+const api = axios.create({ baseURL: API_ROOT, timeout: 15000 });
 const CALIBRATION_STATIC_PREFIX = '/static/calibration_artifacts';
 const LISTENING_QUEUE_TIMEOUT_MS = 180000;
 const LISTENING_ITEM_TIMEOUT_MS = 45000;
@@ -725,8 +726,13 @@ const extractApiErrorMessage = (error: unknown, fallback: string): string => {
   if (axios.isAxiosError(error)) {
     const axiosError = error as any;
     const code = String(axiosError?.code || '').trim();
+    const method = String(axiosError?.config?.method || 'request').toUpperCase();
+    const requestPath = String(axiosError?.config?.url || '').replace(/^\//, '');
+    const requestBase = String(axiosError?.config?.baseURL || API_ROOT || API_BASE || '').replace(/\/$/, '');
+    const requestUrl = requestPath ? `${requestBase}/${requestPath}` : requestBase || 'backend API';
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'unknown origin';
     if (code === 'ECONNABORTED') {
-      return `Request timed out contacting ${API_BASE || 'backend API'}.`;
+      return `Request timed out contacting ${requestUrl} from ${origin} (${method}${code ? `, ${code}` : ''}).`;
     }
     const statusCode = axiosError?.response?.status;
     const detail = axiosError?.response?.data?.detail;
@@ -742,7 +748,7 @@ const extractApiErrorMessage = (error: unknown, fallback: string): string => {
     const message = axiosError?.message;
     if (typeof message === 'string' && message.trim()) {
       if (/network error/i.test(message)) {
-        return `Network error contacting ${API_BASE || 'backend API'}.`;
+        return `Network error contacting ${requestUrl} from ${origin} (${method}${code ? `, ${code}` : ''}). Check backend health and CORS preflight.`;
       }
       return statusCode ? `${message} (HTTP ${statusCode})` : message;
     }
@@ -1176,8 +1182,8 @@ const CalibrationLab: React.FC = () => {
         candidate_count: 2,
         include_baseline: true,
         strict_reference_baseline: true,
-        wait_for_all_artifacts: true,
-        artifact_wait_timeout_sec: 120,
+        wait_for_all_artifacts: false,
+        artifact_wait_timeout_sec: 30,
         artifact_poll_interval_ms: 1500,
         reviewer_id: reviewerId || `calibration_auto_${selectedSlug}`,
       };

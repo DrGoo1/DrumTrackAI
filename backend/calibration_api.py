@@ -65,6 +65,13 @@ def _parse_env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _csv_env_values(name: str) -> List[str]:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return []
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
 def _discover_processed_stems(base_dir: Path) -> Dict[str, List[Path]]:
     found: Dict[str, List[Path]] = {}
     if not base_dir.exists() or not base_dir.is_dir():
@@ -1715,13 +1722,21 @@ _allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+_allowed_origins = sorted(set(_allowed_origins + _csv_env_values("CALIBRATION_CORS_ORIGINS")))
+_allowed_origin_regex = os.getenv(
+    "CALIBRATION_CORS_ORIGIN_REGEX",
+    r"https://(?:[a-z0-9-]+\.)*(?:netlify\.app|drumtrackai\.net)",
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"https://(?:.*\.netlify\.app|(?:.*\.)?drumtrackai\.net)",
+    allow_origin_regex=_allowed_origin_regex,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    max_age=600,
 )
 
 
