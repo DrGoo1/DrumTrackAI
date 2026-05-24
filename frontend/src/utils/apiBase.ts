@@ -1,5 +1,5 @@
 const LOCAL_API_PORT = "8000";
-const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api.onrender.com";
+const CALIBRATION_API_BASE = "https://drumtrackai-calibration-api2.onrender.com";
 
 const normalizeApiBase = (value?: string | null): string => String(value || "").trim().replace(/\/+$/, "");
 const rewriteDeprecatedApiBase = (value?: string | null): string => {
@@ -8,7 +8,7 @@ const rewriteDeprecatedApiBase = (value?: string | null): string => {
     return "";
   }
   return normalized.replace(
-    /^https?:\/\/drumtrackai-calibration-api2\.onrender\.com(?=\/|$)/i,
+    /^https?:\/\/drumtrackai-calibration-api\.onrender\.com(?=\/|$)/i,
     CALIBRATION_API_BASE,
   );
 };
