@@ -8,6 +8,50 @@ from typing import Iterable, Optional
 from sqlalchemy import create_engine, text
 
 
+_AUDIO_SUFFIXES = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".wma",
+}
+_NON_AUDIO_SUFFIXES = {
+    ".json",
+    ".txt",
+    ".csv",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".md",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    ".mid",
+    ".midi",
+}
+
+
+def _is_likely_audio_path(value: Optional[str]) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return False
+    suffix = Path(candidate).suffix.lower()
+    if suffix in _AUDIO_SUFFIXES:
+        return True
+    if suffix in _NON_AUDIO_SUFFIXES:
+        return False
+    return True
+
+
 def _is_cloud_uri(value: Optional[str]) -> bool:
     uri = str(value or "").strip().lower()
     return uri.startswith(("https://", "http://", "s3://", "supabase://", "gs://", "r2://"))
@@ -18,7 +62,9 @@ def _existing_local_file(value: Optional[str]) -> Optional[str]:
     if not candidate:
         return None
     p = Path(candidate)
-    return str(p) if p.exists() and p.is_file() else None
+    if not (p.exists() and p.is_file()):
+        return None
+    return str(p) if _is_likely_audio_path(str(p)) else None
 
 
 def _pick_local_source_path(conn, analysis_id: str) -> Optional[str]:
@@ -90,6 +136,52 @@ def _pick_local_source_path(conn, analysis_id: str) -> Optional[str]:
     return None
 
 
+def _pick_existing_cloud_audio_uri(conn, analysis_id: str) -> Optional[str]:
+    stem_rows = conn.execute(
+        text(
+            """
+            SELECT stem_name, file_path
+            FROM public.stem_artifacts
+            WHERE analysis_id = :analysis_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"analysis_id": analysis_id},
+    ).mappings().all()
+    preferred_stems = ("drums", "drum", "mix", "master")
+    for preferred in preferred_stems:
+        for stem in stem_rows:
+            stem_name = str(stem.get("stem_name") or "").strip().lower()
+            file_path = str(stem.get("file_path") or "").strip()
+            if stem_name != preferred:
+                continue
+            if _is_cloud_uri(file_path) and _is_likely_audio_path(file_path):
+                return file_path
+
+    artifact_rows = conn.execute(
+        text(
+            """
+            SELECT artifact_role, file_path
+            FROM public.analysis_artifacts
+            WHERE analysis_id = :analysis_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"analysis_id": analysis_id},
+    ).mappings().all()
+    preferred_roles = ("source_audio", "source", "drums", "drum_mix", "mix")
+    for role in preferred_roles:
+        for artifact in artifact_rows:
+            artifact_role = str(artifact.get("artifact_role") or "").strip().lower()
+            file_path = str(artifact.get("file_path") or "").strip()
+            if artifact_role != role:
+                continue
+            if _is_cloud_uri(file_path) and _is_likely_audio_path(file_path):
+                return file_path
+
+    return None
+
+
 def _iter_target_analyses(conn, drummer_slug: str, limit: int) -> Iterable[dict]:
     return conn.execute(
         text(
@@ -150,8 +242,29 @@ def main() -> None:
             if not analysis_id:
                 continue
 
-            if _is_cloud_uri(existing_source):
+            if _is_cloud_uri(existing_source) and _is_likely_audio_path(existing_source):
                 already_cloud += 1
+                continue
+
+            existing_cloud_audio_uri = _pick_existing_cloud_audio_uri(conn, analysis_id)
+            if existing_cloud_audio_uri:
+                if args.dry_run:
+                    print(f"DRYRUN {analysis_id}: existing cloud audio -> {existing_cloud_audio_uri}")
+                    updated += 1
+                    continue
+                conn.execute(
+                    text(
+                        """
+                        UPDATE public.song_performance_analysis
+                        SET source_file = :source_file,
+                            updated_at = NOW()
+                        WHERE analysis_id = :analysis_id
+                        """
+                    ),
+                    {"source_file": existing_cloud_audio_uri, "analysis_id": analysis_id},
+                )
+                updated += 1
+                print(f"OK   {analysis_id}: {existing_cloud_audio_uri}")
                 continue
 
             local_path = _pick_local_source_path(conn, analysis_id)

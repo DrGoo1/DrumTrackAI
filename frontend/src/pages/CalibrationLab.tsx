@@ -1257,11 +1257,7 @@ const CalibrationLab: React.FC = () => {
               break;
             }
 
-            const isLastAttempt = attempt === totalHydrationAttempts;
-            if (!isLastAttempt) {
-              await sleep(LISTENING_ARTIFACT_READY_DELAY_MS);
-              continue;
-            }
+            break;
           } catch (error) {
             const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
             const isLastAttempt = attempt === totalHydrationAttempts;
@@ -1282,11 +1278,7 @@ const CalibrationLab: React.FC = () => {
           setPendingListeningItemId(null);
           const hasAudio = hasPlayableArtifacts(hydratedItem);
           setItemError(hasAudio ? null : 'Listening item is ready, but drum tracks are still rendering. Try Refresh Detail in a few seconds.');
-          setListeningProgress(
-            hasAudio
-              ? { active: false, label: '', value: null }
-              : { active: true, label: 'Rendering drum tracks...', value: null }
-          );
+          setListeningProgress({ active: false, label: '', value: null });
           setPairwiseMessage(
             hasAudio
               ? 'Listening item queued. Review baseline vs A/B and submit judgment.'

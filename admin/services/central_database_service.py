@@ -7346,41 +7346,71 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             render_json = self._json_dumps(render_recipe) if render_recipe is not None else "{}"
 
             if getattr(self, "_engine", None) is not None:
-                with self._engine.begin() as conn_pg:
-                    conn_pg.execute(
-                        text(
-                            """
-                            INSERT INTO public.audio_artifacts (
-                                artifact_id, run_id, artifact_type, storage_uri,
-                                duration_sec, loudness_lufs, sample_pack_version,
-                                render_recipe_json, created_at
-                            ) VALUES (
-                                :artifact_id, :run_id, :artifact_type, :storage_uri,
-                                :duration_sec, :loudness_lufs, :sample_pack_version,
-                                :render_recipe_json, NOW()
-                            )
-                            ON CONFLICT (artifact_id) DO UPDATE SET
-                                run_id = EXCLUDED.run_id,
-                                artifact_type = EXCLUDED.artifact_type,
-                                storage_uri = EXCLUDED.storage_uri,
-                                duration_sec = EXCLUDED.duration_sec,
-                                loudness_lufs = EXCLUDED.loudness_lufs,
-                                sample_pack_version = EXCLUDED.sample_pack_version,
-                                render_recipe_json = EXCLUDED.render_recipe_json,
-                                created_at = NOW()
-                            """
-                        ),
-                        {
-                            "artifact_id": artifact_id,
-                            "run_id": run_id,
-                            "artifact_type": artifact_type,
-                            "storage_uri": storage_uri,
-                            "duration_sec": self._safe_float(duration_sec),
-                            "loudness_lufs": self._safe_float(loudness_lufs),
-                            "sample_pack_version": sample_pack_version,
-                            "render_recipe_json": render_json,
-                        },
-                    )
+                params = {
+                    "artifact_id": artifact_id,
+                    "run_id": run_id,
+                    "artifact_type": artifact_type,
+                    "storage_uri": storage_uri,
+                    "duration_sec": self._safe_float(duration_sec),
+                    "loudness_lufs": self._safe_float(loudness_lufs),
+                    "sample_pack_version": sample_pack_version,
+                    "render_recipe_json": render_json,
+                }
+                try:
+                    with self._engine.begin() as conn_pg:
+                        conn_pg.execute(
+                            text(
+                                """
+                                INSERT INTO public.audio_artifacts (
+                                    artifact_id, run_id, artifact_type, storage_uri,
+                                    duration_sec, loudness_lufs, sample_pack_version,
+                                    render_recipe_json, created_at
+                                ) VALUES (
+                                    :artifact_id, :run_id, :artifact_type, :storage_uri,
+                                    :duration_sec, :loudness_lufs, :sample_pack_version,
+                                    :render_recipe_json, NOW()
+                                )
+                                ON CONFLICT (artifact_id) DO UPDATE SET
+                                    run_id = EXCLUDED.run_id,
+                                    artifact_type = EXCLUDED.artifact_type,
+                                    storage_uri = EXCLUDED.storage_uri,
+                                    duration_sec = EXCLUDED.duration_sec,
+                                    loudness_lufs = EXCLUDED.loudness_lufs,
+                                    sample_pack_version = EXCLUDED.sample_pack_version,
+                                    render_recipe_json = EXCLUDED.render_recipe_json,
+                                    created_at = NOW()
+                                """
+                            ),
+                            params,
+                        )
+                except Exception as pg_write_exc:
+                    if "created_at" not in str(pg_write_exc):
+                        raise
+                    with self._engine.begin() as conn_pg:
+                        conn_pg.execute(
+                            text(
+                                """
+                                INSERT INTO public.audio_artifacts (
+                                    artifact_id, run_id, artifact_type, storage_uri,
+                                    duration_sec, loudness_lufs, sample_pack_version,
+                                    render_recipe_json
+                                ) VALUES (
+                                    :artifact_id, :run_id, :artifact_type, :storage_uri,
+                                    :duration_sec, :loudness_lufs, :sample_pack_version,
+                                    :render_recipe_json
+                                )
+                                ON CONFLICT (artifact_id) DO UPDATE SET
+                                    run_id = EXCLUDED.run_id,
+                                    artifact_type = EXCLUDED.artifact_type,
+                                    storage_uri = EXCLUDED.storage_uri,
+                                    duration_sec = EXCLUDED.duration_sec,
+                                    loudness_lufs = EXCLUDED.loudness_lufs,
+                                    sample_pack_version = EXCLUDED.sample_pack_version,
+                                    render_recipe_json = EXCLUDED.render_recipe_json
+                                """
+                            ),
+                            params,
+                        )
                 self.data_changed.emit("audio_artifacts", "upsert")
                 return artifact_id
 

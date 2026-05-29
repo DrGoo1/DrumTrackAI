@@ -1077,6 +1077,57 @@ def _is_cloud_readable_storage_uri(value: Any) -> bool:
     return lower.startswith(("https://", "http://", "s3://", "supabase://", "gs://", "r2://"))
 
 
+_AUDIO_FILE_SUFFIXES = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".wma",
+}
+_NON_AUDIO_FILE_SUFFIXES = {
+    ".json",
+    ".txt",
+    ".csv",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".md",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    ".mid",
+    ".midi",
+}
+
+
+def _is_likely_audio_storage_uri(value: Any) -> bool:
+    uri = _normalize_storage_uri(value)
+    if not uri:
+        return False
+
+    try:
+        parsed = urlparse(uri)
+        path_value = parsed.path or uri
+    except Exception:
+        path_value = uri
+
+    suffix = Path(path_value).suffix.lower()
+    if suffix in _AUDIO_FILE_SUFFIXES:
+        return True
+    if suffix in _NON_AUDIO_FILE_SUFFIXES:
+        return False
+    return True
+
+
 def _baseline_source_summary(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(source, dict):
         return {"present": False}
@@ -1125,7 +1176,7 @@ def _reference_storage_uri_from_baseline_source(source: Dict[str, Any]) -> Optio
         "base_groove_path",
     ):
         value = _normalize_storage_uri(source.get(key))
-        if _is_cloud_readable_storage_uri(value):
+        if _is_cloud_readable_storage_uri(value) and _is_likely_audio_storage_uri(value):
             return value
     return None
 
@@ -1146,36 +1197,42 @@ def _find_existing_reference_baseline(
     analysis_id: str,
     fingerprint: str,
 ) -> Optional[Dict[str, str]]:
-    engine = _require_postgres_engine(db)
-    with engine.connect() as conn_pg:
-        row = conn_pg.execute(
-            text(
-                """
-                SELECT r.run_id, a.artifact_id
-                FROM public.calibration_runs r
-                JOIN public.audio_artifacts a ON a.run_id = r.run_id
-                WHERE r.drummer_slug = :drummer_slug
-                  AND COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'requested_via'), '') = 'baseline_reference'
-                  AND (
-                        COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'source_analysis_id'), '') = :analysis_id
-                     OR COALESCE((COALESCE(r.metadata_json, '{}')::jsonb ->> 'source_fingerprint'), '') = :fingerprint
-                  )
-                ORDER BY r.started_at DESC
-                LIMIT 1
-                """
-            ),
-            {
-                "drummer_slug": drummer_slug,
-                "analysis_id": analysis_id,
-                "fingerprint": fingerprint,
-            },
-        ).mappings().first()
-    if not row:
+    expected_run_id = f"baseline-ref-{fingerprint}"
+    try:
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            row = conn_pg.execute(
+                text(
+                    """
+                    SELECT r.run_id, a.artifact_id
+                    FROM public.calibration_runs r
+                    JOIN public.audio_artifacts a ON a.run_id = r.run_id
+                    WHERE r.drummer_slug = :drummer_slug
+                      AND r.run_id = :run_id
+                    ORDER BY r.started_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "drummer_slug": drummer_slug,
+                    "run_id": expected_run_id,
+                },
+            ).mappings().first()
+        if not row:
+            return None
+        return {
+            "run_id": str(row["run_id"]),
+            "artifact_id": str(row["artifact_id"]),
+        }
+    except Exception:
+        logger.warning(
+            "baseline_reference_lookup_failed drummer=%s analysis_id=%s run_id=%s",
+            drummer_slug,
+            analysis_id,
+            expected_run_id,
+            exc_info=True,
+        )
         return None
-    return {
-        "run_id": str(row["run_id"]),
-        "artifact_id": str(row["artifact_id"]),
-    }
 
 
 def _ensure_reference_baseline_run(
@@ -1475,9 +1532,9 @@ def _select_assimilation_baseline_source(
         if source_path is None:
             row_source = str(row["source_file"] or "").strip()
             source_path = _resolve_local_path(row_source)
-            if not source_uri and row_source:
+            if not source_uri and row_source and _is_likely_audio_storage_uri(row_source):
                 source_uri = row_source
-        elif not source_uri:
+        elif not source_uri and _is_likely_audio_storage_uri(source_path):
             source_uri = str(source_path)
 
         if not source_uri and analysis_artifact_rows:
@@ -1498,10 +1555,10 @@ def _select_assimilation_baseline_source(
                 file_path_value = str(artifact.get("file_path") or "").strip()
                 if not file_path_value:
                     continue
-                if _is_cloud_readable_storage_uri(file_path_value):
+                if _is_cloud_readable_storage_uri(file_path_value) and _is_likely_audio_storage_uri(file_path_value):
                     cloud_candidate = file_path_value
                     break
-                if fallback_candidate is None:
+                if fallback_candidate is None and _is_likely_audio_storage_uri(file_path_value):
                     fallback_candidate = file_path_value
             source_uri = cloud_candidate or fallback_candidate or source_uri
             if source_path is None and source_uri:

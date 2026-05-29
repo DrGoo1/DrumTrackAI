@@ -6,8 +6,12 @@ from pathlib import Path
 import math
 import wave
 import struct
+import logging
 
 from admin.services.central_database_service import CentralDatabaseService
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,10 +68,15 @@ class CalibrationRenderService:
                     tempo_bpm=float(request.render_recipe.get("tempo_bpm", 110.0) if isinstance(request.render_recipe, dict) else 110.0),
                 )
                 if preview_path is not None and preview_path.is_file():
-                    storage_uri = str(Path("artifacts") / "calibration" / "candidates" / request.run_id / preview_path.name)
+                    storage_uri = str(
+                        Path("/static/calibration_artifacts")
+                        / "candidates"
+                        / request.run_id
+                        / preview_path.name
+                    )
                     self._db.log_audio_artifact(
                         run_id=request.run_id,
-                        artifact_type="preview",
+                        artifact_type="audio",
                         storage_uri=storage_uri,
                         duration_sec=4.0,
                         loudness_lufs=None,
@@ -79,11 +88,9 @@ class CalibrationRenderService:
                         },
                     )
             except Exception:
-                # Non-fatal: artifact creation is best-effort
-                pass
+                logger.exception("render_stub_artifact_log_failed run_id=%s", request.run_id)
         except Exception:
-            # Swallow errors to keep API responsive; callers handle failures upstream.
-            pass
+            logger.exception("render_run_failed run_id=%s", request.run_id)
 
     def _synthesize_preview_audio(self, *, run_id: str, tempo_bpm: float) -> Optional[Path]:
         try:
