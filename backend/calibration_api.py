@@ -48,6 +48,34 @@ router = APIRouter(prefix="/calibration", tags=["calibration"])
 _artifact_url_service = ArtifactUrlService()
 logger = logging.getLogger(__name__)
 
+CALIBRATION_API_BUILD_MARKER = os.getenv(
+    "CALIBRATION_API_BUILD_MARKER",
+    "calibration_api_build_2026-06-19_strict_baseline_downgrade_v2",
+)
+CALIBRATION_API_INSTANCE_ID = (
+    os.getenv("RENDER_INSTANCE_ID")
+    or os.getenv("HOSTNAME")
+    or uuid.uuid4().hex[:12]
+)
+
+
+def _runtime_diagnostics() -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = {
+        "api_build_marker": CALIBRATION_API_BUILD_MARKER,
+        "api_instance_id": CALIBRATION_API_INSTANCE_ID,
+        "pid": os.getpid(),
+        "db_backend": str(os.getenv("DB_BACKEND", "")).strip().lower() or None,
+        "database_url_configured": bool(str(os.getenv("DATABASE_URL", "")).strip()),
+    }
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION", "RENDER_SERVICE_NAME"):
+        value = str(os.getenv(key, "")).strip()
+        if value:
+            diagnostics[key] = value
+    return diagnostics
+
+_DB_INIT_LOCK = threading.RLock()
+_DB_SERVICE_READY = False
+
 _AUTO_ASSIMILATION_LOCK = threading.Lock()
 _AUTO_ASSIMILATION_STATE: Dict[str, Any] = {
     "running": False,
@@ -300,34 +328,45 @@ def _complete_generation_run(*, slug: str, run_id: str) -> None:
                 logger.exception("Failed to persist calibration failure run for %s", slug)
 
 
+def _assert_postgres_database_configured() -> None:
+    backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+    db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+    if backend_env not in {"postgres", "postgresql"}:
+        raise RuntimeError("Calibration API requires DB_BACKEND=postgres")
+    if not db_url_env.lower().startswith("postgres"):
+        raise RuntimeError("Calibration API requires a valid Postgres DATABASE_URL")
+
+
 def get_db_service() -> CentralDatabaseService:
+    """Return one initialized Postgres-backed CentralDatabaseService instance.
+
+    Avoid spawning a new initialization thread per request. Cold Render starts
+    and slow Supabase pool warm-up should become a clear startup/config error,
+    not intermittent calibration-page failures.
+    """
+    global _DB_SERVICE_READY  # noqa: PLW0603
+
+    _assert_postgres_database_configured()
     svc = CentralDatabaseService.get_instance()
     if svc is None:
         raise RuntimeError("CentralDatabaseService unavailable")
 
-    init_result: Dict[str, Any] = {"ok": False, "error": None}
+    if _DB_SERVICE_READY and getattr(svc, "_engine", None) is not None:
+        return svc
 
-    def _init_worker() -> None:
+    with _DB_INIT_LOCK:
+        if _DB_SERVICE_READY and getattr(svc, "_engine", None) is not None:
+            return svc
         try:
-            init_result["ok"] = bool(svc.initialize())
+            ok = bool(svc.initialize())
         except Exception as exc:
-            init_result["error"] = exc
-
-    init_thread = threading.Thread(target=_init_worker, daemon=True)
-    init_thread.start()
-    init_thread.join(timeout=8.0)
-
-    if init_thread.is_alive():
-        raise RuntimeError("CentralDatabaseService initialization timed out")
-
-    if init_result["error"] is not None:
-        raise RuntimeError(f"CentralDatabaseService failed to initialize: {init_result['error']}")
-
-    if not init_result["ok"]:
-        raise RuntimeError("CentralDatabaseService failed to initialize")
-    if getattr(svc, "_engine", None) is None:
-        raise RuntimeError("Calibration API requires Postgres (DB_BACKEND=postgres with valid DATABASE_URL)")
-    return svc
+            raise RuntimeError(f"CentralDatabaseService failed to initialize: {exc}") from exc
+        if not ok:
+            raise RuntimeError("CentralDatabaseService failed to initialize")
+        if getattr(svc, "_engine", None) is None:
+            raise RuntimeError("Calibration API requires Postgres (DB_BACKEND=postgres with valid DATABASE_URL)")
+        _DB_SERVICE_READY = True
+        return svc
 
 
 class CompletionStatusInfo(BaseModel):
@@ -382,8 +421,8 @@ class GenerateCandidatesRequest(BaseModel):
     reviewer_id: Optional[str] = None
     seed: Optional[int] = None
     generation_controls: Optional[Dict[str, Any]] = None
-    strict_reference_baseline: bool = True
-    wait_for_all_artifacts: bool = True
+    strict_reference_baseline: bool = False
+    wait_for_all_artifacts: bool = False
     artifact_wait_timeout_sec: int = Field(default=120, ge=30, le=600)
     artifact_poll_interval_ms: int = Field(default=1500, ge=500, le=10000)
 
@@ -1682,7 +1721,14 @@ def _collect_item_lane_progress(
         }
 
         if not run_id_val:
-            lane_payload["strict_reference_ok"] = lane != "baseline"
+            if lane == "baseline":
+                lane_payload["ready"] = True
+                lane_payload["not_required"] = True
+                lane_payload["strict_reference_ok"] = False
+                lane_payload["reason"] = "No cloud-readable baseline reference artifact is available; A/B review can continue."
+                lanes.append(lane_payload)
+                continue
+            lane_payload["strict_reference_ok"] = True
             lanes.append(lane_payload)
             missing_lanes.append(lane)
             all_ready = False
@@ -1839,64 +1885,53 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
 
     try:
         rows = await _db_call_with_timeout(db.get_drummers, timeout=8.0, default=[]) or []
-        results: List[DrummerListItem] = []
-        for row in rows:
+        semaphore = asyncio.Semaphore(4)
+
+        async def _build_drummer_item(row: Dict[str, Any]) -> Optional[DrummerListItem]:
             try:
-                slug = _slug_from_row(row)
-                if not slug:
-                    continue
-                display_name = _display_name_from_row(row, slug)
+                async with semaphore:
+                    slug = _slug_from_row(row)
+                    if not slug:
+                        return None
+                    display_name = _display_name_from_row(row, slug)
 
-                completion_info: Optional[CompletionStatusInfo] = None
-                within = row.get("metrics_within") or row.get("metrics_within_tolerance")
-                total = row.get("metrics_compared") or row.get("metrics_total")
-                if within is not None or total is not None:
-                    try:
-                        completion_info = _completion_from_counts(
-                            int(within) if within is not None else None,
-                            int(total) if total is not None else None,
-                        )
-                    except Exception:
-                        completion_info = None
+                    completion_info: Optional[CompletionStatusInfo] = None
+                    within = row.get("metrics_within") or row.get("metrics_within_tolerance")
+                    total = row.get("metrics_compared") or row.get("metrics_total")
+                    if within is not None or total is not None:
+                        try:
+                            completion_info = _completion_from_counts(
+                                int(within) if within is not None else None,
+                                int(total) if total is not None else None,
+                            )
+                        except Exception:
+                            completion_info = None
 
-                latest_run: Optional["CalibrationRun"] = await _db_call_with_timeout(
-                    db.get_latest_calibration_run,
-                    drummer_slug=slug,
-                    timeout=4.0,
-                    default=None,
-                )
+                    latest_run: Optional["CalibrationRun"] = await _db_call_with_timeout(
+                        db.get_latest_calibration_run,
+                        drummer_slug=slug,
+                        timeout=4.0,
+                        default=None,
+                    )
 
-                if completion_info is None:
-                    completion_info = _completion_from_run(latest_run)
+                    if completion_info is None:
+                        completion_info = _completion_from_run(latest_run)
 
-                latest_run_at = None
-                metrics_within_int: Optional[int] = None
-                metrics_total_int: Optional[int] = None
-                if latest_run:
-                    latest_run_at = latest_run.completed_at or latest_run.started_at
-                    metrics_within_int = latest_run.within_tolerance_count
-                    metrics_total_int = latest_run.total_compared
+                    latest_run_at = None
+                    metrics_within_int: Optional[int] = None
+                    metrics_total_int: Optional[int] = None
+                    if latest_run:
+                        latest_run_at = latest_run.completed_at or latest_run.started_at
+                        metrics_within_int = latest_run.within_tolerance_count
+                        metrics_total_int = latest_run.total_compared
 
-                assimilation_status = await _db_call_with_timeout(
-                    _assimilation_status_for_slug,
-                    db,
-                    slug,
-                    timeout=6.0,
-                    default={
-                        "status": "unknown",
-                        "ready_for_calibration": False,
-                        "missing_steps": ["status_check_failed"],
-                    },
-                )
-                if not isinstance(assimilation_status, dict):
                     assimilation_status = {
                         "status": "unknown",
                         "ready_for_calibration": False,
-                        "missing_steps": ["status_check_failed"],
+                        "missing_steps": ["status_check_deferred"],
                     }
 
-                results.append(
-                    DrummerListItem(
+                    return DrummerListItem(
                         slug=slug,
                         displayName=display_name,
                         completionStatus=completion_info,
@@ -1905,10 +1940,12 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
                         metricsWithin=metrics_within_int,
                         metricsCompared=metrics_total_int,
                     )
-                )
             except Exception as row_exc:
                 logger.warning(f"Skipping drummer row due to roster serialization error: {row_exc}")
-                continue
+                return None
+
+        built_items = await asyncio.gather(*[_build_drummer_item(row) for row in rows])
+        results: List[DrummerListItem] = [item for item in built_items if item is not None]
         return sorted(results, key=lambda item: item.displayName.lower())
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
@@ -1969,7 +2006,7 @@ _allowed_origins = [
 _allowed_origins = sorted(set(_allowed_origins + _csv_env_values("CALIBRATION_CORS_ORIGINS")))
 _allowed_origin_regex = os.getenv(
     "CALIBRATION_CORS_ORIGIN_REGEX",
-    r"https://(?:[a-z0-9-]+\.)*(?:netlify\.app|drumtrackai\.net)",
+    r"https://(?:[a-z0-9-]+\.)*(?:netlify\.app|drumtrackai\.net)|http://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?",
 )
 
 app.add_middleware(
@@ -1981,6 +2018,13 @@ app.add_middleware(
     allow_headers=["*"],
     max_age=600,
 )
+
+
+@app.on_event("startup")
+async def _warm_database_on_startup() -> None:
+    # Fail fast on deployment/config drift instead of letting the first browser
+    # request discover an uninitialized or non-Postgres DB service.
+    await asyncio.to_thread(get_db_service)
 
 
 @app.on_event("startup")
@@ -2267,7 +2311,7 @@ async def submit_pairwise_judgment(
 
 @router.get("/health", response_model=CalibrationHealthPayload)
 async def calibration_health() -> CalibrationHealthPayload:
-    build_marker = "calibration_api_build_2026-05-19T00:40Z"
+    build_marker = CALIBRATION_API_BUILD_MARKER
     db_path = None
     svc = CentralDatabaseService.get_instance()
     try:
@@ -2287,6 +2331,7 @@ async def calibration_health() -> CalibrationHealthPayload:
     }
     notes: List[str] = []
     notes.append(f"build_marker={build_marker}")
+    notes.append(f"instance_id={CALIBRATION_API_INSTANCE_ID}")
     for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
         value = str(os.getenv(key, "")).strip()
         if value:
@@ -2360,6 +2405,7 @@ async def db_diagnostics() -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "db_backend": backend_env or None,
         "has_database_url": bool(db_url_env),
+        "runtime": _runtime_diagnostics(),
     }
     configured = (backend_env in {"postgres", "postgresql"}) or db_url_env.lower().startswith("postgres")
     out["configured"] = configured
@@ -2642,15 +2688,36 @@ async def list_run_artifacts(run_id: str, db: CentralDatabaseService = Depends(g
 @router.post("/generate-candidates")
 async def generate_candidates(
     payload: GenerateCandidatesRequest,
+    request: Request,
     db: CentralDatabaseService = Depends(get_db_service),
 ) -> Dict[str, Any]:
     base_groove_id = (payload.base_groove_id or "").strip()
     target_slug = (payload.target_drummer_slug or "").strip()
+    runtime = _runtime_diagnostics()
     if not base_groove_id or not target_slug:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base groove or drummer")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "stage": "request_validate",
+                "message": "Missing base groove or drummer",
+                "runtime": runtime,
+            },
+        )
 
     try:
         stage = "assimilation_status"
+
+        logger.info(
+            "generate_candidates_request build=%s instance=%s origin=%s host=%s drummer=%s base_groove=%s strict=%s include_baseline=%s",
+            runtime.get("api_build_marker"),
+            runtime.get("api_instance_id"),
+            request.headers.get("origin"),
+            request.headers.get("host"),
+            target_slug,
+            base_groove_id,
+            bool(payload.strict_reference_baseline),
+            bool(payload.include_baseline),
+        )
 
         def _raise_stage_error(message: str, *, status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR) -> None:
             raise HTTPException(
@@ -2658,6 +2725,7 @@ async def generate_candidates(
                 detail={
                     "stage": stage,
                     "message": message,
+                    "runtime": runtime,
                 },
             )
 
@@ -2670,6 +2738,7 @@ async def generate_candidates(
                     "stage": stage,
                     "message": "Assimilation not ready for calibration",
                     "assimilationStatus": assimilation,
+                    "runtime": runtime,
                 },
             )
 
@@ -2687,7 +2756,7 @@ async def generate_candidates(
             session_id = db.create_evaluation_session(
                 reviewer_id=reviewer_id,
                 target_drummer_slug=target_slug,
-                app_version="calibration_phase2",
+                app_version=f"calibration_phase2:{CALIBRATION_API_BUILD_MARKER}",
             )
             if not session_id:
                 _raise_stage_error("Failed to create evaluation session")
@@ -2699,6 +2768,7 @@ async def generate_candidates(
         baseline_analysis_id: Optional[str] = None
         baseline_run_id: Optional[str] = None
         reference_artifact_id: Optional[str] = None
+        baseline_missing_reason: Optional[str] = None
 
         if payload.candidate_count < 2:
             _raise_stage_error("candidate_count must be at least 2 to produce A/B outputs", status_code=status.HTTP_400_BAD_REQUEST)
@@ -2708,12 +2778,14 @@ async def generate_candidates(
             baseline_source = _select_assimilation_baseline_source(
                 db,
                 drummer_slug=target_slug,
-                require_cloud_uri=bool(payload.strict_reference_baseline),
+                require_cloud_uri=False,
             )
             if payload.strict_reference_baseline and not baseline_source:
-                _raise_stage_error(
-                    "Strict baseline mode requires an assimilated source clip with a cloud-readable storage URI",
-                    status_code=status.HTTP_409_CONFLICT,
+                baseline_missing_reason = "No assimilated baseline source clip is available for this drummer. Proceeding with non-strict A/B queueing."
+                logger.warning(
+                    "strict_baseline_downgraded drummer=%s reason=%s",
+                    target_slug,
+                    baseline_missing_reason,
                 )
             if baseline_source:
                 source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
@@ -2727,59 +2799,85 @@ async def generate_candidates(
                 stage = "baseline_reference_run_create"
                 baseline_ref: Optional[Dict[str, Any]] = None
                 baseline_source_debug = _baseline_source_summary(baseline_source)
-                try:
-                    baseline_ref = _ensure_reference_baseline_run(
-                        db,
-                        drummer_slug=target_slug,
-                        baseline_source=baseline_source,
-                        base_groove_id=item_base_groove_id,
-                        sample_pack_version=payload.sample_pack_version,
-                    )
-                except Exception as baseline_exc:
+                baseline_storage_uri = _reference_storage_uri_from_baseline_source(baseline_source)
+
+                if not baseline_storage_uri:
+                    baseline_missing_reason = "No cloud-readable baseline source clip is available for this assimilated analysis."
                     if payload.strict_reference_baseline:
+                        logger.warning(
+                            "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                            target_slug,
+                            stage,
+                            baseline_missing_reason,
+                        )
+                else:
+                    try:
+                        baseline_ref = _ensure_reference_baseline_run(
+                            db,
+                            drummer_slug=target_slug,
+                            baseline_source=baseline_source,
+                            base_groove_id=item_base_groove_id,
+                            sample_pack_version=payload.sample_pack_version,
+                        )
+                    except Exception as baseline_exc:
                         logger.exception(
-                            "strict_baseline_reference_create_failed drummer=%s source=%s",
+                            "baseline_reference_create_failed drummer=%s source=%s",
                             target_slug,
                             baseline_source_debug,
                         )
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail={
-                                "stage": stage,
-                                "message": "Strict baseline mode failed to create baseline reference artifact",
-                                "reason": str(baseline_exc),
-                                "baselineSource": baseline_source_debug,
-                            },
-                        )
+                        if payload.strict_reference_baseline:
+                            logger.warning(
+                                "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                                target_slug,
+                                stage,
+                                str(baseline_exc),
+                            )
+                        baseline_missing_reason = str(baseline_exc)
 
                 if payload.strict_reference_baseline and not baseline_ref:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "stage": stage,
-                            "message": "Strict baseline mode failed to create baseline reference artifact",
-                            "reason": "baseline reference helper returned no run/artifact",
-                            "baselineSource": baseline_source_debug,
-                        },
+                    if not baseline_missing_reason:
+                        baseline_missing_reason = "Strict baseline requested but baseline reference artifact could not be created. Proceeding with A/B queueing."
+                    logger.warning(
+                        "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                        target_slug,
+                        stage,
+                        baseline_missing_reason,
                     )
 
                 if baseline_ref:
                     baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
                     reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
 
-        generate_baseline = bool(payload.include_baseline and not baseline_run_id)
-        requested = payload.candidate_count + (1 if generate_baseline else 0)
+        # Do not synthesize a fake baseline when the original source clip is unavailable.
+        # The page can still queue A/B candidates and mark the baseline lane as not required.
+        generate_baseline = False
+        requested = payload.candidate_count
         for idx in range(requested):
             seed_offset = idx + (1 if baseline_run_id else 0)
             seed_value = payload.seed if payload.seed is not None else (1000 + seed_offset)
             stage = "candidate_generate"
-            run_data = generate_candidate_run(
-                db=db,
-                base_groove_id=effective_base_groove_id,
-                drummer_slug=target_slug,
-                seed=int(seed_value),
-                generation_controls=generation_controls,
-            )
+            try:
+                run_data = generate_candidate_run(
+                    db=db,
+                    base_groove_id=effective_base_groove_id,
+                    drummer_slug=target_slug,
+                    seed=int(seed_value),
+                    generation_controls=generation_controls,
+                )
+            except RuntimeError as gen_exc:
+                message = str(gen_exc)
+                if "rollup" in message.lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "stage": stage,
+                            "message": message,
+                            "reason": "phase5_rollup_missing_or_unreadable",
+                            "assimilationStatus": assimilation,
+                            "runtime": runtime,
+                        },
+                    )
+                raise
 
             run_metadata = {
                 "requested_via": "generate-candidates",
@@ -2931,6 +3029,7 @@ async def generate_candidates(
                                 "item_id": item_id,
                                 "elapsed_sec": round(elapsed, 2),
                                 "progress": lane_progress,
+                                "runtime": runtime,
                             },
                         )
                     await asyncio.sleep(poll_s)
@@ -2940,10 +3039,24 @@ async def generate_candidates(
             "run_ids": created_run_ids,
             "session_id": session_id,
             "item_id": item_id,
+            "baseline_run_id": baseline_run_id,
+            "reference_artifact_id": reference_artifact_id,
+            "baseline_reference_available": bool(reference_artifact_id),
+            "baseline_missing_reason": baseline_missing_reason,
+            "request_behavior": {
+                "strict_reference_baseline_requested": bool(payload.strict_reference_baseline),
+                "strict_reference_baseline_hard_fail_enabled": False,
+                "include_baseline_requested": bool(payload.include_baseline),
+                "generated_synthetic_baseline": bool(generate_baseline),
+                "baseline_source_analysis_id": baseline_analysis_id,
+            },
+            "runtime": runtime,
             "artifact_wait_enforced": bool(payload.wait_for_all_artifacts),
             "artifact_wait_timeout_sec": int(payload.artifact_wait_timeout_sec),
         }
-    except HTTPException:
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and "runtime" not in exc.detail:
+            exc.detail["runtime"] = runtime
         raise
     except Exception as exc:
         raise HTTPException(
@@ -2951,6 +3064,7 @@ async def generate_candidates(
             detail={
                 "stage": stage,
                 "message": str(exc),
+                "runtime": runtime,
             },
         )
 

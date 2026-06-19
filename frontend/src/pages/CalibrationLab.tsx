@@ -52,10 +52,15 @@ const formatTimeSeconds = (value: number): string => {
 };
 
 const hasPlayableArtifacts = (item: EvaluationItemPayload | null): boolean => {
-  if (!item?.artifact_map) return false;
-  return Object.values(item.artifact_map)
-    .flat()
-    .some((artifact) => Boolean(resolveArtifactSource(artifact)));
+  const artifactMap = item?.artifact_map;
+  if (!artifactMap) return false;
+
+  const laneHasPlayableArtifact = (lane: 'A' | 'B'): boolean => {
+    const entries = artifactMap[lane] || [];
+    return entries.some((artifact) => Boolean(resolveArtifactSource(artifact)));
+  };
+
+  return laneHasPlayableArtifact('A') && laneHasPlayableArtifact('B');
 };
 
 const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, title }) => {
@@ -462,6 +467,10 @@ interface GenerateCandidatesResponse {
   run_ids: string[];
   session_id?: string | null;
   item_id?: string | null;
+  baseline_run_id?: string | null;
+  reference_artifact_id?: string | null;
+  baseline_reference_available?: boolean;
+  baseline_missing_reason?: string | null;
   artifact_wait_enforced?: boolean;
   artifact_wait_timeout_sec?: number;
 }
@@ -473,6 +482,8 @@ interface ListeningLaneProgress {
   artifact_count: number;
   artifact_types: string[];
   strict_reference_ok?: boolean;
+  not_required?: boolean;
+  reason?: string | null;
 }
 
 interface ListeningItemProgressPayload {
@@ -1181,7 +1192,7 @@ const CalibrationLab: React.FC = () => {
         target_drummer_slug: selectedSlug,
         candidate_count: 2,
         include_baseline: true,
-        strict_reference_baseline: true,
+        strict_reference_baseline: false,
         wait_for_all_artifacts: false,
         artifact_wait_timeout_sec: 30,
         artifact_poll_interval_ms: 1500,
@@ -1255,6 +1266,11 @@ const CalibrationLab: React.FC = () => {
             await fetchListeningProgress(nextItemId, { silent: true });
             if (hasPlayableArtifacts(hydratedItem)) {
               break;
+            }
+
+            if (attempt < totalHydrationAttempts) {
+              await sleep(LISTENING_ARTIFACT_READY_DELAY_MS);
+              continue;
             }
 
             break;
@@ -1646,6 +1662,11 @@ const CalibrationLab: React.FC = () => {
                 <Gauge className="h-3 w-3 text-amber-200" />
                 Metric tolerance target �10%
               </span>
+              <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-100">
+                <Activity className="h-3 w-3 text-amber-300" />
+                <span className="font-semibold">API</span>
+                <span className="max-w-[340px] truncate font-mono text-[11px]">{API_BASE}</span>
+              </span>
             </div>
           </div>
           <div className="flex flex-col gap-3 text-sm text-purple-100/80">
@@ -1706,8 +1727,6 @@ const CalibrationLab: React.FC = () => {
               ))}
             </div>
           </section>
-
-          <div className="text-[11px] text-amber-300/90">Debug: {drummers.length} drummers loaded · API_BASE: {API_BASE}</div>
 
           {debugInfo && (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100/90">
@@ -2273,10 +2292,13 @@ const CalibrationLab: React.FC = () => {
                               }`}
                             >
                               <p className="font-semibold">{lane.lane}</p>
-                              <p className="mt-1">{lane.ready ? 'Ready' : 'Rendering'}</p>
+                              <p className="mt-1">{lane.not_required ? 'Not required' : lane.ready ? 'Ready' : 'Rendering'}</p>
                               <p className="mt-1 text-[10px] opacity-80">Artifacts: {lane.artifact_count}</p>
-                              {lane.lane === 'baseline' && lane.strict_reference_ok === false && (
+                              {lane.lane === 'baseline' && lane.strict_reference_ok === false && !lane.not_required && (
                                 <p className="mt-1 text-[10px] text-rose-200">Baseline source not strict-reference ready</p>
+                              )}
+                              {lane.reason && (
+                                <p className="mt-1 text-[10px] opacity-80">{lane.reason}</p>
                               )}
                             </div>
                           ))}
