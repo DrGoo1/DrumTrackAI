@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import json
-import shutil
+import logging
+import threading
+import asyncio
+import time
+import hashlib
 from datetime import datetime
 import os
 import base64
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -41,15 +46,327 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/calibration", tags=["calibration"])
 
 _artifact_url_service = ArtifactUrlService()
+logger = logging.getLogger(__name__)
+
+CALIBRATION_API_BUILD_MARKER = os.getenv(
+    "CALIBRATION_API_BUILD_MARKER",
+    "calibration_api_build_2026-06-19_strict_baseline_downgrade_v2",
+)
+CALIBRATION_API_INSTANCE_ID = (
+    os.getenv("RENDER_INSTANCE_ID")
+    or os.getenv("HOSTNAME")
+    or uuid.uuid4().hex[:12]
+)
+
+
+def _runtime_diagnostics() -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = {
+        "api_build_marker": CALIBRATION_API_BUILD_MARKER,
+        "api_instance_id": CALIBRATION_API_INSTANCE_ID,
+        "pid": os.getpid(),
+        "db_backend": str(os.getenv("DB_BACKEND", "")).strip().lower() or None,
+        "database_url_configured": bool(str(os.getenv("DATABASE_URL", "")).strip()),
+    }
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION", "RENDER_SERVICE_NAME"):
+        value = str(os.getenv(key, "")).strip()
+        if value:
+            diagnostics[key] = value
+    return diagnostics
+
+_DB_INIT_LOCK = threading.RLock()
+_DB_SERVICE_READY = False
+
+_AUTO_ASSIMILATION_LOCK = threading.Lock()
+_AUTO_ASSIMILATION_STATE: Dict[str, Any] = {
+    "running": False,
+    "last_started_at": None,
+    "last_completed_at": None,
+    "last_error": None,
+    "last_summary": None,
+}
+
+
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _csv_env_values(name: str) -> List[str]:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return []
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def _discover_processed_stems(base_dir: Path) -> Dict[str, List[Path]]:
+    found: Dict[str, List[Path]] = {}
+    if not base_dir.exists() or not base_dir.is_dir():
+        return found
+
+    for slug_dir in sorted(item for item in base_dir.iterdir() if item.is_dir()):
+        song_dirs: List[Path] = []
+        try:
+            for song_dir in sorted(item for item in slug_dir.iterdir() if item.is_dir()):
+                if (song_dir / "drum_analysis.json").exists():
+                    song_dirs.append(song_dir)
+        except Exception:
+            continue
+        if song_dirs:
+            found[slug_dir.name] = song_dirs
+    return found
+
+
+def _run_auto_assimilation_population(
+    *,
+    base_dir: str,
+    max_events_per_stem: int = 5000,
+    compute_hashes: bool = False,
+    hash_max_bytes: int = 0,
+) -> None:
+    started_at = datetime.utcnow().isoformat()
+    with _AUTO_ASSIMILATION_LOCK:
+        _AUTO_ASSIMILATION_STATE["running"] = True
+        _AUTO_ASSIMILATION_STATE["last_started_at"] = started_at
+        _AUTO_ASSIMILATION_STATE["last_error"] = None
+
+    summary: Dict[str, Any] = {
+        "base_dir": base_dir,
+        "processed_slugs": [],
+        "total_ingested": 0,
+        "failed_phases": {},
+    }
+
+    try:
+        root = Path(base_dir).expanduser().resolve()
+        discovered = _discover_processed_stems(root)
+        if not discovered:
+            raise RuntimeError(f"No song folders with drum_analysis.json found under: {root}")
+
+        effective_slugs = sorted(discovered.keys())
+
+        db = get_db_service()
+
+        for slug in effective_slugs:
+            song_dirs = discovered.get(slug) or []
+            ingested = 0
+            for song_dir in song_dirs:
+                try:
+                    analysis_id = db.ingest_processed_stems_song_folder(
+                        drummer_id=slug,
+                        song_folder=str(song_dir),
+                        compute_hashes=bool(compute_hashes),
+                        hash_max_bytes=int(hash_max_bytes or 0),
+                        analysis_version="baseline_v1",
+                    )
+                    if analysis_id:
+                        ingested += 1
+                except Exception as exc:
+                    logger.warning("Auto-assimilation ingest failed for %s (%s): %s", slug, song_dir, exc)
+
+            summary["total_ingested"] += ingested
+
+            phase_results = {
+                "phase2": db.run_phase2_hit_event_extraction_for_drummer(
+                    drummer_slug=slug,
+                    max_events_per_stem=int(max_events_per_stem),
+                ),
+                "phase3": db.run_phase3_fills_and_techniques_for_drummer(drummer_slug=slug),
+                "phase4": db.run_phase4_microtiming_and_dynamics_for_drummer(drummer_slug=slug),
+                "phase5": db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug),
+                "phase6": db.run_phase6_persona_preset_export_for_drummer(drummer_slug=slug),
+                "phase7": db.run_phase7_assimilation_profiles_for_drummer(drummer_slug=slug),
+                "phase32_42": db.run_phase32_42_features_for_drummer(drummer_slug=slug),
+            }
+
+            failures: Dict[str, str] = {}
+            for phase_name, result in phase_results.items():
+                if isinstance(result, dict):
+                    if result.get("error"):
+                        failures[phase_name] = str(result.get("error"))
+                    elif "saved" in result and not bool(result.get("saved")):
+                        failures[phase_name] = "saved=False"
+            if failures:
+                summary["failed_phases"][slug] = failures
+
+            summary["processed_slugs"].append(
+                {
+                    "slug": slug,
+                    "song_dirs": len(song_dirs),
+                    "ingested": ingested,
+                }
+            )
+
+    except Exception as exc:
+        logger.exception("Automatic assimilation population failed")
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["last_error"] = str(exc)
+            _AUTO_ASSIMILATION_STATE["last_summary"] = summary
+    else:
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["last_summary"] = summary
+    finally:
+        with _AUTO_ASSIMILATION_LOCK:
+            _AUTO_ASSIMILATION_STATE["running"] = False
+            _AUTO_ASSIMILATION_STATE["last_completed_at"] = datetime.utcnow().isoformat()
+
+
+def _start_auto_assimilation_population(
+    *,
+    base_dir: str,
+    max_events_per_stem: int = 5000,
+    compute_hashes: bool = False,
+    hash_max_bytes: int = 0,
+) -> bool:
+    with _AUTO_ASSIMILATION_LOCK:
+        if bool(_AUTO_ASSIMILATION_STATE.get("running")):
+            return False
+
+    worker = threading.Thread(
+        target=_run_auto_assimilation_population,
+        kwargs={
+            "base_dir": base_dir,
+            "max_events_per_stem": max_events_per_stem,
+            "compute_hashes": compute_hashes,
+            "hash_max_bytes": hash_max_bytes,
+        },
+        daemon=True,
+        name="auto-assimilation-populate",
+    )
+    worker.start()
+    return True
+
+
+def _extract_rollup_parts(rollup_result: Any) -> Dict[str, Any]:
+    rollup_payload = rollup_result.get("rollup") if isinstance(rollup_result, dict) else {}
+    if not isinstance(rollup_payload, dict):
+        rollup_payload = {}
+
+    comparison = rollup_result.get("comparison") if isinstance(rollup_result, dict) else None
+    if not isinstance(comparison, dict):
+        comparison = rollup_payload.get("comparison") if isinstance(rollup_payload, dict) else None
+    if not isinstance(comparison, dict):
+        comparison = None
+
+    metrics = rollup_result.get("metrics") if isinstance(rollup_result, dict) else None
+    if not isinstance(metrics, dict):
+        metrics = rollup_payload.get("metrics") if isinstance(rollup_payload, dict) else None
+    if not isinstance(metrics, dict):
+        metrics = None
+
+    return {
+        "rollup_payload": rollup_payload,
+        "comparison": comparison,
+        "metrics": metrics,
+    }
+
+
+def _complete_generation_run(*, slug: str, run_id: str) -> None:
+    started_at = datetime.utcnow()
+    db: Optional[CentralDatabaseService] = None
+    rollup_result: Dict[str, Any] = {}
+    try:
+        db = get_db_service()
+        raw_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
+        if not isinstance(raw_result, dict):
+            raise RuntimeError("Phase 5 rollup returned an invalid response")
+        rollup_result = raw_result
+
+        if not bool(rollup_result.get("saved")):
+            phase7 = rollup_result.get("phase7") if isinstance(rollup_result.get("phase7"), dict) else {}
+            failure_detail = (
+                rollup_result.get("error")
+                or phase7.get("error")
+                or "Phase 5 rollup did not save any calibration data"
+            )
+            raise RuntimeError(str(failure_detail))
+
+        parts = _extract_rollup_parts(rollup_result)
+        rollup_payload = parts["rollup_payload"]
+        comparison = parts["comparison"]
+        metrics = parts["metrics"]
+
+        if not rollup_payload:
+            raise RuntimeError("Phase 5 rollup returned an empty payload")
+
+        db.log_calibration_run(
+            run_id=run_id,
+            drummer_slug=slug,
+            outcome="success",
+            started_at=started_at,
+            completed_at=datetime.utcnow(),
+            metadata=rollup_payload,
+            metrics=metrics,
+            comparison=comparison,
+            note_count=rollup_payload.get("note_count") if isinstance(rollup_payload, dict) else None,
+            fills_per_minute=rollup_payload.get("fills_per_min") if isinstance(rollup_payload, dict) else None,
+            within_tolerance_count=(comparison.get("within_tolerance_count") if isinstance(comparison, dict) else None),
+            total_compared=(comparison.get("total_compared") if isinstance(comparison, dict) else None),
+        )
+    except Exception as exc:
+        logger.exception("Calibration generation failed for %s", slug)
+        if db is None:
+            try:
+                db = get_db_service()
+            except Exception:
+                db = None
+        if db is not None:
+            try:
+                db.log_calibration_run(
+                    run_id=run_id,
+                    drummer_slug=slug,
+                    outcome="failure",
+                    started_at=started_at,
+                    completed_at=datetime.utcnow(),
+                    metadata={
+                        "error": str(exc),
+                        "saved": bool(rollup_result.get("saved")),
+                    },
+                )
+            except Exception:
+                logger.exception("Failed to persist calibration failure run for %s", slug)
+
+
+def _assert_postgres_database_configured() -> None:
+    backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
+    db_url_env = str(os.getenv("DATABASE_URL", "")).strip()
+    if backend_env not in {"postgres", "postgresql"}:
+        raise RuntimeError("Calibration API requires DB_BACKEND=postgres")
+    if not db_url_env.lower().startswith("postgres"):
+        raise RuntimeError("Calibration API requires a valid Postgres DATABASE_URL")
 
 
 def get_db_service() -> CentralDatabaseService:
+    """Return one initialized Postgres-backed CentralDatabaseService instance.
+
+    Avoid spawning a new initialization thread per request. Cold Render starts
+    and slow Supabase pool warm-up should become a clear startup/config error,
+    not intermittent calibration-page failures.
+    """
+    global _DB_SERVICE_READY  # noqa: PLW0603
+
+    _assert_postgres_database_configured()
     svc = CentralDatabaseService.get_instance()
     if svc is None:
         raise RuntimeError("CentralDatabaseService unavailable")
-    if not svc.initialize():
-        raise RuntimeError("CentralDatabaseService failed to initialize")
-    return svc
+
+    if _DB_SERVICE_READY and getattr(svc, "_engine", None) is not None:
+        return svc
+
+    with _DB_INIT_LOCK:
+        if _DB_SERVICE_READY and getattr(svc, "_engine", None) is not None:
+            return svc
+        try:
+            ok = bool(svc.initialize())
+        except Exception as exc:
+            raise RuntimeError(f"CentralDatabaseService failed to initialize: {exc}") from exc
+        if not ok:
+            raise RuntimeError("CentralDatabaseService failed to initialize")
+        if getattr(svc, "_engine", None) is None:
+            raise RuntimeError("Calibration API requires Postgres (DB_BACKEND=postgres with valid DATABASE_URL)")
+        _DB_SERVICE_READY = True
+        return svc
 
 
 class CompletionStatusInfo(BaseModel):
@@ -77,6 +394,7 @@ class CalibrationRunPayload(BaseModel):
     delta_summary: Optional[str] = None
     metrics_within: Optional[int] = None
     metrics_compared: Optional[int] = None
+    error_message: Optional[str] = None
 
 
 class FeedbackEntry(BaseModel):
@@ -103,6 +421,17 @@ class GenerateCandidatesRequest(BaseModel):
     reviewer_id: Optional[str] = None
     seed: Optional[int] = None
     generation_controls: Optional[Dict[str, Any]] = None
+    strict_reference_baseline: bool = False
+    wait_for_all_artifacts: bool = False
+    artifact_wait_timeout_sec: int = Field(default=120, ge=30, le=600)
+    artifact_poll_interval_ms: int = Field(default=1500, ge=500, le=10000)
+
+
+class AutoAssimilationPopulateRequest(BaseModel):
+    base_dir: Optional[str] = None
+    max_events_per_stem: int = Field(default=5000, ge=100, le=50000)
+    compute_hashes: bool = False
+    hash_max_bytes: int = 0
 
 
 class DrummerGenerationControlsPayload(BaseModel):
@@ -407,15 +736,11 @@ def _completion_from_run(run: Optional["CalibrationRun"]) -> CompletionStatusInf
     return _completion_from_counts(run.within_tolerance_count, run.total_compared)
 
 
-def _safe_count(cursor: Any, query: str, params: tuple[Any, ...]) -> int:
-    try:
-        row = cursor.execute(query, params).fetchone()
-        if not row:
-            return 0
-        value = row[0] if not isinstance(row, dict) else next(iter(row.values()))
-        return int(value or 0)
-    except Exception:
-        return 0
+def _require_postgres_engine(db: CentralDatabaseService):
+    engine = getattr(db, "_engine", None)
+    if engine is None:
+        raise RuntimeError("Calibration API requires Postgres engine")
+    return engine
 
 
 def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict[str, Any]:
@@ -441,122 +766,92 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
     if not slug:
         return status
 
-    try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-    except Exception:
-        return status
+    engine = _require_postgres_engine(db)
 
-    drummer_fk: Optional[int] = None
-    try:
-        cursor.execute(
-            """
-            SELECT d.id
-            FROM drummers d
-            WHERE d.drummer_id = ? OR d.id = ?
-            LIMIT 1
-            """,
-            (slug, slug),
-        )
-        row = cursor.fetchone()
-        if row is not None:
-            try:
-                drummer_fk = int(row[0])
-            except Exception:
-                drummer_fk = None
-    except Exception:
-        drummer_fk = None
+    def _safe_count_pg(sql: str, params: Dict[str, Any]) -> int:
+        try:
+            with engine.connect() as conn_pg:
+                row = conn_pg.execute(text(sql), params).first()
+            return int(row[0] or 0) if row else 0
+        except Exception:
+            return 0
 
-    params_fk_or_slug = (drummer_fk if drummer_fk is not None else slug, slug)
-    songs = _safe_count(
-        cursor,
+    songs = _safe_count_pg(
         """
         SELECT COUNT(DISTINCT analysis_id)
-        FROM song_performance_analysis
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.song_performance_analysis
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    artifacts = _safe_count(
-        cursor,
+    artifacts = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM analysis_artifacts
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.analysis_artifacts
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    stems = _safe_count(
-        cursor,
+    stems = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM stem_artifacts
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.stem_artifacts
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    hit_events = _safe_count(
-        cursor,
+    hit_events = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM drum_hit_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.drum_hit_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    fills = _safe_count(
-        cursor,
+    fills = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM fill_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.fill_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    techniques = _safe_count(
-        cursor,
+    techniques = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM technique_events
-        WHERE CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
+        FROM public.technique_events
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-    phase4_enriched = _safe_count(
-        cursor,
+    phase4_enriched = _safe_count_pg(
         """
         SELECT COUNT(1)
-        FROM song_performance_analysis
-        WHERE (CAST(drummer_id AS TEXT) = CAST(? AS TEXT)
-               OR CAST(drummer_id AS TEXT) = CAST(? AS TEXT))
+        FROM public.song_performance_analysis
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
           AND groove_micro_timing_variance IS NOT NULL
           AND groove_pocket_tightness IS NOT NULL
           AND humanness_score IS NOT NULL
         """,
-        params_fk_or_slug,
+        {"slug": slug},
     )
-
-    rollup_count = 0
-    if drummer_fk is not None:
-        rollup_count = _safe_count(
-            cursor,
-            "SELECT COUNT(1) FROM drummer_profile_rollups WHERE drummer_id = ?",
-            (drummer_fk,),
-        )
-
-    preset_count = 0
-    if drummer_fk is not None:
-        preset_count = _safe_count(
-            cursor,
-            "SELECT COUNT(1) FROM drummer_presets WHERE drummer_id = ?",
-            (drummer_fk,),
-        )
+    rollup_count = _safe_count_pg(
+        """
+        SELECT COUNT(1)
+        FROM public.drummer_profile_rollups
+        WHERE CAST(drummer_id AS TEXT) = CAST(:slug AS TEXT)
+        """,
+        {"slug": slug},
+    )
+    preset_count = _safe_count_pg(
+        """
+        SELECT COUNT(1)
+        FROM public.drummer_presets
+        WHERE (profile_type = 'drummer' AND CAST(source_ref AS TEXT) = CAST(:slug AS TEXT))
+           OR CAST(preset_id AS TEXT) = CAST(:preset_id AS TEXT)
+        """,
+        {"slug": slug, "preset_id": f"phase6_{slug}"},
+    )
 
     missing_steps: List[str] = []
     if songs <= 0:
@@ -571,6 +866,18 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
         missing_steps.append("phase5_rollup")
     if preset_count <= 0:
         missing_steps.append("phase6_persona_preset")
+
+    has_downstream_assimilation = (
+        phase4_enriched > 0
+        and rollup_count > 0
+        and preset_count > 0
+    )
+    if has_downstream_assimilation:
+        missing_steps = [
+            step
+            for step in missing_steps
+            if step not in {"phase2_hit_events", "phase3_fills_techniques"}
+        ]
 
     ready = len(missing_steps) == 0
     overall_status = "ready_for_calibration" if ready else "needs_processing"
@@ -595,6 +902,11 @@ def _assimilation_status_for_slug(db: CentralDatabaseService, slug: str) -> Dict
 
 
 def _serialize_run(run: "CalibrationRun") -> CalibrationRunPayload:
+    metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    error_message = metadata.get("error") if isinstance(metadata, dict) else None
+    if not error_message and run.outcome == "failure":
+        error_message = run.delta_summary
+
     return CalibrationRunPayload(
         id=run.run_id,
         started_at=run.started_at,
@@ -605,6 +917,7 @@ def _serialize_run(run: "CalibrationRun") -> CalibrationRunPayload:
         delta_summary=run.delta_summary,
         metrics_within=run.within_tolerance_count,
         metrics_compared=run.total_compared,
+        error_message=str(error_message) if error_message else None,
     )
 
 
@@ -730,10 +1043,18 @@ def _resolve_local_path(value: Any) -> Optional[Path]:
     text = str(value or "").strip()
     if not text:
         return None
+    lower = text.lower()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return None
     candidate = Path(text)
     if candidate.is_file():
         return candidate.resolve()
     root = Path(__file__).resolve().parents[1]
+    trimmed = text.lstrip("/\\")
+    if trimmed and trimmed != text:
+        rooted = (root / trimmed).resolve()
+        if rooted.is_file():
+            return rooted
     alt = (root / candidate).resolve()
     if alt.is_file():
         return alt
@@ -748,6 +1069,17 @@ def _song_label_from_path(path: Path) -> str:
         parent_name = parent.parent.name.strip()
     stem = path.stem.strip()
     label = parent_name or stem or "Assimilated Reference"
+    return label.replace("_", " ")
+
+
+def _song_label_from_uri(uri: str) -> str:
+    text = str(uri or "").strip()
+    if not text:
+        return "Assimilated Reference"
+    parsed = urlparse(text)
+    candidate = parsed.path if parsed.scheme else text
+    stem = Path(candidate).stem.strip()
+    label = stem or Path(candidate).name.strip() or "Assimilated Reference"
     return label.replace("_", " ")
 
 
@@ -772,24 +1104,295 @@ def _instrument_id_from_hit(instrument: str, component: str) -> str:
     return mapping.get(inst, inst or "kick")
 
 
+def _normalize_storage_uri(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _is_cloud_readable_storage_uri(value: Any) -> bool:
+    uri = _normalize_storage_uri(value)
+    if not uri:
+        return False
+    lower = uri.lower()
+    return lower.startswith(("https://", "http://", "s3://", "supabase://", "gs://", "r2://"))
+
+
+_AUDIO_FILE_SUFFIXES = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".wma",
+}
+_NON_AUDIO_FILE_SUFFIXES = {
+    ".json",
+    ".txt",
+    ".csv",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".md",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    ".mid",
+    ".midi",
+}
+
+
+def _is_likely_audio_storage_uri(value: Any) -> bool:
+    uri = _normalize_storage_uri(value)
+    if not uri:
+        return False
+
+    try:
+        parsed = urlparse(uri)
+        path_value = parsed.path or uri
+    except Exception:
+        path_value = uri
+
+    suffix = Path(path_value).suffix.lower()
+    if suffix in _AUDIO_FILE_SUFFIXES:
+        return True
+    if suffix in _NON_AUDIO_FILE_SUFFIXES:
+        return False
+    return True
+
+
+def _baseline_source_summary(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(source, dict):
+        return {"present": False}
+
+    summary: Dict[str, Any] = {
+        "present": True,
+        "analysis_id": str(source.get("analysis_id") or "").strip() or None,
+        "has_base_groove_path": bool(str(source.get("base_groove_path") or "").strip()),
+        "has_source_path": bool(str(source.get("source_path") or "").strip()),
+        "has_source_uri": bool(str(source.get("source_uri") or "").strip()),
+        "keys": sorted(str(key) for key in source.keys()),
+    }
+
+    for key in (
+        "storage_uri",
+        "audio_storage_uri",
+        "artifact_storage_uri",
+        "source_storage_uri",
+        "s3_uri",
+        "audio_s3_uri",
+        "public_url",
+        "audio_url",
+        "source_uri",
+        "source_path",
+        "base_groove_path",
+    ):
+        value = str(source.get(key) or "").strip()
+        if value:
+            summary[f"{key}_kind"] = "cloud" if _is_cloud_readable_storage_uri(value) else "local_or_relative"
+
+    return summary
+
+
+def _reference_storage_uri_from_baseline_source(source: Dict[str, Any]) -> Optional[str]:
+    for key in (
+        "storage_uri",
+        "audio_storage_uri",
+        "artifact_storage_uri",
+        "source_storage_uri",
+        "s3_uri",
+        "audio_s3_uri",
+        "public_url",
+        "audio_url",
+        "source_uri",
+        "source_path",
+        "base_groove_path",
+    ):
+        value = _normalize_storage_uri(source.get(key))
+        if _is_cloud_readable_storage_uri(value) and _is_likely_audio_storage_uri(value):
+            return value
+    return None
+
+
+def _stable_reference_id_part(*, drummer_slug: str, analysis_id: str, storage_uri: str) -> str:
+    basis = "|".join([
+        drummer_slug.strip(),
+        analysis_id.strip(),
+        storage_uri.strip(),
+    ])
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def _find_existing_reference_baseline(
+    db: CentralDatabaseService,
+    *,
+    drummer_slug: str,
+    analysis_id: str,
+    fingerprint: str,
+) -> Optional[Dict[str, str]]:
+    expected_run_id = f"baseline-ref-{fingerprint}"
+    try:
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            row = conn_pg.execute(
+                text(
+                    """
+                    SELECT r.run_id, a.artifact_id
+                    FROM public.calibration_runs r
+                    JOIN public.audio_artifacts a ON a.run_id = r.run_id
+                    WHERE r.drummer_slug = :drummer_slug
+                      AND r.run_id = :run_id
+                    ORDER BY r.started_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "drummer_slug": drummer_slug,
+                    "run_id": expected_run_id,
+                },
+            ).mappings().first()
+        if not row:
+            return None
+        return {
+            "run_id": str(row["run_id"]),
+            "artifact_id": str(row["artifact_id"]),
+        }
+    except Exception:
+        logger.warning(
+            "baseline_reference_lookup_failed drummer=%s analysis_id=%s run_id=%s",
+            drummer_slug,
+            analysis_id,
+            expected_run_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _ensure_reference_baseline_run(
+    db: CentralDatabaseService,
+    *,
+    drummer_slug: str,
+    baseline_source: Dict[str, Any],
+    base_groove_id: str,
+    sample_pack_version: Optional[str] = None,
+) -> Dict[str, str]:
+    analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+    source_song_name = str(baseline_source.get("source_song_name") or "").strip() or (analysis_id or "Assimilated Reference")
+    storage_uri = _reference_storage_uri_from_baseline_source(baseline_source)
+    if not storage_uri:
+        raise RuntimeError(
+            "Selected assimilation baseline source has no cloud-readable storage URI. "
+            "Backfill a source clip URL into storage before queueing strict baseline mode."
+        )
+
+    fingerprint = _stable_reference_id_part(
+        drummer_slug=drummer_slug,
+        analysis_id=analysis_id,
+        storage_uri=storage_uri,
+    )
+
+    existing = _find_existing_reference_baseline(
+        db,
+        drummer_slug=drummer_slug,
+        analysis_id=analysis_id,
+        fingerprint=fingerprint,
+    )
+    if existing:
+        return {
+            "run_id": existing["run_id"],
+            "artifact_id": existing["artifact_id"],
+            "baseline_label": source_song_name,
+        }
+
+    run_id = f"baseline-ref-{fingerprint}"
+    artifact_id = f"artifact-{run_id}"
+    metadata = {
+        "requested_via": "baseline_reference",
+        "source_type": "assimilated_song",
+        "source_song_name": source_song_name,
+        "source_analysis_id": analysis_id,
+        "source_fingerprint": fingerprint,
+        "source_storage_uri": storage_uri,
+        "target_drummer_slug": drummer_slug,
+        "base_groove_id": base_groove_id,
+    }
+    logged_run_id = db.log_calibration_run(
+        drummer_slug=drummer_slug,
+        outcome="reference",
+        note_count=None,
+        metadata=metadata,
+        metrics={},
+        comparison={},
+        run_id=run_id,
+    )
+    if not logged_run_id:
+        raise RuntimeError("Failed to upsert strict baseline reference run")
+
+    render_recipe = {
+        "requested_via": "baseline_reference",
+        "source_type": "assimilated_song",
+        "source_song_name": source_song_name,
+        "analysis_id": analysis_id,
+        "target_drummer_slug": drummer_slug,
+        "base_groove_id": base_groove_id,
+        "source_storage_uri": storage_uri,
+    }
+    logged_artifact_id = db.log_audio_artifact(
+        run_id=logged_run_id,
+        artifact_type="reference_song",
+        storage_uri=storage_uri,
+        duration_sec=None,
+        loudness_lufs=None,
+        sample_pack_version=sample_pack_version,
+        render_recipe=render_recipe,
+        artifact_id=artifact_id,
+    )
+    if not logged_artifact_id:
+        raise RuntimeError("Failed to upsert strict baseline reference artifact")
+
+    return {
+        "run_id": logged_run_id,
+        "artifact_id": logged_artifact_id,
+        "baseline_label": source_song_name,
+    }
+
+
 def _build_assimilation_base_groove(
     db: CentralDatabaseService,
     *,
     drummer_slug: str,
     analysis_id: str,
 ) -> Optional[Path]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT tempo_bpm, time_signature
-        FROM song_performance_analysis
-        WHERE analysis_id = ?
-        LIMIT 1
-        """,
-        (analysis_id,),
-    )
-    spa = cursor.fetchone()
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        spa = conn_pg.execute(
+            text(
+                """
+                SELECT tempo_bpm, time_signature
+                FROM public.song_performance_analysis
+                WHERE analysis_id = :analysis_id
+                LIMIT 1
+                """
+            ),
+            {"analysis_id": analysis_id},
+        ).mappings().first()
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT instrument, component, onset_time_sec, velocity_est, bar_index
+                FROM public.drum_hit_events
+                WHERE analysis_id = :analysis_id
+                ORDER BY onset_time_sec ASC
+                """
+            ),
+            {"analysis_id": analysis_id},
+        ).mappings().all()
     if not spa:
         return None
 
@@ -804,16 +1407,6 @@ def _build_assimilation_base_groove(
         beats_per_bar = 4
     sec_per_bar = (60.0 / max(1e-6, tempo_bpm)) * max(1, beats_per_bar)
 
-    cursor.execute(
-        """
-        SELECT instrument, component, onset_time_sec, velocity_est, bar_index
-        FROM drum_hit_events
-        WHERE analysis_id = ?
-        ORDER BY onset_time_sec ASC
-        """,
-        (analysis_id,),
-    )
-    rows = cursor.fetchall() or []
     if not rows:
         return None
 
@@ -897,82 +1490,156 @@ def _select_assimilation_baseline_source(
     db: CentralDatabaseService,
     *,
     drummer_slug: str,
+    require_cloud_uri: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    drummer_fk = db._get_drummer_fk_by_slug(cursor=cursor, drummer_slug=drummer_slug)
-    if drummer_fk is None:
-        return None
-
-    cursor.execute(
-        """
-        SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
-        FROM song_performance_analysis spa
-        LEFT JOIN songs s ON s.id = spa.song_id
-        WHERE spa.drummer_id = ?
-        ORDER BY spa.created_at DESC
-        LIMIT 50
-        """,
-        (int(drummer_fk),),
-    )
-    analyses = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        analyses = conn_pg.execute(
+            text(
+                """
+                SELECT spa.analysis_id, spa.created_at, spa.source_file, s.title AS song_title
+                FROM public.song_performance_analysis spa
+                LEFT JOIN public.songs s ON s.id = spa.song_id
+                LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
+                WHERE CAST(spa.drummer_id AS TEXT) = CAST(:slug AS TEXT)
+                   OR CAST(COALESCE(d.drummer_id, '') AS TEXT) = CAST(:slug AS TEXT)
+                   OR LOWER(REPLACE(COALESCE(d.display_name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
+                   OR LOWER(REPLACE(COALESCE(d.name, ''), ' ', '_')) = LOWER(CAST(:slug AS TEXT))
+                ORDER BY spa.created_at DESC
+                LIMIT 50
+                """
+            ),
+            {"slug": drummer_slug},
+        ).mappings().all()
     if not analyses:
         return None
 
     preferred_stems = {"drums", "drum"}
+    best_noncloud_candidate: Optional[Dict[str, Any]] = None
     for row in analyses:
         analysis_id = str(row["analysis_id"] or "").strip()
         if not analysis_id:
             continue
 
         source_path: Optional[Path] = None
+        source_uri: Optional[str] = None
         source_song_name: Optional[str] = None
 
-        cursor.execute(
-            """
-            SELECT stem_name, file_path
-            FROM stem_artifacts
-            WHERE analysis_id = ?
-            """,
-            (analysis_id,),
-        )
-        stem_rows = cursor.fetchall() or []
+        with engine.connect() as conn_pg:
+            stem_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT stem_name, file_path
+                    FROM public.stem_artifacts
+                    WHERE analysis_id = :analysis_id
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
+
+            analysis_artifact_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT artifact_role, file_path
+                    FROM public.analysis_artifacts
+                    WHERE analysis_id = :analysis_id
+                    ORDER BY created_at DESC
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
         best_stem: Optional[Path] = None
+        best_stem_uri: Optional[str] = None
         fallback_stem: Optional[Path] = None
+        fallback_stem_uri: Optional[str] = None
         for stem in stem_rows:
             stem_name = str(stem["stem_name"] or "").strip().lower()
-            resolved = _resolve_local_path(stem["file_path"])
-            if not resolved:
+            file_path_value = str(stem["file_path"] or "").strip()
+            resolved = _resolve_local_path(file_path_value)
+            if not resolved and not file_path_value:
                 continue
             if stem_name in preferred_stems:
                 best_stem = resolved
+                best_stem_uri = file_path_value or None
                 break
             if fallback_stem is None:
                 fallback_stem = resolved
+                fallback_stem_uri = file_path_value or None
         source_path = best_stem or fallback_stem
+        source_uri = best_stem_uri or fallback_stem_uri
 
         if source_path is None:
-            source_path = _resolve_local_path(row["source_file"])
+            row_source = str(row["source_file"] or "").strip()
+            source_path = _resolve_local_path(row_source)
+            if not source_uri and row_source and _is_likely_audio_storage_uri(row_source):
+                source_uri = row_source
+        elif not source_uri and _is_likely_audio_storage_uri(source_path):
+            source_uri = str(source_path)
 
-        if source_path is None:
-            continue
+        if not source_uri and analysis_artifact_rows:
+            cloud_candidate: Optional[str] = None
+            fallback_candidate: Optional[str] = None
+            role_priority = {
+                "source_audio": 0,
+                "source": 1,
+                "drums": 2,
+                "drum_mix": 3,
+                "mix": 4,
+            }
+            sorted_rows = sorted(
+                analysis_artifact_rows,
+                key=lambda item: role_priority.get(str(item.get("artifact_role") or "").strip().lower(), 99),
+            )
+            for artifact in sorted_rows:
+                file_path_value = str(artifact.get("file_path") or "").strip()
+                if not file_path_value:
+                    continue
+                if _is_cloud_readable_storage_uri(file_path_value) and _is_likely_audio_storage_uri(file_path_value):
+                    cloud_candidate = file_path_value
+                    break
+                if fallback_candidate is None and _is_likely_audio_storage_uri(file_path_value):
+                    fallback_candidate = file_path_value
+            source_uri = cloud_candidate or fallback_candidate or source_uri
+            if source_path is None and source_uri:
+                source_path = _resolve_local_path(source_uri)
 
         title = str(row["song_title"] or "").strip()
-        source_song_name = title or _song_label_from_path(source_path)
         base_groove_path = _build_assimilation_base_groove(
             db,
             drummer_slug=drummer_slug,
             analysis_id=analysis_id,
         )
 
-        return {
+        source_song_name = title
+        if not source_song_name and source_path is not None:
+            source_song_name = _song_label_from_path(source_path)
+        if not source_song_name and source_uri:
+            source_song_name = _song_label_from_uri(source_uri)
+        if not source_song_name:
+            source_song_name = analysis_id
+
+        candidate = {
             "analysis_id": analysis_id,
             "source_path": source_path,
+            "source_uri": source_uri,
             "source_song_name": source_song_name,
             "base_groove_path": str(base_groove_path) if base_groove_path else None,
         }
 
-    return None
+        has_any_source = bool(source_path is not None or str(source_uri or "").strip())
+        if not has_any_source:
+            continue
+
+        if _is_cloud_readable_storage_uri(source_uri):
+            return candidate
+
+        if best_noncloud_candidate is None:
+            best_noncloud_candidate = candidate
+
+    if require_cloud_uri:
+        return None
+
+    return best_noncloud_candidate
 
 
 def _create_reference_baseline_run(
@@ -982,61 +1649,16 @@ def _create_reference_baseline_run(
     baseline_source: Dict[str, Any],
     base_groove_id: str,
 ) -> Optional[Dict[str, Any]]:
-    source_path = Path(str(baseline_source.get("source_path") or "")).resolve()
-    if not source_path.is_file():
+    try:
+        return _ensure_reference_baseline_run(
+            db,
+            drummer_slug=drummer_slug,
+            baseline_source=baseline_source,
+            base_groove_id=base_groove_id,
+            sample_pack_version=None,
+        )
+    except Exception:
         return None
-
-    analysis_id = str(baseline_source.get("analysis_id") or "").strip() or None
-    source_song_name = str(baseline_source.get("source_song_name") or "").strip() or _song_label_from_path(source_path)
-    run_id = db.log_calibration_run(
-        drummer_slug=drummer_slug,
-        outcome="reference",
-        note_count=None,
-        metadata={
-            "requested_via": "generate-candidates",
-            "source_type": "assimilated_song",
-            "source_song_name": source_song_name,
-            "analysis_id": analysis_id,
-            "target_drummer_slug": drummer_slug,
-            "base_groove_id": base_groove_id,
-        },
-        metrics={},
-        comparison={},
-    )
-    if not run_id:
-        return None
-
-    root = Path(__file__).resolve().parents[1]
-    dest_dir = root / "artifacts" / "calibration" / "references" / run_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / source_path.name
-    if source_path.resolve() != dest_path.resolve():
-        shutil.copy2(source_path, dest_path)
-
-    storage_uri = str(Path("artifacts") / "calibration" / "references" / run_id / source_path.name)
-    artifact_id = db.log_audio_artifact(
-        run_id=run_id,
-        artifact_type="reference_song",
-        storage_uri=storage_uri,
-        duration_sec=None,
-        loudness_lufs=None,
-        sample_pack_version=None,
-        render_recipe={
-            "requested_via": "generate-candidates",
-            "source_type": "assimilated_song",
-            "source_song_name": source_song_name,
-            "analysis_id": analysis_id,
-            "target_drummer_slug": drummer_slug,
-            "base_groove_id": base_groove_id,
-        },
-    )
-    if not artifact_id:
-        return None
-    return {
-        "run_id": run_id,
-        "artifact_id": artifact_id,
-        "baseline_label": source_song_name,
-    }
 
 
 def _infer_baseline_label(
@@ -1071,6 +1693,81 @@ def _serialize_run_bundle(db: CentralDatabaseService, run_id: Optional[str]) -> 
     }
 
 
+def _collect_item_lane_progress(
+    db: CentralDatabaseService,
+    *,
+    baseline_run_id: Optional[str],
+    candidate_a_run_id: Optional[str],
+    candidate_b_run_id: Optional[str],
+) -> Dict[str, Any]:
+    lane_specs: List[tuple[str, Optional[str]]] = [
+        ("baseline", baseline_run_id),
+        ("A", candidate_a_run_id),
+        ("B", candidate_b_run_id),
+    ]
+    lanes: List[Dict[str, Any]] = []
+    missing_lanes: List[str] = []
+    all_ready = True
+
+    for lane, run_id in lane_specs:
+        run_id_val = (run_id or "").strip()
+        lane_payload: Dict[str, Any] = {
+            "lane": lane,
+            "run_id": run_id_val or None,
+            "ready": False,
+            "artifact_count": 0,
+            "artifact_types": [],
+            "strict_reference_ok": True,
+        }
+
+        if not run_id_val:
+            if lane == "baseline":
+                lane_payload["ready"] = True
+                lane_payload["not_required"] = True
+                lane_payload["strict_reference_ok"] = False
+                lane_payload["reason"] = "No cloud-readable baseline reference artifact is available; A/B review can continue."
+                lanes.append(lane_payload)
+                continue
+            lane_payload["strict_reference_ok"] = True
+            lanes.append(lane_payload)
+            missing_lanes.append(lane)
+            all_ready = False
+            continue
+
+        try:
+            artifacts = db.get_audio_artifacts_for_run(run_id=run_id_val)
+        except Exception:
+            artifacts = []
+
+        serialized = [_serialize_artifact(item) for item in artifacts]
+        artifact_types = [str(item.artifact_type or "").strip() for item in serialized if str(item.artifact_type or "").strip()]
+
+        lane_payload["artifact_count"] = len(serialized)
+        lane_payload["artifact_types"] = artifact_types
+        lane_payload["ready"] = len(serialized) > 0
+
+        if lane == "baseline":
+            strict_reference_ok = any(
+                str(item.artifact_type or "").strip() == "reference_song"
+                and str((item.render_recipe or {}).get("source_type") or "").strip() == "assimilated_song"
+                for item in serialized
+            )
+            lane_payload["strict_reference_ok"] = strict_reference_ok
+            lane_payload["ready"] = lane_payload["ready"] and strict_reference_ok
+
+        if not lane_payload["ready"]:
+            missing_lanes.append(lane)
+            all_ready = False
+
+        lanes.append(lane_payload)
+
+    return {
+        "all_ready": all_ready,
+        "missing_lanes": missing_lanes,
+        "lanes": lanes,
+    }
+
+
 def _safe_json_load(value: Any, default: Any) -> Any:
     try:
         if isinstance(value, str):
@@ -1082,19 +1779,20 @@ def _safe_json_load(value: Any, default: Any) -> Any:
 
 
 def _fetch_pairwise_judgments(db: CentralDatabaseService, *, item_id: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT judgment_id, item_id, preferred_candidate, closer_to_target,
-               better_feel, more_musical, confidence, created_at
-        FROM pairwise_judgments
-        WHERE item_id = ?
-        ORDER BY created_at ASC
-        """,
-        (item_id,),
-    )
-    rows = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT judgment_id, item_id, preferred_candidate, closer_to_target,
+                       better_feel, more_musical, confidence, created_at
+                FROM public.pairwise_judgments
+                WHERE item_id = :item_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"item_id": item_id},
+        ).mappings().all()
     return [
         {
             "judgment_id": row["judgment_id"],
@@ -1111,21 +1809,22 @@ def _fetch_pairwise_judgments(db: CentralDatabaseService, *, item_id: str) -> Li
 
 
 def _fetch_attribute_ratings(db: CentralDatabaseService, *, item_id: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT rating_id, item_id, candidate_label,
-               stylistic_authenticity, groove_feel, dynamics, phrasing,
-               kit_balance, fill_behavior, human_realism, overall_usefulness,
-               created_at
-        FROM attribute_ratings
-        WHERE item_id = ?
-        ORDER BY created_at ASC
-        """,
-        (item_id,),
-    )
-    rows = cursor.fetchall() or []
+    engine = _require_postgres_engine(db)
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT rating_id, item_id, candidate_label,
+                       stylistic_authenticity, groove_feel, dynamics, phrasing,
+                       kit_balance, fill_behavior, human_realism, overall_usefulness,
+                       created_at
+                FROM public.attribute_ratings
+                WHERE item_id = :item_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"item_id": item_id},
+        ).mappings().all()
     return [
         {
             "rating_id": row["rating_id"],
@@ -1146,19 +1845,20 @@ def _fetch_attribute_ratings(db: CentralDatabaseService, *, item_id: str) -> Lis
 
 
 def _fetch_item_feedback(db: CentralDatabaseService, *, item_id: str, drummer_slug: str) -> List[Dict[str, Any]]:
-    conn = db._get_connection()
-    cursor = conn.cursor()
+    engine = _require_postgres_engine(db)
     like_token = f'%"item_id": "{item_id}"%'
-    cursor.execute(
-        """
-        SELECT feedback_id, drummer_slug, rating, comment, author, submitted_at, metadata_json
-        FROM calibration_feedback
-        WHERE drummer_slug = ? AND metadata_json LIKE ?
-        ORDER BY submitted_at ASC
-        """,
-        (drummer_slug, like_token),
-    )
-    rows = cursor.fetchall() or []
+    with engine.connect() as conn_pg:
+        rows = conn_pg.execute(
+            text(
+                """
+                SELECT feedback_id, drummer_slug, rating, comment, author, submitted_at, metadata_json
+                FROM public.calibration_feedback
+                WHERE drummer_slug = :drummer_slug AND metadata_json::text LIKE :like_token
+                ORDER BY submitted_at ASC
+                """
+            ),
+            {"drummer_slug": drummer_slug, "like_token": like_token},
+        ).mappings().all()
     output: List[Dict[str, Any]] = []
     for row in rows:
         output.append(
@@ -1177,56 +1877,118 @@ def _fetch_item_feedback(db: CentralDatabaseService, *, item_id: str, drummer_sl
 
 @router.get("/drummers", response_model=List[DrummerListItem])
 async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) -> List[DrummerListItem]:
+    async def _db_call_with_timeout(func, *args, timeout: float = 6.0, default=None, **kwargs):
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+        except Exception:
+            return default
+
     try:
-        rows = db.get_drummers() or []
-        results: List[DrummerListItem] = []
-        for row in rows:
-            slug = _slug_from_row(row)
-            if not slug:
-                continue
-            display_name = _display_name_from_row(row, slug)
+        rows = await _db_call_with_timeout(db.get_drummers, timeout=8.0, default=[]) or []
+        semaphore = asyncio.Semaphore(4)
 
-            completion_info: Optional[CompletionStatusInfo] = None
-            within = row.get("metrics_within") or row.get("metrics_within_tolerance")
-            total = row.get("metrics_compared") or row.get("metrics_total")
-            if within is not None or total is not None:
-                try:
-                    completion_info = _completion_from_counts(
-                        int(within) if within is not None else None,
-                        int(total) if total is not None else None,
-                    )
-                except Exception:
-                    completion_info = None
-
-            latest_run: Optional["CalibrationRun"] = None
+        async def _build_drummer_item(row: Dict[str, Any]) -> Optional[DrummerListItem]:
             try:
-                latest_run = db.get_latest_calibration_run(drummer_slug=slug)
-            except Exception:
-                latest_run = None
+                async with semaphore:
+                    slug = _slug_from_row(row)
+                    if not slug:
+                        return None
+                    display_name = _display_name_from_row(row, slug)
 
-            if completion_info is None:
-                completion_info = _completion_from_run(latest_run)
+                    completion_info: Optional[CompletionStatusInfo] = None
+                    within = row.get("metrics_within") or row.get("metrics_within_tolerance")
+                    total = row.get("metrics_compared") or row.get("metrics_total")
+                    if within is not None or total is not None:
+                        try:
+                            completion_info = _completion_from_counts(
+                                int(within) if within is not None else None,
+                                int(total) if total is not None else None,
+                            )
+                        except Exception:
+                            completion_info = None
 
-            latest_run_at = None
-            metrics_within_int: Optional[int] = None
-            metrics_total_int: Optional[int] = None
-            if latest_run:
-                latest_run_at = latest_run.completed_at or latest_run.started_at
-                metrics_within_int = latest_run.within_tolerance_count
-                metrics_total_int = latest_run.total_compared
+                    latest_run: Optional["CalibrationRun"] = await _db_call_with_timeout(
+                        db.get_latest_calibration_run,
+                        drummer_slug=slug,
+                        timeout=4.0,
+                        default=None,
+                    )
 
-            results.append(
-                DrummerListItem(
-                    slug=slug,
-                    displayName=display_name,
-                    completionStatus=completion_info,
-                    assimilationStatus=_assimilation_status_for_slug(db, slug),
-                    latestRunAt=latest_run_at,
-                    metricsWithin=metrics_within_int,
-                    metricsCompared=metrics_total_int,
-                )
-            )
+                    if completion_info is None:
+                        completion_info = _completion_from_run(latest_run)
+
+                    latest_run_at = None
+                    metrics_within_int: Optional[int] = None
+                    metrics_total_int: Optional[int] = None
+                    if latest_run:
+                        latest_run_at = latest_run.completed_at or latest_run.started_at
+                        metrics_within_int = latest_run.within_tolerance_count
+                        metrics_total_int = latest_run.total_compared
+
+                    assimilation_status = {
+                        "status": "unknown",
+                        "ready_for_calibration": False,
+                        "missing_steps": ["status_check_deferred"],
+                    }
+
+                    return DrummerListItem(
+                        slug=slug,
+                        displayName=display_name,
+                        completionStatus=completion_info,
+                        assimilationStatus=assimilation_status,
+                        latestRunAt=latest_run_at,
+                        metricsWithin=metrics_within_int,
+                        metricsCompared=metrics_total_int,
+                    )
+            except Exception as row_exc:
+                logger.warning(f"Skipping drummer row due to roster serialization error: {row_exc}")
+                return None
+
+        built_items = await asyncio.gather(*[_build_drummer_item(row) for row in rows])
+        results: List[DrummerListItem] = [item for item in built_items if item is not None]
         return sorted(results, key=lambda item: item.displayName.lower())
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/evaluation-items/{item_id}/progress")
+async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
+    item_id = (item_id or "").strip()
+    if not item_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing item id")
+
+    try:
+        db = await asyncio.wait_for(
+            asyncio.to_thread(get_db_service),
+            timeout=5.0,
+        )
+        item = await asyncio.wait_for(
+            asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
+            timeout=8.0,
+        )
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
+
+        progress = await asyncio.wait_for(
+            asyncio.to_thread(
+                _collect_item_lane_progress,
+                db,
+                baseline_run_id=item.baseline_run_id,
+                candidate_a_run_id=item.candidate_a_run_id,
+                candidate_b_run_id=item.candidate_b_run_id,
+            ),
+            timeout=8.0,
+        )
+        return {
+            "item_id": item.item_id,
+            "all_ready": bool(progress.get("all_ready")),
+            "missing_lanes": progress.get("missing_lanes") or [],
+            "lanes": progress.get("lanes") or [],
+        }
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item progress lookup timed out")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 # ASGI application factory
@@ -1234,32 +1996,85 @@ app = FastAPI(title="DrumTrackAI Calibration API")
 
 _allowed_origins = [
     "https://drumtrackai.netlify.app",
+    "https://www.drumtrackai.netlify.app",
+    "https://drumtrackai.net",
+    "https://www.drumtrackai.net",
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
+
+_allowed_origins = sorted(set(_allowed_origins + _csv_env_values("CALIBRATION_CORS_ORIGINS")))
+_allowed_origin_regex = os.getenv(
+    "CALIBRATION_CORS_ORIGIN_REGEX",
+    r"https://(?:[a-z0-9-]+\.)*(?:netlify\.app|drumtrackai\.net)|http://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?",
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=_allowed_origin_regex,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    max_age=600,
 )
+
+
+@app.on_event("startup")
+async def _warm_database_on_startup() -> None:
+    # Fail fast on deployment/config drift instead of letting the first browser
+    # request discover an uninitialized or non-Postgres DB service.
+    await asyncio.to_thread(get_db_service)
+
+
+@app.on_event("startup")
+async def _auto_populate_on_startup() -> None:
+    if not _parse_env_bool("ASSIMILATION_AUTO_POPULATE_ON_STARTUP", default=False):
+        return
+
+    base_dir = (
+        str(os.getenv("ASSIMILATION_AUTO_POPULATE_BASE_DIR", "")).strip()
+        or str(os.getenv("PROCESSED_STEMS_BASE_DIR", "")).strip()
+    )
+    if not base_dir:
+        logger.warning("ASSIMILATION_AUTO_POPULATE_ON_STARTUP enabled but no base dir configured")
+        return
+
+    drummers_raw = str(os.getenv("ASSIMILATION_AUTO_POPULATE_DRUMMERS", "")).strip()
+    if drummers_raw:
+        logger.info("ASSIMILATION_AUTO_POPULATE_DRUMMERS is set but ignored; auto-populate processes all discovered drummers")
+    max_events_per_stem = int(str(os.getenv("ASSIMILATION_AUTO_MAX_EVENTS_PER_STEM", "5000")).strip() or "5000")
+    compute_hashes = _parse_env_bool("ASSIMILATION_AUTO_COMPUTE_HASHES", default=False)
+    hash_max_bytes = int(str(os.getenv("ASSIMILATION_AUTO_HASH_MAX_BYTES", "0")).strip() or "0")
+
+    started = _start_auto_assimilation_population(
+        base_dir=base_dir,
+        max_events_per_stem=max_events_per_stem,
+        compute_hashes=compute_hashes,
+        hash_max_bytes=hash_max_bytes,
+    )
+    if started:
+        logger.info("Started automatic assimilation population on startup")
+    else:
+        logger.info("Skipped startup auto-population; job already running")
 
 # Static artifacts mount
 _artifacts_root = (Path(__file__).resolve().parents[1] / "artifacts").resolve()
 try:
-    if _artifacts_root.exists():
-        app.mount(
-            "/artifacts",
-            StaticFiles(directory=str(_artifacts_root), html=False),
-            name="artifacts",
-        )
-        calib_dir = _artifacts_root / "calibration"
-        if calib_dir.exists():
-            app.mount(
-                "/static/calibration_artifacts",
-                StaticFiles(directory=str(calib_dir), html=False),
-                name="calibration_static",
-            )
+    _artifacts_root.mkdir(parents=True, exist_ok=True)
+    calib_dir = _artifacts_root / "calibration"
+    calib_dir.mkdir(parents=True, exist_ok=True)
+
+    app.mount(
+        "/artifacts",
+        StaticFiles(directory=str(_artifacts_root), html=False),
+        name="artifacts",
+    )
+    app.mount(
+        "/static/calibration_artifacts",
+        StaticFiles(directory=str(calib_dir), html=False),
+        name="calibration_static",
+    )
 except Exception:
     pass
 
@@ -1413,37 +2228,39 @@ async def get_analysis_detail(analysis_id: str, db: CentralDatabaseService = Dep
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing analysis id")
 
     try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT spa.analysis_id,
-                   spa.source_file,
-                   spa.tempo_bpm,
-                   spa.time_signature,
-                   spa.duration_sec,
-                   spa.created_at,
-                   d.drummer_id AS drummer_slug,
-                   s.title AS song_title
-            FROM song_performance_analysis spa
-            LEFT JOIN drummers d ON d.id = spa.drummer_id
-            LEFT JOIN songs s ON s.id = spa.song_id
-            WHERE spa.analysis_id = ?
-            LIMIT 1
-            """,
-            (analysis_id,),
-        )
-        row = cursor.fetchone()
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            row = conn_pg.execute(
+                text(
+                    """
+                    SELECT spa.analysis_id,
+                           spa.source_file,
+                           spa.tempo_bpm,
+                           spa.time_signature,
+                           spa.duration_sec,
+                           spa.created_at,
+                           d.drummer_id AS drummer_slug,
+                           s.title AS song_title
+                    FROM public.song_performance_analysis spa
+                    LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
+                    LEFT JOIN public.songs s ON s.id = spa.song_id
+                    WHERE spa.analysis_id = :analysis_id
+                    LIMIT 1
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().first()
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis not found")
 
         hit_event_count: Optional[int] = None
         try:
-            cursor.execute(
-                "SELECT COUNT(1) FROM drum_hit_events WHERE analysis_id = ?",
-                (analysis_id,),
-            )
-            hit_event_count = int((cursor.fetchone() or [0])[0] or 0)
+            with engine.connect() as conn_pg:
+                count_row = conn_pg.execute(
+                    text("SELECT COUNT(1) FROM public.drum_hit_events WHERE analysis_id = :analysis_id"),
+                    {"analysis_id": analysis_id},
+                ).first()
+            hit_event_count = int((count_row[0] if count_row else 0) or 0)
         except Exception:
             hit_event_count = None
 
@@ -1494,6 +2311,7 @@ async def submit_pairwise_judgment(
 
 @router.get("/health", response_model=CalibrationHealthPayload)
 async def calibration_health() -> CalibrationHealthPayload:
+    build_marker = CALIBRATION_API_BUILD_MARKER
     db_path = None
     svc = CentralDatabaseService.get_instance()
     try:
@@ -1512,6 +2330,12 @@ async def calibration_health() -> CalibrationHealthPayload:
         "attribute_ratings": False,
     }
     notes: List[str] = []
+    notes.append(f"build_marker={build_marker}")
+    notes.append(f"instance_id={CALIBRATION_API_INSTANCE_ID}")
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
+        value = str(os.getenv(key, "")).strip()
+        if value:
+            notes.append(f"{key}={value}")
     try:
         engine_active = bool(getattr(svc, "_engine", None) is not None)
         backend_env = str(os.getenv("DB_BACKEND", "")).strip().lower()
@@ -1581,6 +2405,7 @@ async def db_diagnostics() -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "db_backend": backend_env or None,
         "has_database_url": bool(db_url_env),
+        "runtime": _runtime_diagnostics(),
     }
     configured = (backend_env in {"postgres", "postgresql"}) or db_url_env.lower().startswith("postgres")
     out["configured"] = configured
@@ -1605,6 +2430,49 @@ async def db_diagnostics() -> Dict[str, Any]:
     return out
 
 
+@router.get("/assimilation/auto-populate-status")
+async def auto_populate_status() -> Dict[str, Any]:
+    with _AUTO_ASSIMILATION_LOCK:
+        return {
+            "running": bool(_AUTO_ASSIMILATION_STATE.get("running")),
+            "last_started_at": _AUTO_ASSIMILATION_STATE.get("last_started_at"),
+            "last_completed_at": _AUTO_ASSIMILATION_STATE.get("last_completed_at"),
+            "last_error": _AUTO_ASSIMILATION_STATE.get("last_error"),
+            "last_summary": _AUTO_ASSIMILATION_STATE.get("last_summary"),
+        }
+
+
+@router.post("/assimilation/auto-populate")
+async def trigger_auto_populate(payload: AutoAssimilationPopulateRequest) -> Dict[str, Any]:
+    base_dir = (payload.base_dir or "").strip()
+    if not base_dir:
+        base_dir = (
+            str(os.getenv("ASSIMILATION_AUTO_POPULATE_BASE_DIR", "")).strip()
+            or str(os.getenv("PROCESSED_STEMS_BASE_DIR", "")).strip()
+        )
+    if not base_dir:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base_dir")
+
+    base_path = Path(base_dir).expanduser().resolve()
+    if not base_path.exists() or not base_path.is_dir():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base_dir: {base_path}")
+
+    started = _start_auto_assimilation_population(
+        base_dir=str(base_path),
+        max_events_per_stem=payload.max_events_per_stem,
+        compute_hashes=payload.compute_hashes,
+        hash_max_bytes=payload.hash_max_bytes,
+    )
+    if not started:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Auto-population job already running")
+
+    return {
+        "status": "queued",
+        "base_dir": str(base_path),
+        "scope": "all_discovered_drummers",
+    }
+
+
 @router.get("/training-export", response_model=CalibrationTrainingExportPayload)
 async def export_training_dataset(
     drummer_slug: Optional[str] = Query(default=None),
@@ -1615,17 +2483,20 @@ async def export_training_dataset(
     items: List[Dict[str, Any]] = []
 
     try:
-        conn = db._get_connection()
-        cursor = conn.cursor()
-
-        query = (
-            "SELECT * FROM evaluation_items "
-            + ("WHERE target_drummer_slug = ? " if slug_filter else "")
-            + "ORDER BY created_at DESC LIMIT ?"
-        )
-        params: tuple[Any, ...] = ((slug_filter, int(limit)) if slug_filter else (int(limit),))
-        cursor.execute(query, params)
-        rows = cursor.fetchall() or []
+        engine = _require_postgres_engine(db)
+        with engine.connect() as conn_pg:
+            rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM public.evaluation_items
+                    WHERE (:slug_filter = '' OR target_drummer_slug = :slug_filter)
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"slug_filter": slug_filter, "limit": int(limit)},
+            ).mappings().all()
 
         for row in rows:
             item = db._row_to_evaluation_item(row)
@@ -1693,13 +2564,20 @@ async def submit_attribute_ratings(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
 @router.get("/evaluation-items/{item_id}", response_model=EvaluationItemPayload)
-async def get_evaluation_item(item_id: str, db: CentralDatabaseService = Depends(get_db_service)) -> EvaluationItemPayload:
+async def get_evaluation_item(item_id: str) -> EvaluationItemPayload:
     item_id = (item_id or "").strip()
     if not item_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing item id")
 
     try:
-        item = db.get_evaluation_item(item_id=item_id)
+        db = await asyncio.wait_for(
+            asyncio.to_thread(get_db_service),
+            timeout=5.0,
+        )
+        item = await asyncio.wait_for(
+            asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
+            timeout=8.0,
+        )
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
 
@@ -1712,11 +2590,20 @@ async def get_evaluation_item(item_id: str, db: CentralDatabaseService = Depends
             run_id_val = (run_id or "").strip() if run_id else ""
             if not run_id_val:
                 continue
-            artifacts = db.get_audio_artifacts_for_run(run_id=run_id_val)
+            try:
+                artifacts = await asyncio.wait_for(
+                    asyncio.to_thread(db.get_audio_artifacts_for_run, run_id=run_id_val),
+                    timeout=6.0,
+                )
+            except Exception:
+                logger.warning("evaluation_item_artifacts_lookup_failed item_id=%s run_id=%s", item_id, run_id_val)
+                artifacts = []
             artifact_map[label] = [_serialize_artifact(artifact) for artifact in artifacts]
 
         baseline_label = _infer_baseline_label(item=item, artifact_lookup=artifact_map)
         return _serialize_item(item, artifact_map, baseline_label=baseline_label)
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item lookup timed out")
     except HTTPException:
         raise
     except Exception as exc:
@@ -1801,35 +2688,78 @@ async def list_run_artifacts(run_id: str, db: CentralDatabaseService = Depends(g
 @router.post("/generate-candidates")
 async def generate_candidates(
     payload: GenerateCandidatesRequest,
+    request: Request,
     db: CentralDatabaseService = Depends(get_db_service),
 ) -> Dict[str, Any]:
     base_groove_id = (payload.base_groove_id or "").strip()
     target_slug = (payload.target_drummer_slug or "").strip()
+    runtime = _runtime_diagnostics()
     if not base_groove_id or not target_slug:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing base groove or drummer")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "stage": "request_validate",
+                "message": "Missing base groove or drummer",
+                "runtime": runtime,
+            },
+        )
 
     try:
+        stage = "assimilation_status"
+
+        logger.info(
+            "generate_candidates_request build=%s instance=%s origin=%s host=%s drummer=%s base_groove=%s strict=%s include_baseline=%s",
+            runtime.get("api_build_marker"),
+            runtime.get("api_instance_id"),
+            request.headers.get("origin"),
+            request.headers.get("host"),
+            target_slug,
+            base_groove_id,
+            bool(payload.strict_reference_baseline),
+            bool(payload.include_baseline),
+        )
+
+        def _raise_stage_error(message: str, *, status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR) -> None:
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "stage": stage,
+                    "message": message,
+                    "runtime": runtime,
+                },
+            )
+
         # Strict gating: require full assimilation readiness before any generation.
         assimilation = _assimilation_status_for_slug(db, target_slug)
         if not assimilation.get("ready_for_calibration"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
+                    "stage": stage,
                     "message": "Assimilation not ready for calibration",
                     "assimilationStatus": assimilation,
+                    "runtime": runtime,
                 },
             )
 
+        stage = "render_service_init"
         render_service = CalibrationRenderService(db)
         session_id: Optional[str] = None
         reviewer_id = (payload.reviewer_id or "").strip()
         if reviewer_id:
-            db.upsert_reviewer_profile(reviewer_id=reviewer_id, display_name=reviewer_id)
+            stage = "reviewer_profile_upsert"
+            reviewer_ok = db.upsert_reviewer_profile(reviewer_id=reviewer_id, display_name=reviewer_id)
+            if not reviewer_ok:
+                _raise_stage_error("Failed to upsert reviewer profile")
+
+            stage = "evaluation_session_create"
             session_id = db.create_evaluation_session(
                 reviewer_id=reviewer_id,
                 target_drummer_slug=target_slug,
-                app_version="calibration_phase2",
+                app_version=f"calibration_phase2:{CALIBRATION_API_BUILD_MARKER}",
             )
+            if not session_id:
+                _raise_stage_error("Failed to create evaluation session")
 
         created_run_ids: List[str] = []
         generation_controls = payload.generation_controls if isinstance(payload.generation_controls, dict) else {}
@@ -1838,43 +2768,116 @@ async def generate_candidates(
         baseline_analysis_id: Optional[str] = None
         baseline_run_id: Optional[str] = None
         reference_artifact_id: Optional[str] = None
+        baseline_missing_reason: Optional[str] = None
+
+        if payload.candidate_count < 2:
+            _raise_stage_error("candidate_count must be at least 2 to produce A/B outputs", status_code=status.HTTP_400_BAD_REQUEST)
 
         if payload.include_baseline:
-            baseline_source = _select_assimilation_baseline_source(db, drummer_slug=target_slug)
-            if not baseline_source:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="No assimilated baseline available for target drummer",
-                )
-            source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
-            if source_groove_path:
-                effective_base_groove_id = source_groove_path
-            analysis_id = str(baseline_source.get("analysis_id") or "").strip()
-            if analysis_id:
-                baseline_analysis_id = analysis_id
-                item_base_groove_id = f"assimilation:{analysis_id}"
-            baseline_ref = _create_reference_baseline_run(
+            stage = "baseline_source_select"
+            baseline_source = _select_assimilation_baseline_source(
                 db,
                 drummer_slug=target_slug,
-                baseline_source=baseline_source,
-                base_groove_id=item_base_groove_id,
+                require_cloud_uri=False,
             )
-            if baseline_ref:
-                baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
-                reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
+            if payload.strict_reference_baseline and not baseline_source:
+                baseline_missing_reason = "No assimilated baseline source clip is available for this drummer. Proceeding with non-strict A/B queueing."
+                logger.warning(
+                    "strict_baseline_downgraded drummer=%s reason=%s",
+                    target_slug,
+                    baseline_missing_reason,
+                )
+            if baseline_source:
+                source_groove_path = str(baseline_source.get("base_groove_path") or "").strip()
+                if source_groove_path:
+                    effective_base_groove_id = source_groove_path
+                analysis_id = str(baseline_source.get("analysis_id") or "").strip()
+                if analysis_id:
+                    baseline_analysis_id = analysis_id
+                    item_base_groove_id = f"assimilation:{analysis_id}"
 
-        generate_baseline = bool(payload.include_baseline and not baseline_run_id)
-        requested = payload.candidate_count + (1 if generate_baseline else 0)
+                stage = "baseline_reference_run_create"
+                baseline_ref: Optional[Dict[str, Any]] = None
+                baseline_source_debug = _baseline_source_summary(baseline_source)
+                baseline_storage_uri = _reference_storage_uri_from_baseline_source(baseline_source)
+
+                if not baseline_storage_uri:
+                    baseline_missing_reason = "No cloud-readable baseline source clip is available for this assimilated analysis."
+                    if payload.strict_reference_baseline:
+                        logger.warning(
+                            "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                            target_slug,
+                            stage,
+                            baseline_missing_reason,
+                        )
+                else:
+                    try:
+                        baseline_ref = _ensure_reference_baseline_run(
+                            db,
+                            drummer_slug=target_slug,
+                            baseline_source=baseline_source,
+                            base_groove_id=item_base_groove_id,
+                            sample_pack_version=payload.sample_pack_version,
+                        )
+                    except Exception as baseline_exc:
+                        logger.exception(
+                            "baseline_reference_create_failed drummer=%s source=%s",
+                            target_slug,
+                            baseline_source_debug,
+                        )
+                        if payload.strict_reference_baseline:
+                            logger.warning(
+                                "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                                target_slug,
+                                stage,
+                                str(baseline_exc),
+                            )
+                        baseline_missing_reason = str(baseline_exc)
+
+                if payload.strict_reference_baseline and not baseline_ref:
+                    if not baseline_missing_reason:
+                        baseline_missing_reason = "Strict baseline requested but baseline reference artifact could not be created. Proceeding with A/B queueing."
+                    logger.warning(
+                        "strict_baseline_downgraded drummer=%s stage=%s reason=%s",
+                        target_slug,
+                        stage,
+                        baseline_missing_reason,
+                    )
+
+                if baseline_ref:
+                    baseline_run_id = str(baseline_ref.get("run_id") or "").strip() or None
+                    reference_artifact_id = str(baseline_ref.get("artifact_id") or "").strip() or None
+
+        # Do not synthesize a fake baseline when the original source clip is unavailable.
+        # The page can still queue A/B candidates and mark the baseline lane as not required.
+        generate_baseline = False
+        requested = payload.candidate_count
         for idx in range(requested):
             seed_offset = idx + (1 if baseline_run_id else 0)
             seed_value = payload.seed if payload.seed is not None else (1000 + seed_offset)
-            run_data = generate_candidate_run(
-                db=db,
-                base_groove_id=effective_base_groove_id,
-                drummer_slug=target_slug,
-                seed=int(seed_value),
-                generation_controls=generation_controls,
-            )
+            stage = "candidate_generate"
+            try:
+                run_data = generate_candidate_run(
+                    db=db,
+                    base_groove_id=effective_base_groove_id,
+                    drummer_slug=target_slug,
+                    seed=int(seed_value),
+                    generation_controls=generation_controls,
+                )
+            except RuntimeError as gen_exc:
+                message = str(gen_exc)
+                if "rollup" in message.lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "stage": stage,
+                            "message": message,
+                            "reason": "phase5_rollup_missing_or_unreadable",
+                            "assimilationStatus": assimilation,
+                            "runtime": runtime,
+                        },
+                    )
+                raise
 
             run_metadata = {
                 "requested_via": "generate-candidates",
@@ -1892,6 +2895,7 @@ async def generate_candidates(
                 **run_data.metadata,
             }
 
+            stage = "calibration_run_log"
             run_id = db.log_calibration_run(
                 drummer_slug=target_slug,
                 outcome="queued",
@@ -1901,9 +2905,11 @@ async def generate_candidates(
                 comparison={},
             )
             if not run_id:
-                continue
+                _raise_stage_error("Failed to log calibration run")
             created_run_ids.append(run_id)
-            db.upsert_run_version(
+
+            stage = "run_version_upsert"
+            version_ok = db.upsert_run_version(
                 run_id=run_id,
                 generator_version="candidate_generator_v1",
                 feature_version="metrics_v1",
@@ -1912,9 +2918,15 @@ async def generate_candidates(
                 seed=int(seed_value),
                 commit_hash=None,
             )
+            if not version_ok:
+                logger.warning(
+                    "generate-candidates run_version_upsert skipped for run_id=%s (continuing)",
+                    run_id,
+                )
 
             # Store event stream placeholder so render pipeline has context.
-            db.upsert_calibration_run_events(
+            stage = "run_events_upsert"
+            events_ok = db.upsert_calibration_run_events(
                 run_id=run_id,
                 drummer_slug=target_slug,
                 event_stream=run_data.event_stream,
@@ -1923,6 +2935,11 @@ async def generate_candidates(
                 bars=run_data.bars,
                 source_type="generate_candidates_autogen",
             )
+            if not events_ok:
+                logger.warning(
+                    "generate-candidates run_events_upsert skipped for run_id=%s (continuing)",
+                    run_id,
+                )
 
             # Trigger render pipeline immediately.
             render_request = RenderRequest(
@@ -1943,16 +2960,21 @@ async def generate_candidates(
                     "tempo_bpm": run_data.tempo_bpm,
                 },
             )
+            stage = "render_start"
             try:
                 render_service.render_run(render_request)
             except Exception as render_exc:
-                db.log_calibration_render_job(
-                    run_id=run_id,
-                    render_profile_id=payload.render_profile_id,
-                    sample_pack_version=payload.sample_pack_version,
-                    status="failed",
-                    error_text=str(render_exc),
-                )
+                try:
+                    db.log_calibration_render_job(
+                        run_id=run_id,
+                        render_profile_id=payload.render_profile_id,
+                        sample_pack_version=payload.sample_pack_version,
+                        status="failed",
+                        error_text=str(render_exc),
+                    )
+                except Exception:
+                    pass
+                _raise_stage_error(f"Failed to start render: {render_exc}")
 
         item_id: Optional[str] = None
         if session_id and (created_run_ids or baseline_run_id):
@@ -1965,6 +2987,7 @@ async def generate_candidates(
             if not reference_artifact_id:
                 reference_artifact_id = _pick_reference_artifact_id(db, baseline_run_id=baseline_run_id)
 
+            stage = "evaluation_item_create"
             item_id = db.create_evaluation_item(
                 session_id=session_id,
                 base_groove_id=item_base_groove_id,
@@ -1976,17 +2999,74 @@ async def generate_candidates(
                 eval_mode="AB",
                 ab_mapping={"A": candidate_a_run_id, "B": candidate_b_run_id},
             )
+            if not item_id:
+                _raise_stage_error("Failed to create evaluation item")
+
+            if payload.wait_for_all_artifacts:
+                stage = "artifact_wait"
+                wait_start = time.perf_counter()
+                timeout_s = max(30.0, float(payload.artifact_wait_timeout_sec))
+                poll_s = max(0.5, float(payload.artifact_poll_interval_ms) / 1000.0)
+                lane_progress: Dict[str, Any] = {}
+
+                while True:
+                    lane_progress = _collect_item_lane_progress(
+                        db,
+                        baseline_run_id=baseline_run_id,
+                        candidate_a_run_id=candidate_a_run_id,
+                        candidate_b_run_id=candidate_b_run_id,
+                    )
+                    if lane_progress.get("all_ready"):
+                        break
+
+                    elapsed = time.perf_counter() - wait_start
+                    if elapsed >= timeout_s:
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail={
+                                "stage": stage,
+                                "message": "Timed out waiting for baseline/A/B artifacts",
+                                "item_id": item_id,
+                                "elapsed_sec": round(elapsed, 2),
+                                "progress": lane_progress,
+                                "runtime": runtime,
+                            },
+                        )
+                    await asyncio.sleep(poll_s)
 
         return {
             "status": "queued",
             "run_ids": created_run_ids,
             "session_id": session_id,
             "item_id": item_id,
+            "baseline_run_id": baseline_run_id,
+            "reference_artifact_id": reference_artifact_id,
+            "baseline_reference_available": bool(reference_artifact_id),
+            "baseline_missing_reason": baseline_missing_reason,
+            "request_behavior": {
+                "strict_reference_baseline_requested": bool(payload.strict_reference_baseline),
+                "strict_reference_baseline_hard_fail_enabled": False,
+                "include_baseline_requested": bool(payload.include_baseline),
+                "generated_synthetic_baseline": bool(generate_baseline),
+                "baseline_source_analysis_id": baseline_analysis_id,
+            },
+            "runtime": runtime,
+            "artifact_wait_enforced": bool(payload.wait_for_all_artifacts),
+            "artifact_wait_timeout_sec": int(payload.artifact_wait_timeout_sec),
         }
-    except HTTPException:
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and "runtime" not in exc.detail:
+            exc.detail["runtime"] = runtime
         raise
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "stage": stage,
+                "message": str(exc),
+                "runtime": runtime,
+            },
+        )
 
 @router.get("/drummers/{slug}", response_model=DrummerDetailPayload)
 async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_service)) -> DrummerDetailPayload:
@@ -1994,42 +3074,56 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
     if not slug:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
-    try:
+    async def _db_call_with_timeout(func, *args, timeout: float = 6.0, default=None, **kwargs):
         try:
-            drummer_row = db.get_drummer(slug) or {"id": slug, "display_name": slug}
+            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
         except Exception:
+            return default
+
+    try:
+        drummer_row = await _db_call_with_timeout(
+            db.get_drummer,
+            slug,
+            timeout=4.0,
+            default={"id": slug, "display_name": slug},
+        )
+        if not drummer_row:
             drummer_row = {"id": slug, "display_name": slug}
         display_name = _display_name_from_row(drummer_row, slug)
 
-        adjustments: Dict[str, Any] = {}
-        metadata: Dict[str, Any] = {}
-        try:
-            adjustments_record = db.get_calibration_adjustments(slug) or {}
-            adjustments = _safe_json_dict(adjustments_record.get("adjustments"))
-            metadata = _safe_json_dict(adjustments_record.get("metadata"))
-        except Exception:
-            adjustments = {}
-            metadata = {}
+        adjustments_record = await _db_call_with_timeout(
+            db.get_calibration_adjustments,
+            slug,
+            timeout=5.0,
+            default={},
+        ) or {}
+        adjustments: Dict[str, Any] = _safe_json_dict(adjustments_record.get("adjustments"))
+        metadata: Dict[str, Any] = _safe_json_dict(adjustments_record.get("metadata"))
 
-        rollup_targets: Dict[str, Any] = {}
-        try:
-            rollup_targets = db.get_drummer_profile_rollup(drummer_slug=slug) or {}
-            if not isinstance(rollup_targets, dict):
-                rollup_targets = {}
-        except Exception:
+        rollup_targets = await _db_call_with_timeout(
+            db.get_drummer_profile_rollup,
+            drummer_slug=slug,
+            timeout=6.0,
+            default={},
+        ) or {}
+        if not isinstance(rollup_targets, dict):
             rollup_targets = {}
 
-        latest_run: Optional["CalibrationRun"] = None
-        try:
-            latest_run = db.get_latest_calibration_run(drummer_slug=slug)
-        except Exception:
-            latest_run = None
+        latest_run = await _db_call_with_timeout(
+            db.get_latest_calibration_run,
+            drummer_slug=slug,
+            timeout=6.0,
+            default=None,
+        )
         metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
 
-        try:
-            runs = db.get_calibration_runs(drummer_slug=slug, limit=10)
-        except Exception:
-            runs = []
+        runs = await _db_call_with_timeout(
+            db.get_calibration_runs,
+            drummer_slug=slug,
+            limit=10,
+            timeout=6.0,
+            default=[],
+        ) or []
         run_history: List[CalibrationRunPayload] = []
         for run in runs:
             try:
@@ -2037,10 +3131,13 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
             except Exception:
                 continue
 
-        try:
-            feedback_entries = db.get_calibration_feedback(drummer_slug=slug, limit=25)
-        except Exception:
-            feedback_entries = []
+        feedback_entries = await _db_call_with_timeout(
+            db.get_calibration_feedback,
+            drummer_slug=slug,
+            limit=25,
+            timeout=6.0,
+            default=[],
+        ) or []
         feedback_samples: List[FeedbackEntry] = []
         for item in feedback_entries:
             try:
@@ -2050,9 +3147,14 @@ async def get_drummer(slug: str, db: CentralDatabaseService = Depends(get_db_ser
 
         completion_status = _completion_from_run(latest_run)
 
-        try:
-            assimilation_status = _assimilation_status_for_slug(db, slug)
-        except Exception:
+        assimilation_status = await _db_call_with_timeout(
+            _assimilation_status_for_slug,
+            db,
+            slug,
+            timeout=7.0,
+            default=None,
+        )
+        if not assimilation_status:
             assimilation_status = {
                 "status": "unknown",
                 "ready_for_calibration": False,
@@ -2125,45 +3227,37 @@ async def update_adjustments(
 
 
 @router.post("/drummers/{slug}/generate")
-async def trigger_generation(slug: str, db: CentralDatabaseService = Depends(get_db_service)) -> Dict[str, Any]:
+async def trigger_generation(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    db: CentralDatabaseService = Depends(get_db_service),
+) -> Dict[str, Any]:
     slug = (slug or "").strip()
     if not slug:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing drummer slug")
 
     try:
-        rollup_result = db.run_phase5_profile_rollup_for_drummer(drummer_slug=slug) or {}
-        rollup_payload = rollup_result.get("rollup") if isinstance(rollup_result, dict) else {}
-        if not isinstance(rollup_payload, dict):
-            rollup_payload = {}
-
-        comparison = rollup_result.get("comparison") if isinstance(rollup_result, dict) else None
-        if not isinstance(comparison, dict):
-            comparison = rollup_payload.get("comparison") if isinstance(rollup_payload, dict) else None
-        if not isinstance(comparison, dict):
-            comparison = None
-
-        metrics = rollup_result.get("metrics") if isinstance(rollup_result, dict) else None
-        if not isinstance(metrics, dict):
-            metrics = rollup_payload.get("metrics") if isinstance(rollup_payload, dict) else None
-        if not isinstance(metrics, dict):
-            metrics = None
+        run_id_seed = str(uuid.uuid4())
+        queue_metadata = {
+            "queued": True,
+            "queued_at": datetime.utcnow().isoformat(),
+        }
 
         run_id = db.log_calibration_run(
+            run_id=run_id_seed,
             drummer_slug=slug,
             outcome="pending",
-            metadata=rollup_payload,
-            metrics=metrics,
-            comparison=comparison,
-            note_count=rollup_payload.get("note_count") if isinstance(rollup_payload, dict) else None,
-            fills_per_minute=rollup_payload.get("fills_per_min") if isinstance(rollup_payload, dict) else None,
-            within_tolerance_count=(comparison.get("within_tolerance_count") if isinstance(comparison, dict) else None),
-            total_compared=(comparison.get("total_compared") if isinstance(comparison, dict) else None),
+            metadata=queue_metadata,
         )
+        if not run_id:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to queue calibration run")
+
+        background_tasks.add_task(_complete_generation_run, slug=slug, run_id=run_id)
 
         return {
             "status": "queued",
             "run_id": run_id,
-            "rollupSaved": bool(rollup_result.get("saved")) if isinstance(rollup_result, dict) else False,
+            "rollupSaved": False,
         }
     except HTTPException:
         raise
