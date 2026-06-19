@@ -24,10 +24,7 @@ const rewriteDeprecatedApiBase = (value?: string | null): string => {
   if (!normalized) {
     return "";
   }
-  return normalized.replace(
-    /^https?:\/\/drumtrackai-calibration-api\.onrender\.com(?=\/|$)/i,
-    CANONICAL_CALIBRATION_API_BASE,
-  );
+  return normalized;
 };
 
 const isProductionFrontendHost = (hostname: string): boolean => {
