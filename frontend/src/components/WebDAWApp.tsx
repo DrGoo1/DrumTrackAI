@@ -4138,7 +4138,7 @@ export default function WebDAWApp() {
     let humanize = 0.72;
     let ghost = 0.45;
     let fillDensity = 0.55;
-    let fillPreset: any = 'auto';
+    const fillPreset: any = 'auto';
     let dynamicRange = 0.72;
 
     if (normalizedStyle.includes('jazz')) {

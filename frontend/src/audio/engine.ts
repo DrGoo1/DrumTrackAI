@@ -12,14 +12,14 @@ export type TrackHandle = {
 };
 
 let started = false;
-let players: Map<string, TrackHandle> = new Map();
+const players: Map<string, TrackHandle> = new Map();
 let loopEnabled = false;
 let loopStart = 0;
 let loopEnd = 0;
-let monitoringInterval: NodeJS.Timeout | null = null;
+const monitoringInterval: NodeJS.Timeout | null = null;
 
 // CRITICAL: Global lock to prevent React StrictMode double-mounting from creating duplicates
-let globalAudioCreationLock = new Set<string>();
+const globalAudioCreationLock = new Set<string>();
 
 export const Engine = {
   async ensureStarted() {
@@ -101,10 +101,8 @@ export const Engine = {
     });
     
     // Create dummy objects for compatibility
-    // @ts-ignore
-    const gain = { gain: { value: 0.5 } };
-    // @ts-ignore
-    const meter = { getValue: () => -60 };
+    const gain: any = { gain: { value: 0.5 } };
+    const meter: any = { getValue: () => -60 };
     const source = null;
     
     console.log(`✅ Audio element ready for: ${key} (volume: ${audioElement.volume})`);
@@ -252,7 +250,6 @@ export const Engine = {
   },
   getMeter(key: string) {
     const h = players.get(key); if (!h) return 0; // 0..1
-    // @ts-ignore
     const v = h.meter.getValue ? h.meter.getValue() : 0; return typeof v === "number" ? (isFinite(v) ? Math.max(0, Math.min(1, v)) : 0) : 0;
   },
   state() {

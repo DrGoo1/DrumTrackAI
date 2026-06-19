@@ -248,7 +248,7 @@ export const DrumBuilderPanelV2: React.FC<DrumBuilderPanelV2Props> = ({
     setRudimentBlocks((prev) =>
       prev.map((block) => {
         if (block.blockId !== blockId) return block;
-        let next: RudimentBlockDraft = { ...block, ...patch } as RudimentBlockDraft;
+        const next: RudimentBlockDraft = { ...block, ...patch } as RudimentBlockDraft;
         if ('offset' in patch && selectedRange) {
           next.offset = clampOffset(patch.offset ?? block.offset);
         }

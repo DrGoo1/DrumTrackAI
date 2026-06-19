@@ -126,7 +126,7 @@ export function barBeatToBeatFloat(meterMap: MeterEvent[], bb: BarBeat): number 
 
 export function beatFloatToBarBeat(meterMap: MeterEvent[], beatFloat: number): BarBeat {
   const meter = normalizeMeterMap(meterMap);
-  let b = Math.max(0, Number.isFinite(beatFloat) ? beatFloat : 0);
+  const b = Math.max(0, Number.isFinite(beatFloat) ? beatFloat : 0);
   const wholeBeats = Math.floor(b);
   const frac = b - wholeBeats;
 
