@@ -7,6 +7,7 @@ import math
 import wave
 import struct
 import logging
+from datetime import datetime
 
 from admin.services.central_database_service import CentralDatabaseService
 
@@ -109,36 +110,46 @@ class CalibrationRenderService:
                         self._db.log_calibration_run(
                             drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                             outcome="success",
+                            completed_at=datetime.utcnow(),
                             metadata=meta,
                             run_id=request.run_id,
                         )
                     else:
                         meta["render"]["status"] = "failed"
                         if artifact_id and len(artifact_rows) == 0:
-                            meta["render"]["error"] = "Artifact logged but not readable back for run_id"
+                            error_text = "Artifact logged but not readable back for run_id"
                         else:
-                            meta["render"]["error"] = "Failed to log synthesized preview artifact"
+                            error_text = "Failed to log synthesized preview artifact"
+                        meta["render"]["error"] = error_text
+                        meta["error"] = error_text
                         self._db.log_calibration_run(
                             drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                             outcome="failure",
+                            completed_at=datetime.utcnow(),
                             metadata=meta,
                             run_id=request.run_id,
                         )
                 else:
+                    error_text = "Failed to synthesize preview audio"
                     meta["render"]["status"] = "failed"
-                    meta["render"]["error"] = "Failed to synthesize preview audio"
+                    meta["render"]["error"] = error_text
+                    meta["error"] = error_text
                     self._db.log_calibration_run(
                         drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                         outcome="failure",
+                        completed_at=datetime.utcnow(),
                         metadata=meta,
                         run_id=request.run_id,
                     )
             except Exception:
+                error_text = "render_stub_exception"
                 meta["render"]["status"] = "failed"
-                meta["render"]["error"] = "render_stub_exception"
+                meta["render"]["error"] = error_text
+                meta["error"] = error_text
                 self._db.log_calibration_run(
                     drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                     outcome="failure",
+                    completed_at=datetime.utcnow(),
                     metadata=meta,
                     run_id=request.run_id,
                 )
