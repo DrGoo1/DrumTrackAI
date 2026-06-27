@@ -483,6 +483,11 @@ interface ListeningLaneProgress {
   artifact_types: string[];
   strict_reference_ok?: boolean;
   not_required?: boolean;
+  run_outcome?: string | null;
+  run_started_at?: string | null;
+  run_completed_at?: string | null;
+  run_age_seconds?: number | null;
+  stalled_in_queue?: boolean;
   reason?: string | null;
 }
 
@@ -491,6 +496,7 @@ interface ListeningItemProgressPayload {
   all_ready: boolean;
   missing_lanes: string[];
   lanes: ListeningLaneProgress[];
+  queue_stall_hint_seconds?: number;
 }
 
 interface GenerateRunResponse {
@@ -1508,6 +1514,19 @@ const CalibrationLab: React.FC = () => {
     }
     return 0;
   }, [listeningProgress.value, currentItem, hasCurrentPlayableArtifacts, artifactPollInfo.attempts]);
+  const effectiveListeningLabel = useMemo(() => {
+    const stalled = laneProgress.filter((lane) => !lane.ready && lane.stalled_in_queue).map((lane) => lane.lane);
+    if (stalled.length > 0) {
+      return `Render queue appears stalled: ${stalled.join(', ')}. Check backend worker logs.`;
+    }
+
+    const queued = laneProgress.filter((lane) => !lane.ready && String(lane.run_outcome || '').toLowerCase() === 'queued').map((lane) => lane.lane);
+    if (queued.length > 0) {
+      return `Rendering lanes: ${queued.join(', ')} (queued)`;
+    }
+
+    return listeningProgress.label || 'Rendering drum tracks...';
+  }, [laneProgress, listeningProgress.label]);
   const showListeningProgress =
     listeningProgress.active || itemLoading || Boolean(pendingListeningItemId) || Boolean(currentItem && !hasCurrentPlayableArtifacts);
 
@@ -2258,7 +2277,7 @@ const CalibrationLab: React.FC = () => {
                     {showListeningProgress && (
                       <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2">
                         <div className="mb-1 flex items-center justify-between text-[11px] text-amber-100">
-                          <span>{listeningProgress.label || 'Rendering drum tracks...'}</span>
+                          <span>{effectiveListeningLabel}</span>
                           <span>{Math.round(listeningProgressValue * 100)}%</span>
                         </div>
                         <div className="h-2 w-full overflow-hidden rounded-full bg-purple-950/70">
@@ -2292,8 +2311,21 @@ const CalibrationLab: React.FC = () => {
                               }`}
                             >
                               <p className="font-semibold">{lane.lane}</p>
-                              <p className="mt-1">{lane.not_required ? 'Not required' : lane.ready ? 'Ready' : 'Rendering'}</p>
+                              <p className="mt-1">
+                                {lane.not_required
+                                  ? 'Not required'
+                                  : lane.ready
+                                  ? 'Ready'
+                                  : lane.stalled_in_queue
+                                  ? 'Queued (stalled)'
+                                  : String(lane.run_outcome || '').toLowerCase() === 'queued'
+                                  ? 'Queued'
+                                  : 'Rendering'}
+                              </p>
                               <p className="mt-1 text-[10px] opacity-80">Artifacts: {lane.artifact_count}</p>
+                              {!lane.ready && typeof lane.run_age_seconds === 'number' && lane.run_age_seconds >= 0 && (
+                                <p className="mt-1 text-[10px] opacity-80">Queued for {formatTimeSeconds(lane.run_age_seconds)}</p>
+                              )}
                               {lane.lane === 'baseline' && lane.strict_reference_ok === false && !lane.not_required && (
                                 <p className="mt-1 text-[10px] text-rose-200">Baseline source not strict-reference ready</p>
                               )}

@@ -93,11 +93,32 @@ def _parse_env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _parse_env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except Exception:
+            value = default
+    if min_value is not None and value < min_value:
+        return min_value
+    return value
+
+
 def _csv_env_values(name: str) -> List[str]:
     raw = str(os.getenv(name, "")).strip()
     if not raw:
         return []
     return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+_QUEUE_STALL_HINT_SECONDS = _parse_env_int(
+    "CALIBRATION_QUEUE_STALL_HINT_SECONDS",
+    180,
+    min_value=30,
+)
 
 
 def _discover_processed_stems(base_dir: Path) -> Dict[str, List[Path]]:
@@ -1693,6 +1714,26 @@ def _serialize_run_bundle(db: CentralDatabaseService, run_id: Optional[str]) -> 
     }
 
 
+def _iso_datetime(value: Optional[datetime]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return value.isoformat()
+    except Exception:
+        return None
+
+
+def _run_age_seconds(started_at: Optional[datetime]) -> Optional[int]:
+    if not started_at:
+        return None
+    try:
+        now = datetime.now(started_at.tzinfo) if started_at.tzinfo is not None else datetime.utcnow()
+        age_seconds = int((now - started_at).total_seconds())
+        return max(age_seconds, 0)
+    except Exception:
+        return None
+
+
 def _collect_item_lane_progress(
     db: CentralDatabaseService,
     *,
@@ -1718,6 +1759,11 @@ def _collect_item_lane_progress(
             "artifact_count": 0,
             "artifact_types": [],
             "strict_reference_ok": True,
+            "run_outcome": None,
+            "run_started_at": None,
+            "run_completed_at": None,
+            "run_age_seconds": None,
+            "stalled_in_queue": False,
         }
 
         if not run_id_val:
@@ -1739,6 +1785,18 @@ def _collect_item_lane_progress(
         except Exception:
             artifacts = []
 
+        run_record: Optional[CalibrationRun] = None
+        try:
+            run_record = db.get_calibration_run(run_id=run_id_val)
+        except Exception:
+            run_record = None
+
+        if run_record:
+            lane_payload["run_outcome"] = str(run_record.outcome or "").strip() or None
+            lane_payload["run_started_at"] = _iso_datetime(run_record.started_at)
+            lane_payload["run_completed_at"] = _iso_datetime(run_record.completed_at)
+            lane_payload["run_age_seconds"] = _run_age_seconds(run_record.started_at)
+
         serialized = [_serialize_artifact(item) for item in artifacts]
         artifact_types = [str(item.artifact_type or "").strip() for item in serialized if str(item.artifact_type or "").strip()]
 
@@ -1756,6 +1814,17 @@ def _collect_item_lane_progress(
             lane_payload["ready"] = lane_payload["ready"] and strict_reference_ok
 
         if not lane_payload["ready"]:
+            run_outcome = str(lane_payload.get("run_outcome") or "").strip().lower()
+            run_age_seconds = lane_payload.get("run_age_seconds")
+            if isinstance(run_age_seconds, int) and run_outcome == "queued" and run_age_seconds >= _QUEUE_STALL_HINT_SECONDS:
+                lane_payload["stalled_in_queue"] = True
+                lane_payload["reason"] = (
+                    f"Run has remained queued for {run_age_seconds}s with no artifacts; render worker may be stalled."
+                )
+            elif run_outcome == "failure":
+                lane_payload["reason"] = "Run is marked as failure and no artifacts are available."
+            elif run_outcome == "queued" and isinstance(run_age_seconds, int):
+                lane_payload["reason"] = f"Run is queued ({run_age_seconds}s) and artifacts are not ready yet."
             missing_lanes.append(lane)
             all_ready = False
 
@@ -1984,6 +2053,7 @@ async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
             "all_ready": bool(progress.get("all_ready")),
             "missing_lanes": progress.get("missing_lanes") or [],
             "lanes": progress.get("lanes") or [],
+            "queue_stall_hint_seconds": _QUEUE_STALL_HINT_SECONDS,
         }
     except TimeoutError:
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item progress lookup timed out")
