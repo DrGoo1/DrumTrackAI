@@ -100,10 +100,12 @@ class CalibrationRenderService:
                             "seed": int(request.seed),
                         },
                     )
-                    if artifact_id:
+                    artifact_rows = self._db.get_audio_artifacts_for_run(run_id=request.run_id)
+                    if artifact_id and len(artifact_rows) > 0:
                         meta["render"]["status"] = "completed"
                         meta["render"]["artifact_id"] = artifact_id
                         meta["render"]["tempo_bpm"] = tempo_bpm
+                        meta["render"]["artifact_count"] = len(artifact_rows)
                         self._db.log_calibration_run(
                             drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                             outcome="success",
@@ -112,7 +114,10 @@ class CalibrationRenderService:
                         )
                     else:
                         meta["render"]["status"] = "failed"
-                        meta["render"]["error"] = "Failed to log synthesized preview artifact"
+                        if artifact_id and len(artifact_rows) == 0:
+                            meta["render"]["error"] = "Artifact logged but not readable back for run_id"
+                        else:
+                            meta["render"]["error"] = "Failed to log synthesized preview artifact"
                         self._db.log_calibration_run(
                             drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
                             outcome="failure",
