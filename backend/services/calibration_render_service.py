@@ -7,6 +7,7 @@ import math
 import wave
 import struct
 import logging
+import time
 from datetime import datetime
 
 from admin.services.central_database_service import CentralDatabaseService
@@ -49,6 +50,21 @@ class CalibrationRenderService:
         except Exception:
             return 110.0
 
+    def _await_artifact_visibility(
+        self,
+        *,
+        run_id: str,
+        retries: int = 6,
+        delay_seconds: float = 0.35,
+    ) -> list[Any]:
+        for attempt in range(max(1, retries)):
+            artifacts = self._db.get_audio_artifacts_for_run(run_id=run_id)
+            if artifacts:
+                return artifacts
+            if attempt < retries - 1:
+                time.sleep(max(0.0, delay_seconds))
+        return []
+
     def render_run(self, request: RenderRequest) -> None:
         # No-op queue: annotate the run's metadata so clients can poll later.
         try:
@@ -88,20 +104,41 @@ class CalibrationRenderService:
                         / request.run_id
                         / preview_path.name
                     )
-                    artifact_id = self._db.log_audio_artifact(
-                        run_id=request.run_id,
-                        artifact_type="audio",
-                        storage_uri=storage_uri,
-                        duration_sec=4.0,
-                        loudness_lufs=None,
-                        sample_pack_version=request.sample_pack_version,
-                        render_recipe={
-                            "generated": "synth_preview",
-                            "kit_id": request.kit_id,
-                            "seed": int(request.seed),
-                        },
-                    )
-                    artifact_rows = self._db.get_audio_artifacts_for_run(run_id=request.run_id)
+                    def _log_preview_artifact(existing_artifact_id: Optional[str] = None) -> Optional[str]:
+                        return self._db.log_audio_artifact(
+                            run_id=request.run_id,
+                            artifact_type="audio",
+                            storage_uri=storage_uri,
+                            duration_sec=4.0,
+                            loudness_lufs=None,
+                            sample_pack_version=request.sample_pack_version,
+                            render_recipe={
+                                "generated": "synth_preview",
+                                "kit_id": request.kit_id,
+                                "seed": int(request.seed),
+                            },
+                            artifact_id=existing_artifact_id,
+                        )
+
+                    artifact_id = _log_preview_artifact()
+                    artifact_rows = self._await_artifact_visibility(run_id=request.run_id)
+
+                    if artifact_id and len(artifact_rows) == 0:
+                        _log_preview_artifact(existing_artifact_id=artifact_id)
+                        artifact_rows = self._await_artifact_visibility(
+                            run_id=request.run_id,
+                            retries=5,
+                            delay_seconds=0.4,
+                        )
+
+                    if not artifact_id:
+                        artifact_id = _log_preview_artifact()
+                        artifact_rows = self._await_artifact_visibility(
+                            run_id=request.run_id,
+                            retries=5,
+                            delay_seconds=0.4,
+                        )
+
                     if artifact_id and len(artifact_rows) > 0:
                         meta["render"]["status"] = "completed"
                         meta["render"]["artifact_id"] = artifact_id
