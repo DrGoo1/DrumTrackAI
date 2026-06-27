@@ -7471,18 +7471,34 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             if getattr(self, "_engine", None) is not None:
                 with self._engine.connect() as conn_pg:
-                    rows = conn_pg.execute(
-                        text(
-                            """
-                            SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
-                                   loudness_lufs, sample_pack_version, render_recipe_json, created_at
-                            FROM public.audio_artifacts
-                            WHERE run_id = :run_id
-                            ORDER BY created_at DESC
-                            """
-                        ),
-                        {"run_id": run_id},
-                    ).mappings().all()
+                    try:
+                        rows = conn_pg.execute(
+                            text(
+                                """
+                                SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
+                                       loudness_lufs, sample_pack_version, render_recipe_json, created_at
+                                FROM public.audio_artifacts
+                                WHERE run_id = :run_id
+                                ORDER BY created_at DESC
+                                """
+                            ),
+                            {"run_id": run_id},
+                        ).mappings().all()
+                    except Exception as pg_read_exc:
+                        if "created_at" not in str(pg_read_exc):
+                            raise
+                        rows = conn_pg.execute(
+                            text(
+                                """
+                                SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
+                                       loudness_lufs, sample_pack_version, render_recipe_json
+                                FROM public.audio_artifacts
+                                WHERE run_id = :run_id
+                                ORDER BY artifact_id DESC
+                                """
+                            ),
+                            {"run_id": run_id},
+                        ).mappings().all()
 
                 for data in rows:
                     artifact = self._row_to_audio_artifact(data)
@@ -7492,16 +7508,30 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
 
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
-                       loudness_lufs, sample_pack_version, render_recipe_json, created_at
-                FROM audio_artifacts
-                WHERE run_id = ?
-                ORDER BY created_at DESC
-                """,
-                (run_id,),
-            )
+            try:
+                cursor.execute(
+                    """
+                    SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
+                           loudness_lufs, sample_pack_version, render_recipe_json, created_at
+                    FROM audio_artifacts
+                    WHERE run_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (run_id,),
+                )
+            except sqlite3.OperationalError as sqlite_read_exc:
+                if "created_at" not in str(sqlite_read_exc).lower():
+                    raise
+                cursor.execute(
+                    """
+                    SELECT artifact_id, run_id, artifact_type, storage_uri, duration_sec,
+                           loudness_lufs, sample_pack_version, render_recipe_json
+                    FROM audio_artifacts
+                    WHERE run_id = ?
+                    ORDER BY artifact_id DESC
+                    """,
+                    (run_id,),
+                )
             for row in cursor.fetchall() or []:
                 artifact = self._row_to_audio_artifact(row)
                 if artifact:
