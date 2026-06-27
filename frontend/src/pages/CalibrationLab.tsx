@@ -71,6 +71,7 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [waveformBins, setWaveformBins] = useState<number[]>([]);
   const [waveformError, setWaveformError] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const playbackProgress = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
 
@@ -132,6 +133,28 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.load();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setPlaybackError(null);
+
+    const onPlay = () => {
+      setIsPlaying(true);
+      setPlaybackError(null);
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+    };
+    const onError = () => {
+      const mediaError = audio.error;
+      const code = mediaError?.code;
+      const detail = code ? ` (media error ${code})` : '';
+      setPlaybackError(`Playback failed for this track${detail}.`);
+      setIsPlaying(false);
+    };
 
     const onLoadedMetadata = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
@@ -145,10 +168,16 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
       }
     };
 
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('error', onError);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
     return () => {
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('error', onError);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
@@ -160,9 +189,11 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
     if (!audio) return;
     if (audio.paused) {
       try {
+        setPlaybackError(null);
         await audio.play();
         setIsPlaying(true);
       } catch {
+        setPlaybackError('Unable to start playback. Try again or open track in a new tab.');
         setIsPlaying(false);
       }
     } else {
@@ -293,6 +324,14 @@ const AudioPreviewPlayer: React.FC<{ src: string; title: string }> = ({ src, tit
           Loop {loopEnabled ? 'On' : 'Off'}
         </button>
       </div>
+      {playbackError && (
+        <p className="mt-2 text-[10px] text-rose-200">
+          {playbackError}{' '}
+          <a href={src} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2">
+            Open track
+          </a>
+        </p>
+      )}
       <div className="mt-2">
         <input
           type="range"
@@ -453,6 +492,7 @@ interface EvaluationItemPayload {
   target_drummer_slug: string;
   base_groove_id: string;
   baseline_label?: string | null;
+  baseline_reference_audio_url?: string | null;
   reference_artifact_id?: string | null;
   baseline_run_id?: string | null;
   candidate_a_run_id?: string | null;
@@ -1623,9 +1663,21 @@ const CalibrationLab: React.FC = () => {
 
   const artifactGroups = useMemo(() => {
     const map = currentItem?.artifact_map || {};
+    const baselineEntries = [...(map.baseline || [])];
+    const baselineFallback = currentItem?.baseline_reference_audio_url?.trim();
+    if (baselineEntries.length === 0 && baselineFallback) {
+      baselineEntries.push({
+        artifact_id: `baseline-ref-${currentItem?.item_id || 'unknown'}`,
+        run_id: currentItem?.baseline_run_id || null,
+        artifact_type: 'reference_song',
+        storage_uri: baselineFallback,
+        public_url: baselineFallback,
+        render_recipe: { generated: 'baseline_reference_fallback' },
+      });
+    }
     const baselineLabel = currentItem?.baseline_label ? `Baseline Drum Track · ${currentItem.baseline_label}` : 'Baseline Drum Track';
     const groups: Array<{ key: string; label: string; entries: AudioArtifactPayload[] }> = [
-      { key: 'baseline', label: baselineLabel, entries: map.baseline || [] },
+      { key: 'baseline', label: baselineLabel, entries: baselineEntries },
       { key: 'A', label: 'A Drum Track', entries: map.A || [] },
       { key: 'B', label: 'B Drum Track', entries: map.B || [] },
     ];

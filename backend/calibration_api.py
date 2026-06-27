@@ -12,11 +12,12 @@ import os
 import base64
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Literal
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -507,6 +508,7 @@ class EvaluationItemPayload(BaseModel):
     target_drummer_slug: str
     base_groove_id: str
     baseline_label: Optional[str] = None
+    baseline_reference_audio_url: Optional[str] = None
     reference_artifact_id: Optional[str] = None
     baseline_run_id: Optional[str] = None
     candidate_a_run_id: Optional[str] = None
@@ -1018,6 +1020,7 @@ def _serialize_item(
     artifact_lookup: Dict[str, List[AudioArtifactPayload]],
     *,
     baseline_label: Optional[str] = None,
+    baseline_reference_audio_url: Optional[str] = None,
 ) -> EvaluationItemPayload:
     eval_mode = item.eval_mode if item.eval_mode in {"single", "AB", "ABX"} else "AB"
     return EvaluationItemPayload(
@@ -1026,6 +1029,7 @@ def _serialize_item(
         target_drummer_slug=item.target_drummer_slug,
         base_groove_id=item.base_groove_id,
         baseline_label=baseline_label,
+        baseline_reference_audio_url=baseline_reference_audio_url,
         reference_artifact_id=item.reference_artifact_id,
         baseline_run_id=item.baseline_run_id,
         candidate_a_run_id=item.candidate_a_run_id,
@@ -1693,7 +1697,48 @@ def _infer_baseline_label(
         source_song = str(recipe.get("source_song_name") or "").strip()
         if source_song:
             return source_song
+    for lane in ("A", "B"):
+        for artifact in artifact_lookup.get(lane) or []:
+            recipe = artifact.render_recipe or {}
+            source_song = str(recipe.get("source_song_name") or "").strip()
+            if source_song:
+                return source_song
     return None
+
+
+def _infer_source_analysis_id(
+    *,
+    item: "EvaluationItem",
+    artifact_lookup: Dict[str, List[AudioArtifactPayload]],
+) -> Optional[str]:
+    for lane in ("A", "B", "baseline"):
+        for artifact in artifact_lookup.get(lane) or []:
+            recipe = artifact.render_recipe or {}
+            value = str(recipe.get("source_analysis_id") or recipe.get("analysis_id") or "").strip()
+            if value:
+                return value
+
+    for run_id in (item.candidate_a_run_id, item.candidate_b_run_id, item.baseline_run_id):
+        run_id_val = str(run_id or "").strip()
+        if not run_id_val:
+            continue
+        try:
+            run_record = CentralDatabaseService.get_instance().get_calibration_run(run_id=run_id_val)
+            run_meta = run_record.metadata if run_record and isinstance(run_record.metadata, dict) else {}
+            value = str(run_meta.get("source_analysis_id") or "").strip()
+            if value:
+                return value
+        except Exception:
+            continue
+
+    return None
+
+
+def _baseline_reference_audio_url_from_analysis_id(analysis_id: Optional[str]) -> Optional[str]:
+    analysis_id_val = str(analysis_id or "").strip()
+    if not analysis_id_val:
+        return None
+    return f"/calibration/analysis/{quote(analysis_id_val)}/reference-audio"
 
 
 def _serialize_run_bundle(db: CentralDatabaseService, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2020,6 +2065,107 @@ async def list_drummers(db: CentralDatabaseService = Depends(get_db_service)) ->
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
 
+@router.get("/analysis/{analysis_id}/reference-audio")
+async def get_analysis_reference_audio(analysis_id: str):
+    analysis_id = (analysis_id or "").strip()
+    if not analysis_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing analysis id")
+
+    db = get_db_service()
+    engine = _require_postgres_engine(db)
+
+    try:
+        with engine.connect() as conn_pg:
+            stem_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT stem_name, file_path
+                    FROM public.stem_artifacts
+                    WHERE analysis_id = :analysis_id
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
+
+            artifact_rows = conn_pg.execute(
+                text(
+                    """
+                    SELECT artifact_role, file_path
+                    FROM public.analysis_artifacts
+                    WHERE analysis_id = :analysis_id
+                    ORDER BY created_at DESC
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().all()
+
+            spa_row = conn_pg.execute(
+                text(
+                    """
+                    SELECT source_file
+                    FROM public.song_performance_analysis
+                    WHERE analysis_id = :analysis_id
+                    LIMIT 1
+                    """
+                ),
+                {"analysis_id": analysis_id},
+            ).mappings().first()
+
+        candidates: List[str] = []
+
+        preferred_stems = [
+            row.get("file_path")
+            for row in stem_rows
+            if str(row.get("stem_name") or "").strip().lower() in {"drums", "drum"} and str(row.get("file_path") or "").strip()
+        ]
+        fallback_stems = [
+            row.get("file_path")
+            for row in stem_rows
+            if str(row.get("file_path") or "").strip()
+        ]
+        preferred_artifacts = [
+            row.get("file_path")
+            for row in artifact_rows
+            if str(row.get("artifact_role") or "").strip().lower() in {"drums", "drum", "mix", "preview"}
+            and str(row.get("file_path") or "").strip()
+        ]
+        fallback_artifacts = [
+            row.get("file_path")
+            for row in artifact_rows
+            if str(row.get("file_path") or "").strip()
+        ]
+
+        for value in preferred_stems + fallback_stems + preferred_artifacts + fallback_artifacts:
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+
+        source_file = str((spa_row or {}).get("source_file") or "").strip()
+        if source_file:
+            candidates.append(source_file)
+
+        seen: set[str] = set()
+        deduped_candidates: List[str] = []
+        for value in candidates:
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped_candidates.append(value)
+
+        for candidate in deduped_candidates:
+            if candidate.lower().startswith(("http://", "https://")):
+                return RedirectResponse(url=candidate, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+            local_path = _resolve_local_path(candidate)
+            if local_path and local_path.is_file():
+                return FileResponse(path=str(local_path), filename=local_path.name)
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No playable reference audio found for analysis")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
 @router.get("/evaluation-items/{item_id}/progress")
 async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
     item_id = (item_id or "").strip()
@@ -2031,13 +2177,25 @@ async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
             asyncio.to_thread(get_db_service),
             timeout=5.0,
         )
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Database service initialization timed out")
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+    try:
         item = await asyncio.wait_for(
             asyncio.to_thread(db.get_evaluation_item, item_id=item_id),
             timeout=8.0,
         )
-        if not item:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
+    except TimeoutError:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item lookup timed out")
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation item not found")
+
+    try:
         progress = await asyncio.wait_for(
             asyncio.to_thread(
                 _collect_item_lane_progress,
@@ -2048,19 +2206,88 @@ async def get_evaluation_item_progress(item_id: str) -> Dict[str, Any]:
             ),
             timeout=8.0,
         )
-        return {
-            "item_id": item.item_id,
-            "all_ready": bool(progress.get("all_ready")),
-            "missing_lanes": progress.get("missing_lanes") or [],
-            "lanes": progress.get("lanes") or [],
-            "queue_stall_hint_seconds": _QUEUE_STALL_HINT_SECONDS,
-        }
+        degraded = False
     except TimeoutError:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item progress lookup timed out")
-    except HTTPException:
-        raise
+        logger.warning("Evaluation item progress lookup timed out item_id=%s; returning degraded lane payload", item_id)
+        progress = {
+            "all_ready": False,
+            "missing_lanes": ["A", "B"],
+            "lanes": [
+                {
+                    "lane": "baseline",
+                    "run_id": (item.baseline_run_id or "").strip() or None,
+                    "ready": not bool((item.baseline_run_id or "").strip()),
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": False,
+                    "reason": "Baseline progress lookup timed out; retrying.",
+                },
+                {
+                    "lane": "A",
+                    "run_id": (item.candidate_a_run_id or "").strip() or None,
+                    "ready": False,
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": True,
+                    "reason": "Progress lookup timed out; retrying.",
+                },
+                {
+                    "lane": "B",
+                    "run_id": (item.candidate_b_run_id or "").strip() or None,
+                    "ready": False,
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": True,
+                    "reason": "Progress lookup timed out; retrying.",
+                },
+            ],
+        }
+        degraded = True
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        logger.warning("Evaluation item progress failed item_id=%s; returning degraded lane payload err=%s", item_id, exc)
+        progress = {
+            "all_ready": False,
+            "missing_lanes": ["A", "B"],
+            "lanes": [
+                {
+                    "lane": "baseline",
+                    "run_id": (item.baseline_run_id or "").strip() or None,
+                    "ready": not bool((item.baseline_run_id or "").strip()),
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": False,
+                    "reason": "Baseline progress lookup failed; retrying.",
+                },
+                {
+                    "lane": "A",
+                    "run_id": (item.candidate_a_run_id or "").strip() or None,
+                    "ready": False,
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": True,
+                    "reason": "Progress lookup failed; retrying.",
+                },
+                {
+                    "lane": "B",
+                    "run_id": (item.candidate_b_run_id or "").strip() or None,
+                    "ready": False,
+                    "artifact_count": 0,
+                    "artifact_types": [],
+                    "strict_reference_ok": True,
+                    "reason": "Progress lookup failed; retrying.",
+                },
+            ],
+        }
+        degraded = True
+
+    return {
+        "item_id": item.item_id,
+        "all_ready": bool(progress.get("all_ready")),
+        "missing_lanes": progress.get("missing_lanes") or [],
+        "lanes": progress.get("lanes") or [],
+        "queue_stall_hint_seconds": _QUEUE_STALL_HINT_SECONDS,
+        "degraded": degraded,
+    }
 # ASGI application factory
 app = FastAPI(title="DrumTrackAI Calibration API")
 
@@ -2671,7 +2898,14 @@ async def get_evaluation_item(item_id: str) -> EvaluationItemPayload:
             artifact_map[label] = [_serialize_artifact(artifact) for artifact in artifacts]
 
         baseline_label = _infer_baseline_label(item=item, artifact_lookup=artifact_map)
-        return _serialize_item(item, artifact_map, baseline_label=baseline_label)
+        source_analysis_id = _infer_source_analysis_id(item=item, artifact_lookup=artifact_map)
+        baseline_reference_audio_url = _baseline_reference_audio_url_from_analysis_id(source_analysis_id)
+        return _serialize_item(
+            item,
+            artifact_map,
+            baseline_label=baseline_label,
+            baseline_reference_audio_url=baseline_reference_audio_url,
+        )
     except TimeoutError:
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Evaluation item lookup timed out")
     except HTTPException:
