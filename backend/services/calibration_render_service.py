@@ -36,6 +36,18 @@ class CalibrationRenderService:
     def __init__(self, db: CentralDatabaseService) -> None:
         self._db = db
 
+    def _coerce_tempo_bpm(self, recipe: Dict[str, Any]) -> float:
+        try:
+            raw = recipe.get("tempo_bpm") if isinstance(recipe, dict) else None
+            if raw is None:
+                return 110.0
+            value = float(raw)
+            if value <= 0:
+                return 110.0
+            return value
+        except Exception:
+            return 110.0
+
     def render_run(self, request: RenderRequest) -> None:
         # No-op queue: annotate the run's metadata so clients can poll later.
         try:
@@ -63,9 +75,10 @@ class CalibrationRenderService:
             # Synthesize a short preview WAV so the UI has something to play
             # if no external render pipeline is connected yet.
             try:
+                tempo_bpm = self._coerce_tempo_bpm(request.render_recipe)
                 preview_path = self._synthesize_preview_audio(
                     run_id=request.run_id,
-                    tempo_bpm=float(request.render_recipe.get("tempo_bpm", 110.0) if isinstance(request.render_recipe, dict) else 110.0),
+                    tempo_bpm=tempo_bpm,
                 )
                 if preview_path is not None and preview_path.is_file():
                     storage_uri = str(
@@ -74,7 +87,7 @@ class CalibrationRenderService:
                         / request.run_id
                         / preview_path.name
                     )
-                    self._db.log_audio_artifact(
+                    artifact_id = self._db.log_audio_artifact(
                         run_id=request.run_id,
                         artifact_type="audio",
                         storage_uri=storage_uri,
@@ -87,7 +100,43 @@ class CalibrationRenderService:
                             "seed": int(request.seed),
                         },
                     )
+                    if artifact_id:
+                        meta["render"]["status"] = "completed"
+                        meta["render"]["artifact_id"] = artifact_id
+                        meta["render"]["tempo_bpm"] = tempo_bpm
+                        self._db.log_calibration_run(
+                            drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
+                            outcome="success",
+                            metadata=meta,
+                            run_id=request.run_id,
+                        )
+                    else:
+                        meta["render"]["status"] = "failed"
+                        meta["render"]["error"] = "Failed to log synthesized preview artifact"
+                        self._db.log_calibration_run(
+                            drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
+                            outcome="failure",
+                            metadata=meta,
+                            run_id=request.run_id,
+                        )
+                else:
+                    meta["render"]["status"] = "failed"
+                    meta["render"]["error"] = "Failed to synthesize preview audio"
+                    self._db.log_calibration_run(
+                        drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
+                        outcome="failure",
+                        metadata=meta,
+                        run_id=request.run_id,
+                    )
             except Exception:
+                meta["render"]["status"] = "failed"
+                meta["render"]["error"] = "render_stub_exception"
+                self._db.log_calibration_run(
+                    drummer_slug=run_ref.drummer_slug if run_ref else "unknown",
+                    outcome="failure",
+                    metadata=meta,
+                    run_id=request.run_id,
+                )
                 logger.exception("render_stub_artifact_log_failed run_id=%s", request.run_id)
         except Exception:
             logger.exception("render_run_failed run_id=%s", request.run_id)
