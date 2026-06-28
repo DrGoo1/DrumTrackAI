@@ -1092,6 +1092,92 @@ def _resolve_local_path(value: Any) -> Optional[Path]:
     return None
 
 
+def _coerce_tempo_bpm(value: Any, default: float = 110.0) -> float:
+    try:
+        bpm = float(value)
+        if bpm <= 0:
+            return float(default)
+        return bpm
+    except Exception:
+        return float(default)
+
+
+def _repair_legacy_preview_artifact_if_missing(
+    db: CentralDatabaseService,
+    *,
+    run_id: str,
+    artifact: "AudioArtifact",
+) -> Optional[Path]:
+    run_id_val = str(run_id or "").strip()
+    if not run_id_val:
+        return None
+
+    storage_uri = str(getattr(artifact, "storage_uri", "") or "").strip()
+    if not storage_uri:
+        return None
+
+    normalized = storage_uri.replace("\\", "/").lower()
+    expected_suffix = f"/candidates/{run_id_val.lower()}/preview.wav"
+    if expected_suffix not in normalized:
+        return None
+
+    existing = _resolve_local_path(storage_uri)
+    if existing and existing.is_file():
+        return existing
+
+    tempo_bpm = 110.0
+    try:
+        run_ref = db.get_calibration_run(run_id=run_id_val)
+        run_meta = run_ref.metadata if run_ref and isinstance(run_ref.metadata, dict) else {}
+        if isinstance(run_meta, dict):
+            render_meta = run_meta.get("render") if isinstance(run_meta.get("render"), dict) else {}
+            tempo_bpm = _coerce_tempo_bpm(
+                run_meta.get("tempo_bpm", render_meta.get("tempo_bpm")),
+                default=110.0,
+            )
+    except Exception:
+        tempo_bpm = 110.0
+
+    try:
+        render_service = CalibrationRenderService(db)
+        repaired_path = render_service._synthesize_preview_audio(run_id=run_id_val, tempo_bpm=tempo_bpm)
+        if not repaired_path or not repaired_path.is_file():
+            return None
+
+        artifact_id_val = str(getattr(artifact, "artifact_id", "") or "").strip() or None
+        artifact_type_val = str(getattr(artifact, "artifact_type", "audio") or "audio").strip() or "audio"
+        recipe = getattr(artifact, "render_recipe", {})
+        if not isinstance(recipe, dict):
+            recipe = {}
+
+        db.log_audio_artifact(
+            run_id=run_id_val,
+            artifact_type=artifact_type_val,
+            storage_uri=str(repaired_path.resolve()),
+            duration_sec=getattr(artifact, "duration_sec", None),
+            loudness_lufs=getattr(artifact, "loudness_lufs", None),
+            sample_pack_version=getattr(artifact, "sample_pack_version", None),
+            render_recipe=recipe,
+            artifact_id=artifact_id_val,
+        )
+
+        logger.info(
+            "legacy_preview_artifact_repaired run_id=%s artifact_id=%s storage_uri=%s",
+            run_id_val,
+            artifact_id_val,
+            str(repaired_path),
+        )
+        return repaired_path
+    except Exception:
+        logger.warning(
+            "legacy_preview_artifact_repair_failed run_id=%s artifact_id=%s",
+            run_id_val,
+            str(getattr(artifact, "artifact_id", "") or "").strip() or None,
+            exc_info=True,
+        )
+        return None
+
+
 def _song_label_from_path(path: Path) -> str:
     parent = path.parent
     parent_name = parent.name.strip()
@@ -2338,6 +2424,14 @@ async def stream_audio_artifact(
             local_path = _resolve_local_path(getattr(selected, "storage_uri", ""))
         if local_path and local_path.is_file():
             return FileResponse(path=str(local_path), filename=local_path.name)
+
+        repaired_path = _repair_legacy_preview_artifact_if_missing(
+            db,
+            run_id=run_id_val,
+            artifact=selected,
+        )
+        if repaired_path and repaired_path.is_file():
+            return FileResponse(path=str(repaired_path), filename=repaired_path.name)
 
         if direct_http.startswith("/"):
             return RedirectResponse(url=direct_http, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
