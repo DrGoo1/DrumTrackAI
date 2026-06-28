@@ -652,22 +652,27 @@ const ensureAbsoluteArtifactUrl = (value: string): string => {
 };
 
 const resolveArtifactSource = (artifact: AudioArtifactPayload): string | null => {
-  const candidate = artifact.public_url ?? artifact.storage_uri;
-  if (!candidate) return null;
-  const trimmed = candidate.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
+  const candidates = [artifact.public_url, artifact.storage_uri].filter((value): value is string => Boolean(value && value.trim()));
 
-  const normalized = trimmed.replace(/\\/g, '/').replace(/^\.?\//, '');
-  const marker = 'artifacts/calibration/';
-  const markerIndex = normalized.toLowerCase().indexOf(marker);
-  if (markerIndex !== -1) {
-    const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
-    return ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${relative}`);
+  for (const rawCandidate of candidates) {
+    const trimmed = rawCandidate.trim();
+    if (!trimmed) continue;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) continue;
+    if (trimmed.startsWith(CALIBRATION_STATIC_PREFIX)) return ensureAbsoluteArtifactUrl(trimmed);
+
+    const normalized = trimmed.replace(/\\/g, '/').replace(/^\.?\//, '');
+    const marker = 'artifacts/calibration/';
+    const markerIndex = normalized.toLowerCase().indexOf(marker);
+    if (markerIndex !== -1) {
+      const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
+      return ensureAbsoluteArtifactUrl(`${CALIBRATION_STATIC_PREFIX}/${relative}`);
+    }
+
+    return ensureAbsoluteArtifactUrl(`/${normalized}`);
   }
 
-  return ensureAbsoluteArtifactUrl(`/${normalized}`);
+  return null;
 };
 
 const formatPercent = (value?: number | null) => {

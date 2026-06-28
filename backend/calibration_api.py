@@ -989,12 +989,18 @@ def _serialize_run_version(version: Optional["RunVersion"]) -> Optional[RunVersi
 
 
 def _serialize_artifact(artifact: "AudioArtifact") -> AudioArtifactPayload:
+    run_id = str(artifact.run_id or "").strip() if artifact.run_id is not None else ""
+    artifact_id = str(artifact.artifact_id or "").strip()
+    if run_id and artifact_id:
+        public_url = f"/calibration/audio-artifacts/{quote(run_id)}/{quote(artifact_id)}"
+    else:
+        public_url = _artifact_url_service.build_url(artifact.storage_uri)
     return AudioArtifactPayload(
         artifact_id=artifact.artifact_id,
         run_id=artifact.run_id,
         artifact_type=artifact.artifact_type,
         storage_uri=artifact.storage_uri,
-        public_url=_artifact_url_service.build_url(artifact.storage_uri),
+        public_url=public_url,
         duration_sec=artifact.duration_sec,
         loudness_lufs=artifact.loudness_lufs,
         sample_pack_version=artifact.sample_pack_version,
@@ -1741,6 +1747,48 @@ def _baseline_reference_audio_url_from_analysis_id(analysis_id: Optional[str]) -
     return f"/calibration/analysis/{quote(analysis_id_val)}/reference-audio"
 
 
+def _first_http_url(*values: Any) -> Optional[str]:
+    for value in values:
+        text = str(value or "").strip()
+        if text.lower().startswith(("http://", "https://")):
+            return text
+    return None
+
+
+def _infer_baseline_reference_audio_url(
+    db: CentralDatabaseService,
+    *,
+    item: "EvaluationItem",
+    artifact_lookup: Dict[str, List[AudioArtifactPayload]],
+) -> Optional[str]:
+    baseline_artifacts = artifact_lookup.get("baseline") or []
+    for artifact in baseline_artifacts:
+        direct = _first_http_url(artifact.public_url, artifact.storage_uri)
+        if direct:
+            return direct
+
+    baseline_run_id = str(item.baseline_run_id or "").strip()
+    if baseline_run_id:
+        try:
+            run_record = db.get_calibration_run(run_id=baseline_run_id)
+            run_meta = run_record.metadata if run_record and isinstance(run_record.metadata, dict) else {}
+            if isinstance(run_meta, dict):
+                render_meta = run_meta.get("render") if isinstance(run_meta.get("render"), dict) else {}
+                direct = _first_http_url(
+                    run_meta.get("source_storage_uri"),
+                    run_meta.get("source_uri"),
+                    render_meta.get("source_storage_uri"),
+                    render_meta.get("source_uri"),
+                )
+                if direct:
+                    return direct
+        except Exception:
+            pass
+
+    source_analysis_id = _infer_source_analysis_id(item=item, artifact_lookup=artifact_lookup)
+    return _baseline_reference_audio_url_from_analysis_id(source_analysis_id)
+
+
 def _serialize_run_bundle(db: CentralDatabaseService, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     run_id_val = (run_id or "").strip()
     if not run_id_val:
@@ -2159,7 +2207,142 @@ async def get_analysis_reference_audio(analysis_id: str):
             if local_path and local_path.is_file():
                 return FileResponse(path=str(local_path), filename=local_path.name)
 
+        try:
+            with engine.connect() as conn_pg:
+                artifact_rows = conn_pg.execute(
+                    text(
+                        """
+                        SELECT aa.run_id, aa.artifact_id, aa.artifact_type
+                        FROM public.audio_artifacts aa
+                        LEFT JOIN public.calibration_runs cr ON cr.run_id = aa.run_id
+                        WHERE COALESCE(cr.metadata_json::text, '') ILIKE :analysis_token
+                           OR COALESCE(aa.render_recipe_json::text, '') ILIKE :analysis_token
+                        LIMIT 100
+                        """
+                    ),
+                    {"analysis_token": f"%{analysis_id}%"},
+                ).mappings().all()
+
+            preferred_types = {"mix", "preview", "audio", "reference", "reference_song"}
+            preferred_rows = [
+                row
+                for row in artifact_rows
+                if str(row.get("artifact_type") or "").strip().lower() in preferred_types
+            ]
+            for row in (preferred_rows or artifact_rows):
+                run_id_val = str(row.get("run_id") or "").strip()
+                artifact_id_val = str(row.get("artifact_id") or "").strip()
+                if not run_id_val or not artifact_id_val:
+                    continue
+                return RedirectResponse(
+                    url=f"/calibration/audio-artifacts/{quote(run_id_val)}/{quote(artifact_id_val)}",
+                    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                )
+        except Exception:
+            logger.warning("analysis_reference_audio_artifact_fallback_failed analysis_id=%s", analysis_id, exc_info=True)
+
+        try:
+            with engine.connect() as conn_pg:
+                analysis_row = conn_pg.execute(
+                    text(
+                        """
+                        SELECT
+                            CAST(spa.drummer_id AS TEXT) AS drummer_id,
+                            CAST(COALESCE(d.drummer_id, '') AS TEXT) AS drummer_slug,
+                            COALESCE(d.display_name, d.name, '') AS drummer_name
+                        FROM public.song_performance_analysis spa
+                        LEFT JOIN public.drummers d ON CAST(d.id AS TEXT) = CAST(spa.drummer_id AS TEXT)
+                        WHERE spa.analysis_id = :analysis_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"analysis_id": analysis_id},
+                ).mappings().first()
+
+            drummer_candidates: List[str] = []
+            if analysis_row:
+                for key in ("drummer_slug", "drummer_id", "drummer_name"):
+                    value = str((analysis_row or {}).get(key) or "").strip()
+                    if value:
+                        drummer_candidates.append(value)
+
+            seen_slugs: set[str] = set()
+            for drummer_slug in drummer_candidates:
+                normalized_slug = drummer_slug.strip()
+                if not normalized_slug or normalized_slug in seen_slugs:
+                    continue
+                seen_slugs.add(normalized_slug)
+
+                runs = db.get_calibration_runs(
+                    drummer_slug=normalized_slug,
+                    limit=40,
+                    include_metrics=True,
+                )
+
+                def _run_matches_analysis(run_obj: Any) -> bool:
+                    meta = run_obj.metadata if isinstance(getattr(run_obj, "metadata", None), dict) else {}
+                    try:
+                        payload = json.dumps(meta, sort_keys=True)
+                    except Exception:
+                        payload = str(meta)
+                    return analysis_id in payload
+
+                prioritized_runs = [run for run in runs if _run_matches_analysis(run)]
+                for run in (prioritized_runs or runs):
+                    run_id_val = str(getattr(run, "run_id", "") or "").strip()
+                    if not run_id_val:
+                        continue
+                    artifact_id = _pick_reference_artifact_id(db, baseline_run_id=run_id_val)
+                    if artifact_id:
+                        return RedirectResponse(
+                            url=f"/calibration/audio-artifacts/{quote(run_id_val)}/{quote(artifact_id)}",
+                            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                        )
+        except Exception:
+            logger.warning("analysis_reference_audio_drummer_fallback_failed analysis_id=%s", analysis_id, exc_info=True)
+
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No playable reference audio found for analysis")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/audio-artifacts/{run_id}/{artifact_id}")
+async def stream_audio_artifact(
+    run_id: str,
+    artifact_id: str,
+    db: CentralDatabaseService = Depends(get_db_service),
+):
+    run_id_val = (run_id or "").strip()
+    artifact_id_val = (artifact_id or "").strip()
+    if not run_id_val or not artifact_id_val:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing run or artifact id")
+
+    try:
+        artifacts = db.get_audio_artifacts_for_run(run_id=run_id_val)
+        selected = next(
+            (item for item in artifacts if str(getattr(item, "artifact_id", "") or "").strip() == artifact_id_val),
+            None,
+        )
+        if not selected:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio artifact not found")
+
+        source_url = _artifact_url_service.build_url(str(getattr(selected, "storage_uri", "") or ""))
+        direct_http = str(source_url or "").strip()
+        if direct_http.lower().startswith(("http://", "https://")):
+            return RedirectResponse(url=direct_http, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+        local_path = _resolve_local_path(direct_http) if direct_http else None
+        if not local_path:
+            local_path = _resolve_local_path(getattr(selected, "storage_uri", ""))
+        if local_path and local_path.is_file():
+            return FileResponse(path=str(local_path), filename=local_path.name)
+
+        if direct_http.startswith("/"):
+            return RedirectResponse(url=direct_http, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Playable artifact file not found")
     except HTTPException:
         raise
     except Exception as exc:
@@ -2898,8 +3081,11 @@ async def get_evaluation_item(item_id: str) -> EvaluationItemPayload:
             artifact_map[label] = [_serialize_artifact(artifact) for artifact in artifacts]
 
         baseline_label = _infer_baseline_label(item=item, artifact_lookup=artifact_map)
-        source_analysis_id = _infer_source_analysis_id(item=item, artifact_lookup=artifact_map)
-        baseline_reference_audio_url = _baseline_reference_audio_url_from_analysis_id(source_analysis_id)
+        baseline_reference_audio_url = _infer_baseline_reference_audio_url(
+            db,
+            item=item,
+            artifact_lookup=artifact_map,
+        )
         return _serialize_item(
             item,
             artifact_map,

@@ -98,12 +98,9 @@ class CalibrationRenderService:
                     tempo_bpm=tempo_bpm,
                 )
                 if preview_path is not None and preview_path.is_file():
-                    storage_uri = str(
-                        Path("/static/calibration_artifacts")
-                        / "candidates"
-                        / request.run_id
-                        / preview_path.name
-                    )
+                    storage_uri = str(preview_path.resolve())
+                    source_analysis_id = str(request.render_recipe.get("source_analysis_id") or "").strip()
+                    source_song_name = str(request.render_recipe.get("source_song_name") or "").strip()
                     def _log_preview_artifact(existing_artifact_id: Optional[str] = None) -> Optional[str]:
                         return self._db.log_audio_artifact(
                             run_id=request.run_id,
@@ -116,6 +113,8 @@ class CalibrationRenderService:
                                 "generated": "synth_preview",
                                 "kit_id": request.kit_id,
                                 "seed": int(request.seed),
+                                "source_analysis_id": source_analysis_id or None,
+                                "source_song_name": source_song_name or None,
                             },
                             artifact_id=existing_artifact_id,
                         )
@@ -196,7 +195,7 @@ class CalibrationRenderService:
 
     def _synthesize_preview_audio(self, *, run_id: str, tempo_bpm: float) -> Optional[Path]:
         try:
-            root = Path(__file__).resolve().parents[1]
+            root = Path(__file__).resolve().parents[2]
             out_dir = root / "artifacts" / "calibration" / "candidates" / run_id
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / "preview.wav"
