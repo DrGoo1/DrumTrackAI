@@ -372,7 +372,7 @@ def reviewer_submit(
             better_feel=payload.better_feel,
             more_musical=payload.more_musical,
             confidence=payload.confidence,
-            notes=payload.notes,
+            comment=payload.comment,
             ratings_a=payload.ratings_a,
             ratings_b=payload.ratings_b,
         ),

@@ -138,6 +138,37 @@ class CalibrationTrialService:
                 raise RuntimeError("Failed to create evaluation item")
 
             trial_id = f"trial_{uuid.uuid4().hex[:16]}"
+            control_model_metadata = control.metadata.get("production_metadata") or {}
+            challenger_model_metadata = challenger.metadata.get("production_metadata") or {}
+            resolved_model_version = str(
+                challenger_model_metadata.get("model_version")
+                or challenger_model_metadata.get("version")
+                or control_model_metadata.get("model_version")
+                or control_model_metadata.get("version")
+                or os.getenv("DRUMTRACKAI_MODEL_VERSION", "unknown")
+            )
+            resolved_renderer_version = str(
+                os.getenv("CALIBRATION_RENDERER_VERSION", "unknown")
+            )
+
+            generation_metadata = {
+                "neutral": {
+                    **neutral.metadata,
+                    "renderer_version": resolved_renderer_version,
+                    "sample_pack_version": request.sample_pack_version,
+                },
+                "control": {
+                    **control.metadata,
+                    "renderer_version": resolved_renderer_version,
+                    "sample_pack_version": request.sample_pack_version,
+                },
+                "challenger": {
+                    **challenger.metadata,
+                    "renderer_version": resolved_renderer_version,
+                    "sample_pack_version": request.sample_pack_version,
+                },
+            }
+
             self._repo.create_trial_record(
                 {
                     "trial_id": trial_id,
@@ -162,16 +193,9 @@ class CalibrationTrialService:
                         "A": {"role": lane_a_role, "run_id": lane_a_run},
                         "B": {"role": lane_b_role, "run_id": lane_b_run},
                     },
-                    "generation_metadata": {
-                        "neutral": neutral.metadata,
-                        "control": control.metadata,
-                        "challenger": challenger.metadata,
-                    },
-                    "model_version": str(
-                        challenger.metadata.get("production_metadata", {}).get("model_version")
-                        or os.getenv("DRUMTRACKAI_MODEL_VERSION", "unknown")
-                    ),
-                    "renderer_version": str(os.getenv("CALIBRATION_RENDERER_VERSION", "unknown")),
+                    "generation_metadata": generation_metadata,
+                    "model_version": resolved_model_version,
+                    "renderer_version": resolved_renderer_version,
                     "sample_pack_version": request.sample_pack_version,
                     "status": "queued",
                 }

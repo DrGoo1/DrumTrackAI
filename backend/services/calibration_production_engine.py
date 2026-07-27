@@ -391,14 +391,21 @@ class CalibrationProductionEngine:
             drummer_profile=profile.profile,
         )
         rng = random.Random(int(seed))
-        track = build_drumtrack_for_dcsm(
-            songmap=songmap,
-            internal_drum_events=_to_internal_events(events),
-            style_id=str(cfg["style"]),
-            performance_spec=spec_result.spec,
-            resolution_ppq=pattern.ppqn,
-            rng=rng,  # Added by the deterministic-RNG patch in this pack.
-        )
+        builder_kwargs = {
+            "songmap": songmap,
+            "internal_drum_events": _to_internal_events(events),
+            "style_id": str(cfg["style"]),
+            "performance_spec": spec_result.spec,
+            "resolution_ppq": pattern.ppqn,
+            "rng": rng,
+        }
+        try:
+            track = build_drumtrack_for_dcsm(**builder_kwargs)
+        except TypeError as exc:
+            if "unexpected keyword argument 'rng'" not in str(exc):
+                raise
+            builder_kwargs.pop("rng", None)
+            track = build_drumtrack_for_dcsm(**builder_kwargs)
         output_events = _from_dcsm_notes(track, songmap, pattern.ppqn)
         if not output_events:
             raise RuntimeError("Production DCSM builder returned no events")
