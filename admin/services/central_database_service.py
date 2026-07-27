@@ -4834,8 +4834,14 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
                 except Exception:
                     max_overflow = 5
                 try:
+                    engine_url = db_url
+                    lower_engine_url = engine_url.lower()
+                    if lower_engine_url.startswith("postgresql://") and not lower_engine_url.startswith("postgresql+"):
+                        engine_url = "postgresql+psycopg://" + engine_url[len("postgresql://"):]
+                    elif lower_engine_url.startswith("postgres://"):
+                        engine_url = "postgresql+psycopg://" + engine_url[len("postgres://"):]
                     self._engine = create_engine(
-                        db_url,
+                        engine_url,
                         pool_pre_ping=True,
                         pool_size=5,
                         max_overflow=max_overflow,
