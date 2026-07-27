@@ -134,6 +134,20 @@ class AudioArtifact:
 
 
 @dataclass
+class CalibrationRenderJob:
+    job_id: str
+    run_id: str
+    render_profile_id: str
+    sample_pack_version: str
+    status: str
+    artifact_ids: List[str]
+    error_text: Optional[str]
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+
+@dataclass
 class EvaluationSession:
     session_id: str
     reviewer_id: str
@@ -4636,6 +4650,35 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS public.calibration_render_jobs (
+                job_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                render_profile_id TEXT NOT NULL,
+                sample_pack_version TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+                error_text TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                FOREIGN KEY (run_id) REFERENCES public.calibration_runs(run_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS public.calibration_run_events (
+                run_id TEXT PRIMARY KEY,
+                drummer_slug TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'dcsm_json',
+                event_stream_json TEXT NOT NULL,
+                tempo_bpm DOUBLE PRECISION,
+                time_signature_json TEXT,
+                bars INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY (run_id) REFERENCES public.calibration_runs(run_id)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS public.learning_updates (
                 update_id TEXT PRIMARY KEY,
                 model_family TEXT NOT NULL,
@@ -4726,6 +4769,12 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             """,
             """
             CREATE INDEX IF NOT EXISTS idx_attr_item ON public.attribute_ratings(item_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_calibration_render_jobs_run_id ON public.calibration_render_jobs(run_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_calibration_run_events_drummer ON public.calibration_run_events(drummer_slug)
             """,
         ]
         with self._engine.begin() as conn:
@@ -7130,6 +7179,23 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
         )
 
+    def _row_to_calibration_render_job(self, row: sqlite3.Row) -> Optional[CalibrationRenderJob]:
+        data = self._row_to_dict(row)
+        if not data:
+            return None
+        return CalibrationRenderJob(
+            job_id=str(data.get("job_id", "")),
+            run_id=str(data.get("run_id", "")),
+            render_profile_id=str(data.get("render_profile_id", "")),
+            sample_pack_version=str(data.get("sample_pack_version", "")),
+            status=str(data.get("status", "queued") or "queued"),
+            artifact_ids=self._json_loads(data.get("artifact_ids_json"), default=[]) or [],
+            error_text=data.get("error_text"),
+            created_at=self._parse_datetime(data.get("created_at")) or datetime.utcnow(),
+            started_at=self._parse_datetime(data.get("started_at")),
+            completed_at=self._parse_datetime(data.get("completed_at")),
+        )
+
     def _row_to_evaluation_session(self, row: sqlite3.Row) -> Optional[EvaluationSession]:
         data = self._row_to_dict(row)
         if not data:
@@ -8120,6 +8186,308 @@ class CentralDatabaseService(QObject, CalibrationPhase4SampleMixin):
             logger.error(f"Error logging calibration render job for run {run_id}: {str(e)}")
             self.database_error.emit(f"Error logging calibration render job: {str(e)}")
             return None
+
+    def get_calibration_run_events_payload(self, *, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            run_id = (run_id or "").strip()
+            if not run_id:
+                return None
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.connect() as conn_pg:
+                    row = conn_pg.execute(
+                        text(
+                            """
+                            SELECT run_id, drummer_slug, source_type,
+                                   event_stream_json, tempo_bpm, time_signature_json, bars,
+                                   created_at, updated_at
+                            FROM public.calibration_run_events
+                            WHERE run_id = :run_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"run_id": run_id},
+                    ).mappings().first()
+                if not row:
+                    return None
+                return {
+                    "run_id": str(row.get("run_id") or ""),
+                    "drummer_slug": str(row.get("drummer_slug") or ""),
+                    "source_type": str(row.get("source_type") or "dcsm_json"),
+                    "event_stream": self._json_loads(row.get("event_stream_json"), default=[]) or [],
+                    "tempo_bpm": self._safe_float(row.get("tempo_bpm")),
+                    "time_signature": self._json_loads(row.get("time_signature_json"), default={}) or {},
+                    "bars": self._safe_int(row.get("bars")),
+                    "created_at": self._parse_datetime(row.get("created_at")),
+                    "updated_at": self._parse_datetime(row.get("updated_at")),
+                }
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT run_id, drummer_slug, source_type,
+                       event_stream_json, tempo_bpm, time_signature_json, bars,
+                       created_at, updated_at
+                FROM calibration_run_events
+                WHERE run_id = ?
+                LIMIT 1
+                """,
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            data = self._row_to_dict(row)
+            if not data:
+                return None
+            return {
+                "run_id": str(data.get("run_id") or ""),
+                "drummer_slug": str(data.get("drummer_slug") or ""),
+                "source_type": str(data.get("source_type") or "dcsm_json"),
+                "event_stream": self._json_loads(data.get("event_stream_json"), default=[]) or [],
+                "tempo_bpm": self._safe_float(data.get("tempo_bpm")),
+                "time_signature": self._json_loads(data.get("time_signature_json"), default={}) or {},
+                "bars": self._safe_int(data.get("bars")),
+                "created_at": self._parse_datetime(data.get("created_at")),
+                "updated_at": self._parse_datetime(data.get("updated_at")),
+            }
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_run_events table not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching calibration run events for {run_id}: {str(e)}")
+            self.database_error.emit(f"Error fetching calibration run events: {str(e)}")
+            return None
+
+    def list_calibration_render_jobs(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        limit: int = 25,
+    ) -> List[CalibrationRenderJob]:
+        jobs: List[CalibrationRenderJob] = []
+        try:
+            status_values = [str(value or "").strip().lower() for value in (statuses or []) if str(value or "").strip()]
+            lim = max(1, int(limit))
+
+            if getattr(self, "_engine", None) is not None:
+                where_sql = ""
+                params: Dict[str, Any] = {"limit": lim}
+                if status_values:
+                    placeholders = ", ".join(f":status_{idx}" for idx, _ in enumerate(status_values))
+                    where_sql = f"WHERE lower(status) IN ({placeholders})"
+                    for idx, value in enumerate(status_values):
+                        params[f"status_{idx}"] = value
+                with self._engine.connect() as conn_pg:
+                    rows = conn_pg.execute(
+                        text(
+                            f"""
+                            SELECT job_id, run_id, render_profile_id, sample_pack_version,
+                                   status, artifact_ids_json, error_text,
+                                   created_at, started_at, completed_at
+                            FROM public.calibration_render_jobs
+                            {where_sql}
+                            ORDER BY created_at ASC
+                            LIMIT :limit
+                            """
+                        ),
+                        params,
+                    ).mappings().all()
+                for row in rows:
+                    item = self._row_to_calibration_render_job(row)
+                    if item:
+                        jobs.append(item)
+                return jobs
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            where_sql = ""
+            params_sqlite: List[Any] = []
+            if status_values:
+                where_sql = "WHERE lower(status) IN ({})".format(
+                    ", ".join("?" for _ in status_values)
+                )
+                params_sqlite.extend(status_values)
+            params_sqlite.append(lim)
+            cursor.execute(
+                f"""
+                SELECT job_id, run_id, render_profile_id, sample_pack_version,
+                       status, artifact_ids_json, error_text,
+                       created_at, started_at, completed_at
+                FROM calibration_render_jobs
+                {where_sql}
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                tuple(params_sqlite),
+            )
+            rows = cursor.fetchall() or []
+            for row in rows:
+                item = self._row_to_calibration_render_job(row)
+                if item:
+                    jobs.append(item)
+            return jobs
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_render_jobs table not available: {e}")
+            return jobs
+        except Exception as e:
+            logger.error(f"Error listing calibration render jobs: {str(e)}")
+            self.database_error.emit(f"Error listing calibration render jobs: {str(e)}")
+            return jobs
+
+    def claim_calibration_render_job(
+        self,
+        *,
+        job_id: str,
+        from_statuses: Optional[List[str]] = None,
+    ) -> bool:
+        try:
+            job_id = (job_id or "").strip()
+            if not job_id:
+                return False
+            statuses = [str(value or "").strip().lower() for value in (from_statuses or ["queued", "retry"]) if str(value or "").strip()]
+            if not statuses:
+                statuses = ["queued", "retry"]
+
+            if getattr(self, "_engine", None) is not None:
+                placeholders = ", ".join(f":status_{idx}" for idx, _ in enumerate(statuses))
+                params: Dict[str, Any] = {"job_id": job_id}
+                for idx, value in enumerate(statuses):
+                    params[f"status_{idx}"] = value
+                with self._engine.begin() as conn_pg:
+                    result = conn_pg.execute(
+                        text(
+                            f"""
+                            UPDATE public.calibration_render_jobs
+                            SET status = 'running', started_at = COALESCE(started_at, NOW()), completed_at = NULL
+                            WHERE job_id = :job_id
+                              AND lower(status) IN ({placeholders})
+                            """
+                        ),
+                        params,
+                    )
+                    claimed = int(getattr(result, "rowcount", 0) or 0) > 0
+                if claimed:
+                    self.data_changed.emit("calibration_render_jobs", "upsert")
+                return claimed
+
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    f"""
+                    UPDATE calibration_render_jobs
+                    SET status = 'running', started_at = COALESCE(started_at, ?), completed_at = NULL
+                    WHERE job_id = ?
+                      AND lower(status) IN ({', '.join('?' for _ in statuses)})
+                    """,
+                    (datetime.utcnow().isoformat(), job_id, *statuses),
+                )
+                changed = int(cursor.rowcount or 0) > 0
+                if changed:
+                    conn.commit()
+                return changed
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("calibration_render_jobs", "upsert")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_render_jobs table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error claiming calibration render job {job_id}: {str(e)}")
+            self.database_error.emit(f"Error claiming calibration render job: {str(e)}")
+            return False
+
+    def update_calibration_render_job_status(
+        self,
+        *,
+        job_id: str,
+        status: str,
+        artifact_ids: Optional[List[str]] = None,
+        error_text: Optional[str] = None,
+    ) -> bool:
+        try:
+            job_id = (job_id or "").strip()
+            status_val = (status or "").strip().lower()
+            if not job_id or not status_val:
+                return False
+
+            artifact_ids_json = self._json_dumps(artifact_ids or []) or "[]"
+            is_terminal = status_val in {"completed", "failed", "canceled"}
+
+            if getattr(self, "_engine", None) is not None:
+                with self._engine.begin() as conn_pg:
+                    result = conn_pg.execute(
+                        text(
+                            """
+                            UPDATE public.calibration_render_jobs
+                            SET status = :status,
+                                artifact_ids_json = :artifact_ids_json,
+                                error_text = :error_text,
+                                started_at = CASE WHEN started_at IS NULL AND :status = 'running' THEN NOW() ELSE started_at END,
+                                completed_at = CASE WHEN :is_terminal THEN NOW() ELSE NULL END
+                            WHERE job_id = :job_id
+                            """
+                        ),
+                        {
+                            "job_id": job_id,
+                            "status": status_val,
+                            "artifact_ids_json": artifact_ids_json,
+                            "error_text": error_text,
+                            "is_terminal": bool(is_terminal),
+                        },
+                    )
+                    updated = int(getattr(result, "rowcount", 0) or 0) > 0
+                if updated:
+                    self.data_changed.emit("calibration_render_jobs", "upsert")
+                return updated
+
+            now_iso = datetime.utcnow().isoformat()
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            def _do_write() -> bool:
+                cursor.execute(
+                    """
+                    UPDATE calibration_render_jobs
+                    SET status = ?,
+                        artifact_ids_json = ?,
+                        error_text = ?,
+                        started_at = CASE WHEN started_at IS NULL AND ? = 'running' THEN ? ELSE started_at END,
+                        completed_at = CASE WHEN ? = 1 THEN ? ELSE NULL END
+                    WHERE job_id = ?
+                    """,
+                    (
+                        status_val,
+                        artifact_ids_json,
+                        error_text,
+                        status_val,
+                        now_iso,
+                        1 if is_terminal else 0,
+                        now_iso,
+                        job_id,
+                    ),
+                )
+                changed = int(cursor.rowcount or 0) > 0
+                if changed:
+                    conn.commit()
+                return changed
+
+            result = bool(self._with_write_lock_retry(_do_write))
+            if result:
+                self.data_changed.emit("calibration_render_jobs", "upsert")
+            return result
+        except sqlite3.OperationalError as e:
+            logger.warning(f"calibration_render_jobs table not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error updating calibration render job {job_id}: {str(e)}")
+            self.database_error.emit(f"Error updating calibration render job: {str(e)}")
+            return False
 
     def get_evaluation_item(self, *, item_id: str) -> Optional[EvaluationItem]:
         try:
