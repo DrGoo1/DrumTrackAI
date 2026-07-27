@@ -176,6 +176,10 @@ class ReviewSubmitRequest(JudgmentSubmitRequest):
     ratings_b: Optional[Ratings] = None
 
 
+class ReviewerSubmitRequest(ReviewSubmitRequest):
+    item_id: str = Field(min_length=1)
+
+
 def _serialize_artifact(artifact: Any) -> Optional[Dict[str, Any]]:
     storage_uri = str(getattr(artifact, "storage_uri", "") or "").strip()
     url = _artifact_urls.build_url(storage_uri)
@@ -352,6 +356,31 @@ def submit_review(
         return {"status": "ok", **result}
     except Exception as exc:
         raise _http_error(exc) from exc
+
+@router.post("/reviewer/submit")
+def reviewer_submit(
+    payload: ReviewerSubmitRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    context=Depends(_require_reviewer_context),
+    repo: CalibrationV2Repository = Depends(_repository),
+) -> Dict[str, Any]:
+    return submit_review(
+        item_id=payload.item_id,
+        payload=ReviewSubmitRequest(
+            preferred_candidate=payload.preferred_candidate,
+            closer_to_target=payload.closer_to_target,
+            better_feel=payload.better_feel,
+            more_musical=payload.more_musical,
+            confidence=payload.confidence,
+            notes=payload.notes,
+            ratings_a=payload.ratings_a,
+            ratings_b=payload.ratings_b,
+        ),
+        idempotency_key=idempotency_key,
+        context=context,
+        repo=repo,
+    )
+
 
 
 @router.post("/admin/reviewers")
