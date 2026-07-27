@@ -13,7 +13,12 @@ import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
-from admin.services.central_database_service import CentralDatabaseService, CalibrationRenderJob
+try:
+    from admin.services.central_database_service import CentralDatabaseService, CalibrationRenderJob
+except ImportError:
+    from admin.services.central_database_service import CentralDatabaseService
+
+    CalibrationRenderJob = Any
 
 
 logger = logging.getLogger(__name__)
