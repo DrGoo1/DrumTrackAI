@@ -18,7 +18,10 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from backend.calibration_api import router as calibration_router
 from backend.app.assimilation.api.routes_drummer_generation import router as assimilation_generation_router
-from backend.app.assimilation.api.routes_drummer_profiles import router as assimilation_profiles_router
+try:
+    from backend.app.assimilation.api.routes_drummer_profiles import router as assimilation_profiles_router
+except Exception:  # pragma: no cover - optional legacy router may be absent
+    assimilation_profiles_router = None
 
 try:
     from backend.drummerbrain.performance_spec_sentient import build_sentient_instrument_profile
@@ -1108,7 +1111,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(calibration_router)
-app.include_router(assimilation_profiles_router)
+if assimilation_profiles_router is not None:
+    app.include_router(assimilation_profiles_router)
 app.include_router(assimilation_generation_router)
 
 _CALIBRATION_ARTIFACT_DIR = (_repo_root() / "artifacts" / "calibration").resolve()
